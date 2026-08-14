@@ -28,7 +28,10 @@ spatial canvas for arranging pages instead of flat tabs.
 
 ## Status
 
-Bootstrap only. Neither crate has real CEF or wgpu wiring yet.
+- `compositor` — real winit + wgpu window: opens a surface, clears it every
+  frame, handles resize/close. No content drawn yet (that's the textured
+  quad renderer, next).
+- `cef-bridge` — bootstrap stub, no CEF wiring yet.
 
 ## Build
 
