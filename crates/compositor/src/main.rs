@@ -10,27 +10,24 @@
 // wgpu setup, and the winit loop has to cooperatively pump CEF's message
 // loop (do_message_loop_work) instead of blocking in `run_app`.
 
+mod input;
+
 use cef::{args::Args, *};
 use cef_bridge::{
     AppBuilder, ClientBuilder, OsrApp, OsrRenderHandler, OsrRequestContextHandler,
     RequestContextHandlerBuilder, TEXTURE,
 };
+use input::MouseInput;
 use std::{cell::RefCell, process::ExitCode, rc::Rc, sync::Arc, thread::sleep, time::Duration};
 use winit::{
     application::ApplicationHandler,
-    event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
+    event::WindowEvent,
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     platform::pump_events::{EventLoopExtPumpEvents, PumpStatus},
     window::{Window, WindowAttributes, WindowId},
 };
 
 const HOME_PAGE: &str = "https://example.com";
-
-// cef_event_flags_t bits relevant here (see include/internal/cef_types.h);
-// the `cef` crate's `MouseEvent::modifiers` is a plain `u32` of these.
-const EVENTFLAG_LEFT_MOUSE_BUTTON: u32 = 1 << 4;
-const EVENTFLAG_MIDDLE_MOUSE_BUTTON: u32 = 1 << 5;
-const EVENTFLAG_RIGHT_MOUSE_BUTTON: u32 = 1 << 6;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -334,15 +331,7 @@ struct BrowserState {
 struct App {
     state: Option<GpuState>,
     browser: Option<BrowserState>,
-    // Logical (DIP) cursor position, in CEF's coordinate space — winit
-    // reports physical pixels, CEF's view_rect/browser size are logical,
-    // so this is the already-converted value, kept around because
-    // MouseInput/MouseWheel events don't carry a position of their own.
-    cursor_logical: (i32, i32),
-    // Bitmask of EVENTFLAG_*_MOUSE_BUTTON for buttons currently held.
-    // CEF wants the held-button mask on move events too (for drag
-    // detection), not just on the click event itself.
-    buttons_down: u32,
+    mouse: MouseInput,
 }
 
 impl ApplicationHandler for App {
@@ -432,81 +421,25 @@ impl ApplicationHandler for App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let scale = state.window.scale_factor();
-                self.cursor_logical = ((position.x / scale) as i32, (position.y / scale) as i32);
-                if let Some(host) = self.browser.as_ref().and_then(|b| b.browser.host()) {
-                    host.send_mouse_move_event(
-                        Some(&MouseEvent {
-                            x: self.cursor_logical.0,
-                            y: self.cursor_logical.1,
-                            modifiers: self.buttons_down,
-                        }),
-                        0,
-                    );
-                }
+                let host = self.browser.as_ref().and_then(|b| b.browser.host());
+                self.mouse
+                    .cursor_moved((position.x, position.y), scale, host.as_ref());
             }
             WindowEvent::CursorLeft { .. } => {
-                if let Some(host) = self.browser.as_ref().and_then(|b| b.browser.host()) {
-                    host.send_mouse_move_event(
-                        Some(&MouseEvent {
-                            x: self.cursor_logical.0,
-                            y: self.cursor_logical.1,
-                            modifiers: self.buttons_down,
-                        }),
-                        1,
-                    );
-                }
+                let host = self.browser.as_ref().and_then(|b| b.browser.host());
+                self.mouse.cursor_left(host.as_ref());
             }
             WindowEvent::MouseInput {
                 state: element_state,
                 button,
                 ..
             } => {
-                let (cef_button, flag) = match button {
-                    MouseButton::Left => (MouseButtonType::LEFT, EVENTFLAG_LEFT_MOUSE_BUTTON),
-                    MouseButton::Middle => {
-                        (MouseButtonType::MIDDLE, EVENTFLAG_MIDDLE_MOUSE_BUTTON)
-                    }
-                    MouseButton::Right => (MouseButtonType::RIGHT, EVENTFLAG_RIGHT_MOUSE_BUTTON),
-                    _ => return,
-                };
-                let mouse_up = element_state == ElementState::Released;
-                if mouse_up {
-                    self.buttons_down &= !flag;
-                } else {
-                    self.buttons_down |= flag;
-                }
-                if let Some(host) = self.browser.as_ref().and_then(|b| b.browser.host()) {
-                    host.send_mouse_click_event(
-                        Some(&MouseEvent {
-                            x: self.cursor_logical.0,
-                            y: self.cursor_logical.1,
-                            modifiers: self.buttons_down,
-                        }),
-                        cef_button,
-                        mouse_up as _,
-                        1,
-                    );
-                }
+                let host = self.browser.as_ref().and_then(|b| b.browser.host());
+                self.mouse.button(element_state, button, host.as_ref());
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                // Line-to-pixel scale is arbitrary (CEF/Chromium doesn't
-                // define a canonical one for injected events) — 40px/line
-                // matches typical browser scroll-by-line amounts.
-                let (delta_x, delta_y) = match delta {
-                    MouseScrollDelta::LineDelta(x, y) => ((x * 40.0) as i32, (y * 40.0) as i32),
-                    MouseScrollDelta::PixelDelta(pos) => (pos.x as i32, pos.y as i32),
-                };
-                if let Some(host) = self.browser.as_ref().and_then(|b| b.browser.host()) {
-                    host.send_mouse_wheel_event(
-                        Some(&MouseEvent {
-                            x: self.cursor_logical.0,
-                            y: self.cursor_logical.1,
-                            modifiers: self.buttons_down,
-                        }),
-                        delta_x,
-                        delta_y,
-                    );
-                }
+                let host = self.browser.as_ref().and_then(|b| b.browser.host());
+                self.mouse.wheel(delta, host.as_ref());
             }
             WindowEvent::Focused(focused) => {
                 if let Some(host) = self.browser.as_ref().and_then(|b| b.browser.host()) {
