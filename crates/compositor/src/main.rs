@@ -14,7 +14,7 @@ mod input;
 
 use cef::{args::Args, *};
 use cef_bridge::{
-    AppBuilder, ClientBuilder, OsrApp, OsrRenderHandler, OsrRequestContextHandler,
+    AppBuilder, ClientBuilder, CURSOR, OsrApp, OsrRenderHandler, OsrRequestContextHandler,
     RequestContextHandlerBuilder, TEXTURE,
 };
 use input::MouseInput;
@@ -449,6 +449,9 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 if let Some(host) = self.browser.as_ref().and_then(|b| b.browser.host()) {
                     host.send_external_begin_frame();
+                }
+                if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {
+                    state.window.set_cursor(icon);
                 }
                 match state.render() {
                     FrameOutcome::Rendered | FrameOutcome::Skip => {}
