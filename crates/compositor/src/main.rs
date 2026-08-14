@@ -10,183 +10,19 @@
 // wgpu setup, and the winit loop has to cooperatively pump CEF's message
 // loop (do_message_loop_work) instead of blocking in `run_app`.
 
+mod app;
+mod browser;
 mod input;
 mod output;
 
+use app::App;
 use cef::{args::Args, *};
-use cef_bridge::{
-    AppBuilder, ClientBuilder, CURSOR, OsrApp, OsrRenderHandler, OsrRequestContextHandler,
-    RequestContextHandlerBuilder,
-};
-use input::{KeyboardInput, MouseInput};
-use output::{FrameOutcome, GpuState};
-use std::{cell::RefCell, process::ExitCode, rc::Rc, sync::Arc, thread::sleep, time::Duration};
+use cef_bridge::{AppBuilder, OsrApp};
+use std::{process::ExitCode, thread::sleep, time::Duration};
 use winit::{
-    application::ApplicationHandler,
-    event::WindowEvent,
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ControlFlow, EventLoop},
     platform::pump_events::{EventLoopExtPumpEvents, PumpStatus},
-    window::{WindowAttributes, WindowId},
 };
-
-const HOME_PAGE: &str = "https://example.com";
-
-struct BrowserState {
-    browser: cef::Browser,
-    size: Rc<RefCell<winit::dpi::LogicalSize<f32>>>,
-}
-
-#[derive(Default)]
-struct App {
-    state: Option<GpuState>,
-    browser: Option<BrowserState>,
-    mouse: MouseInput,
-    keyboard: KeyboardInput,
-}
-
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.state.is_some() {
-            return;
-        }
-
-        let window = Arc::new(
-            event_loop
-                .create_window(WindowAttributes::default().with_title("spatial-browser"))
-                .expect("failed to create window"),
-        );
-        let state = pollster::block_on(GpuState::new(window.clone()));
-
-        // Shared-texture (GPU) OSR needs the CEF GPU process's DMA-BUF export
-        // and our wgpu Vulkan import to land on the same physical GPU. On a
-        // hybrid-graphics laptop, Chromium's GPU process defaults to the
-        // display-driving iGPU while wgpu's HighPerformance pick can land on
-        // the discrete GPU; Chromium also strips most env vars from its
-        // child processes, so there's no reliable way to force both onto
-        // the same device from here. CPU OSR (on_paint, plain memcpy) has no
-        // such cross-device requirement, so that's what's wired up for now.
-        let window_info = WindowInfo {
-            windowless_rendering_enabled: true as _,
-            shared_texture_enabled: false as _,
-            external_begin_frame_enabled: true as _,
-            ..Default::default()
-        };
-
-        let device_scale_factor = window.scale_factor();
-        let (render_handler, browser_size) = OsrRenderHandler::new(
-            state.device.clone(),
-            state.queue.clone(),
-            state.texture_bind_group_layout.clone(),
-            device_scale_factor as _,
-            window.inner_size().to_logical(device_scale_factor),
-        );
-
-        let browser_settings = BrowserSettings {
-            windowless_frame_rate: 60,
-            ..Default::default()
-        };
-        let mut context = cef::request_context_create_context(
-            Some(&RequestContextSettings::default()),
-            Some(&mut RequestContextHandlerBuilder::build(
-                OsrRequestContextHandler {},
-            )),
-        );
-
-        let browser = cef::browser_host_create_browser_sync(
-            Some(&window_info),
-            Some(&mut ClientBuilder::build(render_handler)),
-            Some(&HOME_PAGE.into()),
-            Some(&browser_settings),
-            None,
-            context.as_mut(),
-        )
-        .expect("failed to create CEF browser");
-
-        self.browser.replace(BrowserState {
-            browser,
-            size: browser_size,
-        });
-        self.state = Some(state);
-        window.request_redraw();
-    }
-
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        let Some(state) = &mut self.state else {
-            return;
-        };
-        if state.window.id() != id {
-            return;
-        }
-
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => {
-                state.resize(size.width, size.height);
-                if let Some(browser) = &self.browser {
-                    *browser.size.borrow_mut() = size.to_logical(state.window.scale_factor());
-                    if let Some(host) = browser.browser.host() {
-                        host.was_resized();
-                    }
-                }
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                let scale = state.window.scale_factor();
-                let host = self.browser.as_ref().and_then(|b| b.browser.host());
-                self.mouse
-                    .cursor_moved((position.x, position.y), scale, host.as_ref());
-            }
-            WindowEvent::CursorLeft { .. } => {
-                let host = self.browser.as_ref().and_then(|b| b.browser.host());
-                self.mouse.cursor_left(host.as_ref());
-            }
-            WindowEvent::MouseInput {
-                state: element_state,
-                button,
-                ..
-            } => {
-                let host = self.browser.as_ref().and_then(|b| b.browser.host());
-                self.mouse.button(element_state, button, host.as_ref());
-            }
-            WindowEvent::MouseWheel { delta, .. } => {
-                let host = self.browser.as_ref().and_then(|b| b.browser.host());
-                self.mouse.wheel(delta, host.as_ref());
-            }
-            WindowEvent::Focused(focused) => {
-                if let Some(host) = self.browser.as_ref().and_then(|b| b.browser.host()) {
-                    host.set_focus(focused as _);
-                }
-            }
-            WindowEvent::ModifiersChanged(modifiers) => {
-                self.keyboard.modifiers_changed(modifiers.state());
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                let host = self.browser.as_ref().and_then(|b| b.browser.host());
-                self.keyboard.key_event(&event, host.as_ref());
-            }
-            WindowEvent::RedrawRequested => {
-                if let Some(host) = self.browser.as_ref().and_then(|b| b.browser.host()) {
-                    host.send_external_begin_frame();
-                }
-                if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {
-                    state.window.set_cursor(icon);
-                }
-                match state.render() {
-                    FrameOutcome::Rendered | FrameOutcome::Skip => {}
-                    FrameOutcome::Reconfigure => {
-                        let size = state.window.inner_size();
-                        state.resize(size.width, size.height);
-                    }
-                    FrameOutcome::Fatal => {
-                        log::error!("fatal surface validation error, exiting");
-                        event_loop.exit();
-                    }
-                }
-                state.window.request_redraw();
-            }
-            _ => {}
-        }
-    }
-}
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
