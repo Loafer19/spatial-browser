@@ -1,11 +1,9 @@
 // The wgpu side of the compositor: window surface, render pipeline, and
-// the one full-window textured quad a CEF page paints into (`TEXTURE`,
-// from cef-bridge). Multiple pages arranged on a pannable/zoomable canvas
-// is the next step; for now there's exactly one quad covering the whole
-// surface.
+// per-page textured quads. Each page owns its own `PageQuad` (small
+// vertex buffer) and CEF texture bind group; `GpuState::render` draws
+// whichever ones it's handed, back-to-front.
 
 use super::colors::CANVAS_BACKGROUND;
-use cef_bridge::TEXTURE;
 use std::sync::Arc;
 use winit::window::Window;
 
@@ -29,45 +27,84 @@ impl Vertex {
     }
 }
 
-struct Quad {
-    vertex_buffer: wgpu::Buffer,
-    vertex_count: u32,
+/// A page's position and size on the canvas, in physical pixels, origin
+/// top-left, y-down — the same convention as window/mouse coordinates.
+/// The camera is identity for now (canvas space == screen space); pan/
+/// zoom would apply a transform here before converting to NDC.
+#[derive(Clone, Copy, Debug)]
+pub struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
 }
 
-impl Quad {
-    fn full_screen(device: &wgpu::Device) -> Self {
+impl Rect {
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
+    }
+}
+
+/// One page's on-GPU quad geometry: its own small vertex buffer, rather
+/// than one shared buffer rewritten per page per frame. wgpu's queue
+/// writes aren't ordered against this frame's draw calls that way — with
+/// one shared buffer, the last page's `write_buffer` would win for every
+/// draw call in the same submission, not just its own.
+pub struct PageQuad {
+    vertex_buffer: wgpu::Buffer,
+}
+
+impl PageQuad {
+    pub fn new(device: &wgpu::Device) -> Self {
         use wgpu::util::DeviceExt;
+        let zero = Vertex {
+            position: [0.0; 3],
+            tex_coords: [0.0; 2],
+        };
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Page Quad Vertex Buffer"),
+            contents: bytemuck::cast_slice(&[zero; 4]),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
+        Self { vertex_buffer }
+    }
+
+    fn update(&self, queue: &wgpu::Queue, rect: Rect, viewport: (f32, f32)) {
+        let (vw, vh) = viewport;
+        let left = (rect.x / vw) * 2.0 - 1.0;
+        let right = ((rect.x + rect.w) / vw) * 2.0 - 1.0;
+        let top = 1.0 - (rect.y / vh) * 2.0;
+        let bottom = 1.0 - ((rect.y + rect.h) / vh) * 2.0;
 
         let vertices = [
             Vertex {
-                position: [-1.0, 1.0, 0.0],
+                position: [left, top, 0.0],
                 tex_coords: [0.0, 0.0],
             },
             Vertex {
-                position: [1.0, 1.0, 0.0],
+                position: [right, top, 0.0],
                 tex_coords: [1.0, 0.0],
             },
             Vertex {
-                position: [-1.0, -1.0, 0.0],
+                position: [left, bottom, 0.0],
                 tex_coords: [0.0, 1.0],
             },
             Vertex {
-                position: [1.0, -1.0, 0.0],
+                position: [right, bottom, 0.0],
                 tex_coords: [1.0, 1.0],
             },
         ];
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Page Quad Vertex Buffer"),
-            contents: bytemuck::cast_slice(&vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        Self {
-            vertex_buffer,
-            vertex_count: vertices.len() as u32,
-        }
+        queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
     }
+}
+
+/// One page's draw call for a single frame: where it goes (`rect`) and
+/// what to paint into it (`texture` — `None` while CEF hasn't produced a
+/// first frame yet, in which case the page is skipped for this draw).
+pub struct PageDraw<'a> {
+    pub rect: Rect,
+    pub quad: &'a PageQuad,
+    pub texture: Option<&'a wgpu::BindGroup>,
 }
 
 pub struct GpuState {
@@ -77,7 +114,6 @@ pub struct GpuState {
     config: wgpu::SurfaceConfiguration,
     pub window: Arc<Window>,
     pipeline: wgpu::RenderPipeline,
-    quad: Quad,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
 }
 
@@ -212,8 +248,6 @@ impl GpuState {
             cache: None,
         });
 
-        let quad = Quad::full_screen(&device);
-
         Self {
             surface,
             device,
@@ -221,7 +255,6 @@ impl GpuState {
             config,
             window,
             pipeline,
-            quad,
             texture_bind_group_layout,
         }
     }
@@ -235,7 +268,8 @@ impl GpuState {
         self.surface.configure(&self.device, &self.config);
     }
 
-    pub fn render(&mut self) -> FrameOutcome {
+    /// Draws `pages` in the given order (back-to-front — last is topmost).
+    pub fn render(&mut self, pages: &[PageDraw<'_>]) -> FrameOutcome {
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) => t,
             wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -247,6 +281,11 @@ impl GpuState {
             }
             wgpu::CurrentSurfaceTexture::Validation => return FrameOutcome::Fatal,
         };
+
+        let viewport = (self.config.width as f32, self.config.height as f32);
+        for page in pages {
+            page.quad.update(&self.queue, page.rect, viewport);
+        }
 
         let view = surface_texture
             .texture
@@ -274,14 +313,15 @@ impl GpuState {
                 multiview_mask: None,
             });
 
-            TEXTURE.with_borrow(|texture| {
-                if let Some(bind_group) = texture.as_ref() {
-                    pass.set_pipeline(&self.pipeline);
-                    pass.set_bind_group(0, bind_group, &[]);
-                    pass.set_vertex_buffer(0, self.quad.vertex_buffer.slice(..));
-                    pass.draw(0..self.quad.vertex_count, 0..1);
-                }
-            });
+            pass.set_pipeline(&self.pipeline);
+            for page in pages {
+                let Some(bind_group) = page.texture else {
+                    continue;
+                };
+                pass.set_bind_group(0, bind_group, &[]);
+                pass.set_vertex_buffer(0, page.quad.vertex_buffer.slice(..));
+                pass.draw(0..4, 0..1);
+            }
         }
         self.queue.submit(Some(encoder.finish()));
         self.window.pre_present_notify();

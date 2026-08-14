@@ -1,21 +1,45 @@
-// Spawning a CEF browser instance against our own GpuState (device/queue/
-// texture bind group layout) and window. One browser for now — this is
-// where per-page browser creation grows into when the canvas holds more
-// than one page.
+// Spawning a CEF browser instance for one page of the spatial canvas:
+// its own render handler (own texture + own logical size, independent of
+// every other page), its own GPU quad, and its own canvas-space rect.
 
-use crate::output::GpuState;
+use crate::output::{GpuState, PageQuad, Rect};
 use cef_bridge::{
     ClientBuilder, OsrRenderHandler, OsrRequestContextHandler, RequestContextHandlerBuilder,
 };
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
+use std::rc::Rc;
 use winit::window::Window;
 
-pub struct BrowserState {
+pub struct Page {
     pub browser: cef::Browser,
-    pub size: Rc<RefCell<winit::dpi::LogicalSize<f32>>>,
+    pub rect: Rect,
+    pub quad: PageQuad,
+    // CEF's own logical (DIP) view size, kept in sync with `rect` (scaled
+    // by the window's device_scale_factor) whenever the page is moved or
+    // resized on the canvas.
+    size: Rc<RefCell<winit::dpi::LogicalSize<f32>>>,
+    texture: Rc<RefCell<Option<wgpu::BindGroup>>>,
 }
 
-pub fn spawn(state: &GpuState, window: &Window, home_page: &str) -> BrowserState {
+impl Page {
+    pub fn texture(&self) -> Option<wgpu::BindGroup> {
+        // wgpu::BindGroup is cheap to clone (it's a ref-counted handle),
+        // so callers can hold this independent of the page's own borrow.
+        self.texture.borrow().clone()
+    }
+
+    /// Update this page's canvas rect and let CEF know its view resized.
+    pub fn set_rect(&mut self, rect: Rect, scale_factor: f64) {
+        self.rect = rect;
+        *self.size.borrow_mut() =
+            winit::dpi::PhysicalSize::new(rect.w, rect.h).to_logical::<f32>(scale_factor);
+        if let Some(host) = cef::ImplBrowser::host(&self.browser) {
+            cef::ImplBrowserHost::was_resized(&host);
+        }
+    }
+}
+
+pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect) -> Page {
     // Shared-texture (GPU) OSR needs the CEF GPU process's DMA-BUF export
     // and our wgpu Vulkan import to land on the same physical GPU. On a
     // hybrid-graphics laptop, Chromium's GPU process defaults to the
@@ -32,12 +56,12 @@ pub fn spawn(state: &GpuState, window: &Window, home_page: &str) -> BrowserState
     };
 
     let device_scale_factor = window.scale_factor();
-    let (render_handler, browser_size) = OsrRenderHandler::new(
-        state.device.clone(),
-        state.queue.clone(),
-        state.texture_bind_group_layout.clone(),
+    let (render_handler, handles) = OsrRenderHandler::new(
+        gpu.device.clone(),
+        gpu.queue.clone(),
+        gpu.texture_bind_group_layout.clone(),
         device_scale_factor as _,
-        window.inner_size().to_logical(device_scale_factor),
+        winit::dpi::PhysicalSize::new(rect.w, rect.h).to_logical::<f32>(device_scale_factor),
     );
 
     let browser_settings = cef::BrowserSettings {
@@ -54,15 +78,18 @@ pub fn spawn(state: &GpuState, window: &Window, home_page: &str) -> BrowserState
     let browser = cef::browser_host_create_browser_sync(
         Some(&window_info),
         Some(&mut ClientBuilder::build(render_handler)),
-        Some(&home_page.into()),
+        Some(&url.into()),
         Some(&browser_settings),
         None,
         context.as_mut(),
     )
     .expect("failed to create CEF browser");
 
-    BrowserState {
+    Page {
         browser,
-        size: browser_size,
+        rect,
+        quad: PageQuad::new(&gpu.device),
+        size: handles.size,
+        texture: handles.texture,
     }
 }

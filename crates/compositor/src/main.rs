@@ -1,8 +1,9 @@
 // Compositor: owns the window, the GPU surface, and the spatial canvas.
-// This step: one CEF page, off-screen rendered into a shared GPU texture
-// (no CPU copy), drawn as a single full-window textured quad. Multiple
-// pages arranged on a pannable/zoomable canvas is the next step; for now
-// there's exactly one quad covering the whole surface.
+// Multiple CEF pages, each off-screen rendered (CPU path — see
+// browser.rs) into its own textured quad, placed side by side in canvas
+// space. Camera is identity for now (no pan/zoom yet); see app.rs for the
+// hit-testing/z-order/drag logic that makes it a canvas rather than just
+// two fixed windows.
 //
 // CEF's multi-process model means this same binary is re-exec'd as the
 // renderer/gpu/utility helper processes, so the CEF bootstrap (execute_process

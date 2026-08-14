@@ -1,10 +1,8 @@
 //! FFI bridge to CEF (Chromium Embedded Framework), off-screen rendering
-//! with shared GPU textures.
-//!
-//! One page for now (`TEXTURE` is a single slot) — this proves the OSR ->
-//! wgpu texture import pipeline end to end. Multiple simultaneous pages
-//! (the spatial canvas) is a later step: swap the single thread-local slot
-//! for a per-browser-instance handle once there's more than one page.
+//! with shared GPU textures. Each `OsrRenderHandler` owns its own texture
+//! slot (returned from `OsrRenderHandler::new`), so multiple simultaneous
+//! browser instances — multiple pages on the spatial canvas — each paint
+//! into their own texture rather than a shared global.
 
 use cef::{
     self, BrowserProcessHandler, ImplBrowserProcessHandler, WrapBrowserProcessHandler, rc::Rc, *,
@@ -125,6 +123,19 @@ pub struct OsrRenderHandler {
     // against this exact layout, not a freshly created (if structurally
     // identical) one.
     texture_bind_group_layout: wgpu::BindGroupLayout,
+    // This page's own texture slot, read once per frame by the
+    // compositor's render loop for this page's quad specifically.
+    texture: std::rc::Rc<RefCell<Option<wgpu::BindGroup>>>,
+}
+
+/// Handles returned alongside an `OsrRenderHandler` for the compositor to
+/// read/update from outside CEF's callbacks: `size` is written by the
+/// compositor (page resize) and read by `view_rect`; `texture` is written
+/// by `on_accelerated_paint`/`on_paint` and read by the compositor's
+/// render loop.
+pub struct OsrRenderHandles {
+    pub size: std::rc::Rc<RefCell<winit::dpi::LogicalSize<f32>>>,
+    pub texture: std::rc::Rc<RefCell<Option<wgpu::BindGroup>>>,
 }
 
 impl OsrRenderHandler {
@@ -134,8 +145,9 @@ impl OsrRenderHandler {
         texture_bind_group_layout: wgpu::BindGroupLayout,
         device_scale_factor: f32,
         size: winit::dpi::LogicalSize<f32>,
-    ) -> (Self, std::rc::Rc<RefCell<winit::dpi::LogicalSize<f32>>>) {
+    ) -> (Self, OsrRenderHandles) {
         let size = std::rc::Rc::new(RefCell::new(size));
+        let texture = std::rc::Rc::new(RefCell::new(None));
         (
             Self {
                 size: size.clone(),
@@ -143,8 +155,9 @@ impl OsrRenderHandler {
                 device,
                 queue,
                 texture_bind_group_layout,
+                texture: texture.clone(),
             },
-            size,
+            OsrRenderHandles { size, texture },
         )
     }
 }
@@ -251,9 +264,7 @@ wrap_render_handler! {
                 ],
             });
 
-            TEXTURE.with_borrow_mut(|texture| {
-                texture.replace(bind_group);
-            });
+            self.handler.texture.borrow_mut().replace(bind_group);
         }
 
         // CPU/software OSR path: CEF hands over a raw BGRA pixel buffer
@@ -348,9 +359,7 @@ wrap_render_handler! {
                 ],
             });
 
-            TEXTURE.with_borrow_mut(|texture| {
-                texture.replace(bind_group);
-            });
+            self.handler.texture.borrow_mut().replace(bind_group);
         }
     }
 }
@@ -362,11 +371,13 @@ impl RenderHandlerBuilder {
 }
 
 thread_local! {
-    pub static TEXTURE: RefCell<Option<wgpu::BindGroup>> = const { RefCell::new(None) };
     // Set by `OsrDisplayHandler::on_cursor_change`, read once per frame by
     // the compositor's redraw handler. CEF doesn't drive the OS cursor
     // itself in windowless/OSR mode (it has no native window to do it
     // through), so the embedder has to apply the shape the page wants.
+    // Global (not per-page) is fine: only the page currently under the
+    // mouse gets cursor-change events, so this naturally tracks whichever
+    // page's cursor should be showing.
     pub static CURSOR: RefCell<Option<CursorIcon>> = const { RefCell::new(None) };
 }
 
