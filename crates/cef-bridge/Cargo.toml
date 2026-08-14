@@ -3,4 +3,12 @@ name = "cef-bridge"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["accelerated_osr"]
+accelerated_osr = ["cef/accelerated_osr"]
+
 [dependencies]
+cef = { version = "151.4.0", default-features = false }
+log = "0.4"
+wgpu = "30"
+winit = "0.30"

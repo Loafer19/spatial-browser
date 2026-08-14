@@ -3,9 +3,19 @@ name = "compositor"
 version = "0.1.0"
 edition = "2021"
 
+[package.metadata.cef.bundle]
+helper_name = "compositor_helper"
+
+[features]
+default = ["accelerated_osr"]
+accelerated_osr = ["cef/accelerated_osr", "cef-bridge/accelerated_osr"]
+
 [dependencies]
-env_logger = "0.11.11"
+cef = { version = "151.4.0", default-features = false }
+cef-bridge = { path = "../cef-bridge", default-features = false }
+bytemuck = "1"
 log = "0.4.33"
 pollster = "1.0.1"
 wgpu = "30.0.0"
 winit = "0.30.13"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

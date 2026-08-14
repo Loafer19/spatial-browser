@@ -1,0 +1,14 @@
+# Machine-specific: points at wherever `export-cef-dir` cached the CEF
+# binary distribution (see README). Needed at build time by cef-dll-sys's
+# build.rs. Without this you'd have to `export CEF_PATH=...` before every
+# cargo invocation.
+[env]
+CEF_PATH = "/home/yoyo/.local/share/cef"
+
+# Link libcef.so (and friends) relative to the binary's own directory
+# instead of requiring LD_LIBRARY_PATH at run time. CEF's bundle layout
+# always puts libcef.so next to the executable, so $ORIGIN is exactly
+# right and this works both for `target/debug/compositor` (against
+# CEF_PATH) and for the bundled `target/bundle/compositor`.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-args=-Wl,-rpath,$ORIGIN"]

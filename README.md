@@ -5,9 +5,10 @@ spatial canvas for arranging pages instead of flat tabs.
 
 ## Architecture
 
-- **Web engine:** CEF (Chromium Embedded Framework), off-screen rendering
-  mode with shared GPU textures (`OnAcceleratedPaint`) — each page renders
-  straight into a GPU texture, no CPU copy per frame.
+- **Web engine:** CEF (Chromium Embedded Framework), off-screen rendering.
+  Design target is the shared-GPU-texture path (`on_accelerated_paint`,
+  zero CPU copy per frame); currently running the CPU path (`on_paint`,
+  one `write_texture` copy per frame) — see Status.
 - **Compositor:** `wgpu`, draws pages as textured quads on a pannable/
   zoomable canvas. Instanced rendering keeps FPS high with many pages open.
 - **Chrome UI** (url bar, history, bookmarks, plugin panels): `egui`,
@@ -23,18 +24,58 @@ spatial canvas for arranging pages instead of flat tabs.
 
 ## Layout
 
-- `crates/compositor` — window, wgpu surface, canvas renderer, egui chrome.
-- `crates/cef-bridge` — CEF FFI bindings and the OSR/shared-texture plumbing.
+- `crates/compositor` — window, wgpu surface, canvas renderer, CEF process
+  bootstrap and event loop.
+- `crates/cef-bridge` — CEF wrapper types (App/BrowserProcessHandler/
+  RenderHandler/Client) and both OSR paint paths.
 
 ## Status
 
-- `compositor` — real winit + wgpu window: opens a surface, clears it every
-  frame, handles resize/close. No content drawn yet (that's the textured
-  quad renderer, next).
-- `cef-bridge` — bootstrap stub, no CEF wiring yet.
+One page (`example.com`), one full-window quad — proves the pipeline
+before multi-page spatial layout. Rendering via CEF's CPU OSR path
+(`on_paint` → `wgpu::Queue::write_texture`), not the GPU shared-texture
+path yet.
+
+**Why not the shared-texture path:** on this dev machine (hybrid
+NVIDIA + AMD laptop graphics), CEF's GPU process renders on whichever GPU
+is display-driving (the AMD iGPU here), while wgpu's `HighPerformance`
+adapter pick can land on the discrete GPU — the DMA-BUF CEF exports then
+fails to import cross-device (`vkAllocateMemory` →
+`ERROR_OUT_OF_DEVICE_MEMORY`). Chromium also sanitizes environment
+variables passed to its child processes, so there's no reliable way from
+the launching process to force both onto the same physical GPU. Revisit
+by either pinning both to the same adapter via system-level GPU-offload
+config, or by explicitly selecting a specific `wgpu::Adapter` (enumerate
++ match by name) instead of trusting `PowerPreference`.
+
+Both OSR paths are wired up in `cef-bridge` behind
+`WindowInfo::shared_texture_enabled` in `compositor/src/main.rs:resumed`
+— flipping that bool (plus the `accelerated_osr` feature) is the whole
+switch once the GPU-selection problem above is solved.
 
 ## Build
 
+Machine-specific one-time setup:
+
+```sh
+# Cache the CEF binary distribution (also happens automatically on first
+# build, just slower — this pre-warms it):
+cargo run -p export-cef-dir -- --force ~/.local/share/cef
+# (needs the cef-rs workspace checked out separately; see
+# https://github.com/tauri-apps/cef-rs)
+
+# bundle-cef-app, used by scripts/bundle.sh:
+cargo install cef --version 151.4.0+151.3.17 --locked \
+  --root ~/.local/share/cargo-cef-tools
 ```
-cargo build
+
+`CEF_PATH` and the linker `rpath` are set in `.cargo/config.toml` — plain
+`cargo build`/`cargo check` work with no manual env vars. Update
+`CEF_PATH` there if `export-cef-dir`'s output directory differs.
+
+```sh
+cargo build                    # compiles, doesn't need CEF running
+./scripts/bundle.sh compositor # bundles + the CEF subprocess helper
+target/bundle/compositor       # only the bundled binary runs (CEF's
+                                # multi-process model needs the helper)
 ```
