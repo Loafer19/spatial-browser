@@ -11,6 +11,7 @@
 // loop (do_message_loop_work) instead of blocking in `run_app`.
 
 mod input;
+mod keyboard;
 
 use cef::{args::Args, *};
 use cef_bridge::{
@@ -18,6 +19,7 @@ use cef_bridge::{
     RequestContextHandlerBuilder, TEXTURE,
 };
 use input::MouseInput;
+use keyboard::KeyboardInput;
 use std::{cell::RefCell, process::ExitCode, rc::Rc, sync::Arc, thread::sleep, time::Duration};
 use winit::{
     application::ApplicationHandler,
@@ -332,6 +334,7 @@ struct App {
     state: Option<GpuState>,
     browser: Option<BrowserState>,
     mouse: MouseInput,
+    keyboard: KeyboardInput,
 }
 
 impl ApplicationHandler for App {
@@ -445,6 +448,13 @@ impl ApplicationHandler for App {
                 if let Some(host) = self.browser.as_ref().and_then(|b| b.browser.host()) {
                     host.set_focus(focused as _);
                 }
+            }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.keyboard.modifiers_changed(modifiers.state());
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                let host = self.browser.as_ref().and_then(|b| b.browser.host());
+                self.keyboard.key_event(&event, host.as_ref());
             }
             WindowEvent::RedrawRequested => {
                 if let Some(host) = self.browser.as_ref().and_then(|b| b.browser.host()) {
