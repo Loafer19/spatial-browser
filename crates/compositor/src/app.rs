@@ -7,6 +7,7 @@
 // pan/zoom): canvas space == screen space.
 
 use crate::browser::{self, Page};
+use crate::hotkeys;
 use crate::input::{KeyboardInput, MouseInput};
 use crate::output::{FrameOutcome, GpuState, PageDraw, Rect};
 use cef::{ImplBrowser, ImplBrowserHost};
@@ -16,6 +17,7 @@ use winit::{
     application::ApplicationHandler,
     event::{ElementState, MouseButton, WindowEvent},
     event_loop::ActiveEventLoop,
+    keyboard::ModifiersState,
     window::{WindowAttributes, WindowId},
 };
 
@@ -30,7 +32,15 @@ pub struct App {
     // carry a position of their own) to re-hit-test and to compute
     // whichever page's local coordinates.
     cursor_window: (f32, f32),
-    alt_held: bool,
+    modifiers: ModifiersState,
+    // Window size (physical pixels) that the current page rects are laid
+    // out against. Tiling window managers often settle the window into
+    // its real geometry via a `Resized` event shortly *after* creation —
+    // rather than trust the size seen in `resumed()` as final, every
+    // `Resized` rescales existing page rects proportionally against
+    // whatever size they were last laid out for, keeping draw and
+    // hit-test in agreement no matter when the "real" size arrives.
+    canvas_size: (f32, f32),
     // Offset from the dragged (always-topmost, since dragging brings a
     // page to front) page's rect origin to the cursor, set at drag start.
     dragging: Option<(f32, f32)>,
@@ -85,7 +95,7 @@ impl ApplicationHandler for App {
             },
         ];
         let urls = [
-            "https://example.com",
+            "https://www.google.com",
             // Hex colors avoided deliberately: an unescaped `#` in a `data:`
             // URL starts a fragment, silently truncating everything after
             // it from the actual document.
@@ -96,6 +106,7 @@ impl ApplicationHandler for App {
             .zip(urls)
             .map(|(rect, url)| browser::spawn(&state, &window, url, rect))
             .collect();
+        self.canvas_size = (size.width as f32, size.height as f32);
 
         self.state = Some(state);
         window.request_redraw();
@@ -113,10 +124,23 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 state.resize(size.width, size.height);
-                // Page rects are absolute canvas positions, independent of
-                // window size — no auto-reflow yet, so nothing else to do
-                // here (a page can end up partially or fully off-screen on
-                // shrink; acceptable for now, not handled).
+
+                let (old_w, old_h) = self.canvas_size;
+                let (new_w, new_h) = (size.width as f32, size.height as f32);
+                if old_w > 0.0 && old_h > 0.0 {
+                    let (scale_x, scale_y) = (new_w / old_w, new_h / old_h);
+                    let dpi_scale = state.window.scale_factor();
+                    for page in &mut self.pages {
+                        let rect = Rect {
+                            x: page.rect.x * scale_x,
+                            y: page.rect.y * scale_y,
+                            w: page.rect.w * scale_x,
+                            h: page.rect.h * scale_y,
+                        };
+                        page.set_rect(rect, dpi_scale);
+                    }
+                }
+                self.canvas_size = (new_w, new_h);
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let scale = state.window.scale_factor();
@@ -150,7 +174,7 @@ impl ApplicationHandler for App {
                 button,
                 ..
             } => {
-                if button == MouseButton::Left && self.alt_held {
+                if button == MouseButton::Left && self.modifiers.alt_key() {
                     match element_state {
                         ElementState::Pressed => {
                             if let Some(i) =
@@ -204,10 +228,13 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::ModifiersChanged(modifiers) => {
-                self.alt_held = modifiers.state().alt_key();
+                self.modifiers = modifiers.state();
                 self.keyboard.modifiers_changed(modifiers.state());
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                if hotkeys::handle(&event, self.modifiers, &mut self.pages, state, &state.window) {
+                    return;
+                }
                 // No real focus model yet — the topmost (most recently
                 // clicked) page is the closest proxy for "active page".
                 if let Some(page) = self.pages.last() {

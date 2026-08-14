@@ -13,6 +13,7 @@
 
 mod app;
 mod browser;
+mod hotkeys;
 mod input;
 mod output;
 
