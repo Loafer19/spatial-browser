@@ -19,6 +19,9 @@ pub struct Page {
     // resized on the canvas.
     size: Rc<RefCell<winit::dpi::LogicalSize<f32>>>,
     texture: Rc<RefCell<Option<wgpu::BindGroup>>>,
+    // The rect this page had before the zoom-toggle hotkey enlarged it —
+    // `Some` while zoomed in, restored and cleared on toggling back out.
+    pub zoomed_from: Option<Rect>,
 }
 
 impl Page {
@@ -88,8 +91,9 @@ pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect) -> Page {
     Page {
         browser,
         rect,
-        quad: PageQuad::new(&gpu.device),
+        quad: PageQuad::new(&gpu.device, &gpu.style_bind_group_layout),
         size: handles.size,
         texture: handles.texture,
+        zoomed_from: None,
     }
 }

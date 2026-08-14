@@ -252,15 +252,18 @@ impl ApplicationHandler for App {
                     state.window.set_cursor(icon);
                 }
 
+                let last_index = self.pages.len().saturating_sub(1);
                 let textures: Vec<_> = self.pages.iter().map(Page::texture).collect();
                 let draws: Vec<PageDraw> = self
                     .pages
                     .iter()
                     .zip(textures.iter())
-                    .map(|(page, texture)| PageDraw {
+                    .enumerate()
+                    .map(|(i, (page, texture))| PageDraw {
                         rect: page.rect,
                         quad: &page.quad,
                         texture: texture.as_ref(),
+                        focused: i == last_index,
                     })
                     .collect();
 

@@ -3,7 +3,7 @@
 // vertex buffer) and CEF texture bind group; `GpuState::render` draws
 // whichever ones it's handed, back-to-front.
 
-use super::colors::CANVAS_BACKGROUND;
+use super::colors::{CANVAS_BACKGROUND, FOCUS_BORDER_COLOR, FOCUS_BORDER_WIDTH, PAGE_CORNER_RADIUS};
 use std::sync::Arc;
 use winit::window::Window;
 
@@ -45,17 +45,34 @@ impl Rect {
     }
 }
 
-/// One page's on-GPU quad geometry: its own small vertex buffer, rather
-/// than one shared buffer rewritten per page per frame. wgpu's queue
-/// writes aren't ordered against this frame's draw calls that way — with
-/// one shared buffer, the last page's `write_buffer` would win for every
-/// draw call in the same submission, not just its own.
+// Layout must match `PageStyle` in shader.wgsl field-for-field: every
+// field is a plain [f32; 4] specifically so there's no ambiguity around
+// WGSL's std140-ish uniform alignment rules (vec2/f32 mixed in would
+// need manual padding to hit the same layout naga expects).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct PageStyleUniform {
+    // xy = page size in pixels, z = corner radius, w = focus border width
+    size_radius: [f32; 4],
+    border_color: [f32; 4],
+    // x = 1.0 if focused, 0.0 otherwise; yzw unused
+    focused: [f32; 4],
+}
+
+/// One page's on-GPU quad geometry and chrome style (rounded corners,
+/// focus ring): its own small vertex buffer and style uniform buffer,
+/// rather than one shared buffer rewritten per page per frame. wgpu's
+/// queue writes aren't ordered against this frame's draw calls that way —
+/// with one shared buffer, the last page's `write_buffer` would win for
+/// every draw call in the same submission, not just its own.
 pub struct PageQuad {
     vertex_buffer: wgpu::Buffer,
+    style_buffer: wgpu::Buffer,
+    style_bind_group: wgpu::BindGroup,
 }
 
 impl PageQuad {
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub fn new(device: &wgpu::Device, style_bind_group_layout: &wgpu::BindGroupLayout) -> Self {
         use wgpu::util::DeviceExt;
         let zero = Vertex {
             position: [0.0; 3],
@@ -66,10 +83,33 @@ impl PageQuad {
             contents: bytemuck::cast_slice(&[zero; 4]),
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
-        Self { vertex_buffer }
+
+        let style_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Page Style Buffer"),
+            contents: bytemuck::cast_slice(&[PageStyleUniform {
+                size_radius: [0.0, 0.0, PAGE_CORNER_RADIUS, FOCUS_BORDER_WIDTH],
+                border_color: FOCUS_BORDER_COLOR,
+                focused: [0.0; 4],
+            }]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let style_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Page Style Bind Group"),
+            layout: style_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: style_buffer.as_entire_binding(),
+            }],
+        });
+
+        Self {
+            vertex_buffer,
+            style_buffer,
+            style_bind_group,
+        }
     }
 
-    fn update(&self, queue: &wgpu::Queue, rect: Rect, viewport: (f32, f32)) {
+    fn update(&self, queue: &wgpu::Queue, rect: Rect, viewport: (f32, f32), focused: bool) {
         let (vw, vh) = viewport;
         let left = (rect.x / vw) * 2.0 - 1.0;
         let right = ((rect.x + rect.w) / vw) * 2.0 - 1.0;
@@ -95,6 +135,16 @@ impl PageQuad {
             },
         ];
         queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+
+        queue.write_buffer(
+            &self.style_buffer,
+            0,
+            bytemuck::cast_slice(&[PageStyleUniform {
+                size_radius: [rect.w, rect.h, PAGE_CORNER_RADIUS, FOCUS_BORDER_WIDTH],
+                border_color: FOCUS_BORDER_COLOR,
+                focused: [if focused { 1.0 } else { 0.0 }; 4],
+            }]),
+        );
     }
 }
 
@@ -105,6 +155,7 @@ pub struct PageDraw<'a> {
     pub rect: Rect,
     pub quad: &'a PageQuad,
     pub texture: Option<&'a wgpu::BindGroup>,
+    pub focused: bool,
 }
 
 pub struct GpuState {
@@ -115,6 +166,7 @@ pub struct GpuState {
     pub window: Arc<Window>,
     pipeline: wgpu::RenderPipeline,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
+    pub style_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl GpuState {
@@ -199,6 +251,21 @@ impl GpuState {
                 ],
             });
 
+        let style_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Page Style Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Page Quad Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
@@ -206,7 +273,10 @@ impl GpuState {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Page Quad Pipeline Layout"),
-            bind_group_layouts: &[Some(&texture_bind_group_layout)],
+            bind_group_layouts: &[
+                Some(&texture_bind_group_layout),
+                Some(&style_bind_group_layout),
+            ],
             immediate_size: 0,
         });
 
@@ -224,7 +294,12 @@ impl GpuState {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    // Alpha blending, not REPLACE: rounded corners work by
+                    // making the fragment shader output alpha=0 outside the
+                    // rounded rect, which needs real blending against
+                    // whatever's already in the framebuffer (the canvas
+                    // background, or a page drawn earlier) to look right.
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
@@ -256,6 +331,7 @@ impl GpuState {
             window,
             pipeline,
             texture_bind_group_layout,
+            style_bind_group_layout,
         }
     }
 
@@ -284,7 +360,8 @@ impl GpuState {
 
         let viewport = (self.config.width as f32, self.config.height as f32);
         for page in pages {
-            page.quad.update(&self.queue, page.rect, viewport);
+            page.quad
+                .update(&self.queue, page.rect, viewport, page.focused);
         }
 
         let view = surface_texture
@@ -319,6 +396,7 @@ impl GpuState {
                     continue;
                 };
                 pass.set_bind_group(0, bind_group, &[]);
+                pass.set_bind_group(1, &page.quad.style_bind_group, &[]);
                 pass.set_vertex_buffer(0, page.quad.vertex_buffer.slice(..));
                 pass.draw(0..4, 0..1);
             }
