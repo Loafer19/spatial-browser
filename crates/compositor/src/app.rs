@@ -232,7 +232,7 @@ impl ApplicationHandler for App {
                 self.keyboard.modifiers_changed(modifiers.state());
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if hotkeys::handle(&event, self.modifiers, &mut self.pages, state, &state.window) {
+                if hotkeys::handle(&event, self.modifiers, &mut self.pages, state) {
                     return;
                 }
                 // No real focus model yet — the topmost (most recently

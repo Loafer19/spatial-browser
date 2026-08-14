@@ -3,7 +3,7 @@
 // vertex buffer) and CEF texture bind group; `GpuState::render` draws
 // whichever ones it's handed, back-to-front.
 
-use super::colors::{CANVAS_BACKGROUND, FOCUS_BORDER_COLOR, FOCUS_BORDER_WIDTH, PAGE_CORNER_RADIUS};
+use super::theme::{TOKYO_NIGHT, Theme};
 use std::sync::Arc;
 use winit::window::Window;
 
@@ -86,9 +86,11 @@ impl PageQuad {
 
         let style_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Page Style Buffer"),
+            // Overwritten by `update` before the first real draw of this
+            // page, so the initial border color here doesn't matter.
             contents: bytemuck::cast_slice(&[PageStyleUniform {
-                size_radius: [0.0, 0.0, PAGE_CORNER_RADIUS, FOCUS_BORDER_WIDTH],
-                border_color: FOCUS_BORDER_COLOR,
+                size_radius: [0.0; 4],
+                border_color: [0.0; 4],
                 focused: [0.0; 4],
             }]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -109,7 +111,7 @@ impl PageQuad {
         }
     }
 
-    fn update(&self, queue: &wgpu::Queue, rect: Rect, viewport: (f32, f32), focused: bool) {
+    fn update(&self, queue: &wgpu::Queue, rect: Rect, viewport: (f32, f32), focused: bool, theme: &Theme) {
         let (vw, vh) = viewport;
         let left = (rect.x / vw) * 2.0 - 1.0;
         let right = ((rect.x + rect.w) / vw) * 2.0 - 1.0;
@@ -140,8 +142,8 @@ impl PageQuad {
             &self.style_buffer,
             0,
             bytemuck::cast_slice(&[PageStyleUniform {
-                size_radius: [rect.w, rect.h, PAGE_CORNER_RADIUS, FOCUS_BORDER_WIDTH],
-                border_color: FOCUS_BORDER_COLOR,
+                size_radius: [rect.w, rect.h, theme.corner_radius, theme.focus_border_width],
+                border_color: theme.focus_border_color,
                 focused: [if focused { 1.0 } else { 0.0 }; 4],
             }]),
         );
@@ -167,6 +169,7 @@ pub struct GpuState {
     pipeline: wgpu::RenderPipeline,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pub style_bind_group_layout: wgpu::BindGroupLayout,
+    pub theme: Theme,
 }
 
 impl GpuState {
@@ -332,6 +335,7 @@ impl GpuState {
             pipeline,
             texture_bind_group_layout,
             style_bind_group_layout,
+            theme: TOKYO_NIGHT,
         }
     }
 
@@ -360,8 +364,13 @@ impl GpuState {
 
         let viewport = (self.config.width as f32, self.config.height as f32);
         for page in pages {
-            page.quad
-                .update(&self.queue, page.rect, viewport, page.focused);
+            page.quad.update(
+                &self.queue,
+                page.rect,
+                viewport,
+                page.focused,
+                &self.theme,
+            );
         }
 
         let view = surface_texture
@@ -379,7 +388,7 @@ impl GpuState {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(CANVAS_BACKGROUND),
+                        load: wgpu::LoadOp::Clear(self.theme.canvas_background),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,

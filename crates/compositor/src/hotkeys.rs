@@ -1,16 +1,16 @@
 // Canvas-level keyboard shortcuts — closing/opening/reloading a page,
-// cycling focus, zooming, back/forward navigation, and the F1 help page
-// — that must never reach a page's own content (unlike everything
-// routed through input::KeyboardInput, which forwards to whichever CEF
-// browser is active). Kept separate from that module for exactly that
-// reason: this is about the canvas, not about one page's text input.
+// cycling focus, zooming, back/forward navigation, theme switching, and
+// the F1 help page — that must never reach a page's own content (unlike
+// everything routed through input::KeyboardInput, which forwards to
+// whichever CEF browser is active). Kept separate from that module for
+// exactly that reason: this is about the canvas, not about one page's
+// text input.
 
 use crate::browser::{self, Page};
-use crate::output::{GpuState, Rect};
+use crate::output::{GpuState, Rect, THEMES, Theme};
 use cef::{ImplBrowser, ImplBrowserHost};
 use winit::event::ElementState;
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
-use winit::window::Window;
 
 // No URL bar yet — new pages open here for now.
 const NEW_PAGE_URL: &str = "https://www.google.com";
@@ -22,8 +22,7 @@ pub fn handle(
     event: &winit::event::KeyEvent,
     modifiers: ModifiersState,
     pages: &mut Vec<Page>,
-    gpu: &GpuState,
-    window: &Window,
+    gpu: &mut GpuState,
 ) -> bool {
     if event.state != ElementState::Pressed {
         return false;
@@ -32,7 +31,7 @@ pub fn handle(
     // F1 works with no modifier — it's a dedicated function key, not a
     // letter that could be someone typing into a page.
     if event.physical_key == PhysicalKey::Code(KeyCode::F1) {
-        open_help(pages, gpu, window);
+        open_help(pages, gpu);
         return true;
     }
 
@@ -63,7 +62,7 @@ pub fn handle(
             true
         }
         PhysicalKey::Code(KeyCode::KeyT) => {
-            open_new(pages, gpu, window);
+            open_new(pages, gpu);
             true
         }
         PhysicalKey::Code(KeyCode::KeyR) => {
@@ -84,7 +83,11 @@ pub fn handle(
             true
         }
         PhysicalKey::Code(KeyCode::Space) => {
-            toggle_zoom_focused(pages, window);
+            if modifiers.shift_key() {
+                cycle_theme(gpu);
+            } else {
+                toggle_zoom_focused(pages, gpu);
+            }
             true
         }
         // Page content zoom (CEF's own zoom_level), distinct from
@@ -114,18 +117,18 @@ fn close_topmost(pages: &mut Vec<Page>) {
     }
 }
 
-fn open_new(pages: &mut Vec<Page>, gpu: &GpuState, window: &Window) {
+fn open_new(pages: &mut Vec<Page>, gpu: &GpuState) {
     // Cascade each new page a bit so it doesn't land exactly on the last
     // one; wrap around after a few so it doesn't walk off-screen forever.
     let step = ((pages.len() % 8) as f32) * 32.0;
-    let size = window.inner_size();
+    let size = gpu.window.inner_size();
     let rect = Rect {
         x: 48.0 + step,
         y: 48.0 + step,
         w: (size.width as f32 * 0.5).min(800.0),
         h: (size.height as f32 * 0.5).min(600.0),
     };
-    pages.push(browser::spawn(gpu, window, NEW_PAGE_URL, rect));
+    pages.push(browser::spawn(gpu, &gpu.window, NEW_PAGE_URL, rect));
 }
 
 fn reload_focused(pages: &[Page]) {
@@ -158,15 +161,15 @@ fn page_zoom(pages: &[Page], command: cef::ZoomCommand) {
     }
 }
 
-fn toggle_zoom_focused(pages: &mut [Page], window: &Window) {
+fn toggle_zoom_focused(pages: &mut [Page], gpu: &GpuState) {
     let Some(page) = pages.last_mut() else {
         return;
     };
-    let scale = window.scale_factor();
+    let scale = gpu.window.scale_factor();
     match page.zoomed_from.take() {
         Some(previous_rect) => page.set_rect(previous_rect, scale),
         None => {
-            let size = window.inner_size();
+            let size = gpu.window.inner_size();
             let margin = 40.0;
             let zoomed_rect = Rect {
                 x: margin,
@@ -180,8 +183,16 @@ fn toggle_zoom_focused(pages: &mut [Page], window: &Window) {
     }
 }
 
-fn open_help(pages: &mut Vec<Page>, gpu: &GpuState, window: &Window) {
-    let size = window.inner_size();
+fn cycle_theme(gpu: &mut GpuState) {
+    let current = THEMES
+        .iter()
+        .position(|t| t.name == gpu.theme.name)
+        .unwrap_or(0);
+    gpu.theme = THEMES[(current + 1) % THEMES.len()];
+}
+
+fn open_help(pages: &mut Vec<Page>, gpu: &GpuState) {
+    let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.6).clamp(420.0, 720.0);
     let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
     let rect = Rect {
@@ -190,47 +201,57 @@ fn open_help(pages: &mut Vec<Page>, gpu: &GpuState, window: &Window) {
         w,
         h,
     };
-    pages.push(browser::spawn(gpu, window, HELP_PAGE_URL, rect));
+    let url = help_page_url(&gpu.theme);
+    pages.push(browser::spawn(gpu, &gpu.window, &url, rect));
 }
 
-// Tokyo Night palette (this machine's active Omarchy theme, from
-// /usr/share/omarchy/themes/tokyo-night/colors.toml) — as rgb(), not hex:
-// an unescaped `#` in a `data:` URL starts a fragment, silently
-// truncating everything after it from the actual document.
-macro_rules! help_row {
-    ($key:expr, $desc:expr) => {
-        concat!(
-            "<div style=\"",
-            "display:flex;justify-content:space-between;align-items:center;",
-            "padding:10px 14px;background:rgb(36,40,59);border-radius:8px;",
-            "border:1px solid rgb(65,72,104)\">",
-            "<kbd style=\"background:rgb(122,162,247);color:rgb(19,20,28);",
-            "padding:4px 10px;border-radius:6px;font-weight:600;font-size:13px\">",
-            $key,
-            "</kbd><span>",
-            $desc,
-            "</span></div>"
-        )
-    };
-}
+const HELP_ENTRIES: &[(&str, &str)] = &[
+    ("Ctrl+T", "New page"),
+    ("Ctrl+W", "Close page"),
+    ("Ctrl+R", "Reload page"),
+    ("Ctrl+Tab", "Next page"),
+    ("Ctrl+Shift+Tab", "Previous page"),
+    ("Ctrl+Space", "Zoom to canvas"),
+    ("Ctrl+= / Ctrl+-", "Zoom in / out"),
+    ("Ctrl+0", "Reset zoom"),
+    ("Alt+Left/Right", "Back / forward"),
+    ("Alt+Left-drag", "Move a page"),
+    ("Ctrl+Shift+Space", "Cycle UI theme"),
+    ("F1", "This page"),
+];
 
-const HELP_PAGE_URL: &str = concat!(
-    "data:text/html,",
-    "<body style=\"margin:0;padding:32px;background:rgb(26,27,38);",
-    "color:rgb(169,177,214);font-family:ui-monospace,monospace;font-size:15px\">",
-    "<h1 style=\"margin:0 0 20px;color:rgb(192,202,245);font-size:20px\">",
-    "spatial-browser &mdash; shortcuts</h1>",
-    "<div style=\"display:flex;flex-direction:column;gap:8px\">",
-    help_row!("Ctrl+T", "New page"),
-    help_row!("Ctrl+W", "Close focused page"),
-    help_row!("Ctrl+R", "Reload focused page"),
-    help_row!("Ctrl+Tab", "Next page (cycle focus)"),
-    help_row!("Ctrl+Shift+Tab", "Previous page"),
-    help_row!("Ctrl+Space", "Zoom focused page to canvas"),
-    help_row!("Ctrl+= / Ctrl+-", "Zoom page content in / out"),
-    help_row!("Ctrl+0", "Reset page content zoom"),
-    help_row!("Alt+Left/Right", "Back / forward"),
-    help_row!("Alt+Left-drag", "Move a page"),
-    help_row!("F1", "This page"),
-    "</div></body>",
-);
+/// Builds the F1 help page's `data:` URL from `theme`'s palette, so it's
+/// never out of sync with what's actually on screen. Built at runtime
+/// (not a `concat!`-based const like the fixed entry list could be)
+/// because the theme is chosen at runtime.
+fn help_page_url(theme: &Theme) -> String {
+    let mut rows = String::new();
+    for (key, desc) in HELP_ENTRIES {
+        rows.push_str(&format!(
+            "<div style=\"display:flex;justify-content:space-between;align-items:center;\
+             gap:16px;padding:10px 14px;background:{card_bg};border-radius:8px;\
+             border:1px solid {card_border}\">\
+             <kbd style=\"flex-shrink:0;white-space:nowrap;background:{key_bg};color:{key_fg};\
+             padding:4px 10px;border-radius:6px;font-weight:600;font-size:13px\">{key}</kbd>\
+             <span style=\"text-align:right;white-space:nowrap\">{desc}</span></div>",
+            card_bg = theme.help_card_bg,
+            card_border = theme.help_card_border,
+            key_bg = theme.help_key_bg,
+            key_fg = theme.help_key_fg,
+        ));
+    }
+    // Hex colors avoided deliberately: an unescaped `#` in a `data:` URL
+    // starts a fragment, silently truncating everything after it from
+    // the actual document — every Theme field here is an rgb() string.
+    format!(
+        "data:text/html,<body style=\"margin:0;padding:32px;background:{bg};color:{fg};\
+         font-family:ui-monospace,monospace;font-size:15px\">\
+         <h1 style=\"margin:0 0 20px;color:{heading};font-size:20px\">\
+         spatial-browser &mdash; shortcuts ({name})</h1>\
+         <div style=\"display:flex;flex-direction:column;gap:8px\">{rows}</div></body>",
+        bg = theme.help_bg,
+        fg = theme.help_fg,
+        heading = theme.help_heading,
+        name = theme.name,
+    )
+}
