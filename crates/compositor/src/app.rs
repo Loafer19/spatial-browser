@@ -3,8 +3,10 @@
 // to that page's CEF browser in its own local coordinates, and drives
 // per-page dragging (Alt+Left-drag moves a page — same convention as
 // borderless-window drag in most Linux window managers, including
-// Hyprland's own `bindm ... movewindow`). Camera is identity for now (no
-// pan/zoom): canvas space == screen space.
+// Hyprland's own `bindm ... movewindow`) and resizing (dragging a page's
+// bottom-right corner). Page rects live in world space; see camera.rs
+// for the pan/zoom mapping to screen space that hit-testing and drawing
+// convert through.
 
 use crate::browser::{self, Page};
 use crate::camera::Camera;
@@ -54,6 +56,28 @@ pub struct App {
     // (screen-space cursor position, camera offset) at the start of a
     // middle-button canvas pan.
     panning: Option<((f32, f32), (f32, f32))>,
+    // Set while the topmost page's bottom-right corner (see
+    // resize_hit_test) is being dragged to resize it. Its top-left stays
+    // fixed; only the corner under the cursor moves.
+    resizing: bool,
+}
+
+/// Screen-space size (regardless of zoom, like a scrollbar grip) of the
+/// invisible grab region at a page's bottom-right corner used to resize
+/// it — no modifier needed, distinguished from an ordinary click purely
+/// by proximity to the corner.
+const RESIZE_HANDLE: f32 = 18.0;
+const MIN_PAGE_SIZE: f32 = 160.0;
+
+/// Topmost page (last in z-order) whose bottom-right corner (screen
+/// space) is within `RESIZE_HANDLE` of the cursor, if any.
+fn resize_hit_test(pages: &[Page], camera: &Camera, cursor_screen: (f32, f32)) -> Option<usize> {
+    let half = RESIZE_HANDLE / 2.0;
+    pages.iter().rposition(|p| {
+        let r = camera.rect_to_screen(p.rect);
+        let corner = (r.x + r.w, r.y + r.h);
+        (cursor_screen.0 - corner.0).abs() <= half && (cursor_screen.1 - corner.1).abs() <= half
+    })
 }
 
 /// Topmost page (last in z-order) whose rect contains the point, if any.
@@ -168,6 +192,18 @@ impl ApplicationHandler for App {
 
                 let cursor_world = self.camera.screen_to_world(self.cursor_window);
 
+                if self.resizing {
+                    let page = self.pages.last_mut().expect("resizing with no pages");
+                    let rect = Rect {
+                        x: page.rect.x,
+                        y: page.rect.y,
+                        w: (cursor_world.0 - page.rect.x).max(MIN_PAGE_SIZE),
+                        h: (cursor_world.1 - page.rect.y).max(MIN_PAGE_SIZE),
+                    };
+                    page.set_rect(rect, scale);
+                    return;
+                }
+
                 if let Some(offset) = self.dragging {
                     let page = self.pages.last_mut().expect("dragging with no pages");
                     let rect = Rect {
@@ -220,6 +256,26 @@ impl ApplicationHandler for App {
                         ElementState::Released => self.dragging = None,
                     }
                     return;
+                }
+
+                if button == MouseButton::Left {
+                    match element_state {
+                        ElementState::Pressed => {
+                            if let Some(i) =
+                                resize_hit_test(&self.pages, &self.camera, self.cursor_window)
+                            {
+                                bring_to_front(&mut self.pages, i);
+                                self.resizing = true;
+                                return;
+                            }
+                        }
+                        ElementState::Released => {
+                            if self.resizing {
+                                self.resizing = false;
+                                return;
+                            }
+                        }
+                    }
                 }
 
                 let cursor_world = self.camera.screen_to_world(self.cursor_window);

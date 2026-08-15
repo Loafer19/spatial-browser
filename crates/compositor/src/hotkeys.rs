@@ -233,6 +233,7 @@ const HELP_ENTRIES: &[(&str, &str)] = &[
     ("Ctrl+0", "Reset zoom"),
     ("Alt+Left/Right", "Back / forward"),
     ("Alt+Left-drag", "Move a page"),
+    ("Drag corner", "Resize a page"),
     ("Middle-drag", "Pan canvas"),
     ("Ctrl+Scroll", "Zoom canvas"),
     ("Ctrl+Shift+0", "Reset canvas view"),
