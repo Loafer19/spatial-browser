@@ -9,6 +9,10 @@
 use crate::browser::Page;
 use crate::camera::Camera;
 use crate::output::{Rect, THEMES, Theme};
+use cef::{ImplBrowser, ImplFrame};
+
+// How many recently-closed pages Ctrl+Shift+T can reach back through.
+const MAX_CLOSED: usize = 20;
 
 pub struct Session {
     pages: Vec<Page>,
@@ -20,6 +24,10 @@ pub struct Session {
     // can be zoomed at a time in practice (Page::zoomed_from parallels
     // this), so a single slot is enough.
     zoomed_camera: Option<Camera>,
+    // Rect + URL of recently closed pages, most-recent last, for
+    // Ctrl+Shift+T (see pop_closed). Not persisted — "undo close" only
+    // makes sense within the current run.
+    closed: Vec<(Rect, String)>,
 }
 
 impl Session {
@@ -30,6 +38,7 @@ impl Session {
             theme,
             dirty: false,
             zoomed_camera: None,
+            closed: Vec::new(),
         }
     }
 
@@ -63,15 +72,33 @@ impl Session {
         self.mark_dirty();
     }
 
-    /// Pops the topmost page and tells CEF to close it, if any.
+    /// Pops the topmost page and tells CEF to close it, if any. Its rect
+    /// and current URL are kept for `pop_closed` (Ctrl+Shift+T) first.
     pub fn close_topmost(&mut self) {
         let Some(page) = self.pages.pop() else {
             return;
         };
-        if let Some(host) = cef::ImplBrowser::host(&page.browser) {
+        if let Some(url) = page
+            .browser
+            .main_frame()
+            .map(|frame| cef::CefString::from(&frame.url()).to_string())
+        {
+            self.closed.push((page.rect, url));
+            if self.closed.len() > MAX_CLOSED {
+                self.closed.remove(0);
+            }
+        }
+        if let Some(host) = page.browser.host() {
             cef::ImplBrowserHost::close_browser(&host, true as _);
         }
         self.mark_dirty();
+    }
+
+    /// Pops the most recently closed page's rect+URL, if any — the
+    /// caller (hotkeys::reopen_closed) spawns a real page for it, since
+    /// Session itself doesn't own GpuState/CEF spawning.
+    pub fn pop_closed(&mut self) -> Option<(Rect, String)> {
+        self.closed.pop()
     }
 
     /// Moves the page at `index` to the end of z-order (topmost) and

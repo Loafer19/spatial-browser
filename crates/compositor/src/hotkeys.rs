@@ -67,7 +67,11 @@ pub fn handle(
             true
         }
         PhysicalKey::Code(KeyCode::KeyT) => {
-            open_new(session, gpu);
+            if modifiers.shift_key() {
+                reopen_closed(session, gpu);
+            } else {
+                open_new(session, gpu);
+            }
             true
         }
         PhysicalKey::Code(KeyCode::KeyR) => {
@@ -141,6 +145,14 @@ fn open_new(session: &mut Session, gpu: &GpuState) {
         h: (size.height as f32 * 0.5).min(600.0) / camera.zoom,
     };
     session.add_page(browser::spawn(gpu, &gpu.window, NEW_PAGE_URL, rect));
+}
+
+/// Reopens the most recently closed page (if any) at its former rect,
+/// bringing it to front.
+fn reopen_closed(session: &mut Session, gpu: &GpuState) {
+    if let Some((rect, url)) = session.pop_closed() {
+        session.add_page(browser::spawn(gpu, &gpu.window, &url, rect));
+    }
 }
 
 fn reload_focused(session: &Session) {
@@ -268,6 +280,7 @@ fn open_help(session: &mut Session, gpu: &GpuState) {
 
 const HELP_ENTRIES: &[(&str, &str)] = &[
     ("Ctrl+T", "New page"),
+    ("Ctrl+Shift+T", "Reopen closed page"),
     ("Ctrl+W", "Close page"),
     ("Ctrl+R", "Reload page"),
     ("Ctrl+D", "Bookmark page"),
