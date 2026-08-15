@@ -6,16 +6,20 @@
 // Hyprland's own `bindm ... movewindow`) and resizing (dragging a page's
 // bottom-right corner). Page rects live in world space; see camera.rs
 // for the pan/zoom mapping to screen space that hit-testing and drawing
-// convert through.
+// convert through. Canvas state itself (pages/camera/theme) lives in
+// session.rs, persisted via persistence.rs.
 
 use crate::browser::{self, Page};
 use crate::camera::Camera;
 use crate::hotkeys;
 use crate::input::{KeyboardInput, MouseInput};
-use crate::output::{FrameOutcome, GpuState, PageDraw, Rect};
+use crate::output::{FrameOutcome, GpuState, PageDraw, Rect, THEMES};
+use crate::persistence;
+use crate::session::Session;
 use cef::{ImplBrowser, ImplBrowserHost};
 use cef_bridge::CURSOR;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, MouseButton, WindowEvent},
@@ -24,10 +28,14 @@ use winit::{
     window::{CursorIcon, WindowAttributes, WindowId},
 };
 
-#[derive(Default)]
+// Debounced: a save happens at most this often, however many mutations
+// land in between (a drag/resize/zoom-drag calls a Session method on
+// every mouse-move frame).
+const SAVE_DEBOUNCE: Duration = Duration::from_secs(1);
+
 pub struct App {
     state: Option<GpuState>,
-    pages: Vec<Page>,
+    session: Session,
     mouse: MouseInput,
     keyboard: KeyboardInput,
     // Raw window-space physical cursor position — updated on every
@@ -44,11 +52,6 @@ pub struct App {
     // whatever size they were last laid out for, keeping draw and
     // hit-test in agreement no matter when the "real" size arrives.
     canvas_size: (f32, f32),
-    // World<->screen mapping for the canvas — pan/zoom. Page rects are
-    // stored in world space (see browser::Page::rect); everything that
-    // touches screen-space input (hit-testing, dragging) converts through
-    // this first.
-    camera: Camera,
     // Offset from the dragged (always-topmost, since dragging brings a
     // page to front) page's rect origin (world space) to the cursor, set
     // at drag start.
@@ -70,6 +73,28 @@ pub struct App {
     // a fresh event arrives; otherwise, once resize_hover's override
     // takes the cursor, there's no later CEF event to hand it back.
     cef_cursor: CursorIcon,
+    // Last time `persistence::save` ran — gates the debounce above.
+    last_save: Instant,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            state: None,
+            session: Session::new(Vec::new(), Camera::default(), THEMES[0]),
+            mouse: MouseInput::default(),
+            keyboard: KeyboardInput::default(),
+            cursor_window: (0.0, 0.0),
+            modifiers: ModifiersState::default(),
+            canvas_size: (0.0, 0.0),
+            dragging: None,
+            panning: None,
+            resizing: false,
+            resize_hover: false,
+            cef_cursor: CursorIcon::default(),
+            last_save: Instant::now(),
+        }
+    }
 }
 
 /// Screen-space size (regardless of zoom, like a scrollbar grip) of the
@@ -95,14 +120,6 @@ fn hit_test(pages: &[Page], x: f32, y: f32) -> Option<usize> {
     pages.iter().rposition(|p| p.rect.contains(x, y))
 }
 
-/// Moves the page at `index` to the end of z-order (topmost) and returns
-/// its new index.
-fn bring_to_front(pages: &mut Vec<Page>, index: usize) -> usize {
-    let page = pages.remove(index);
-    pages.push(page);
-    pages.len() - 1
-}
-
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_some() {
@@ -116,41 +133,45 @@ impl ApplicationHandler for App {
         );
         let state = pollster::block_on(GpuState::new(window.clone()));
 
-        // Two pages side by side, with margins — proves the canvas holds
-        // more than one independently-rendered, independently-placed page
-        // before anything fancier (resize handles, grouping, pan/zoom).
-        let size = window.inner_size();
-        let margin = 24.0;
-        let gap = 24.0;
-        let page_w = (size.width as f32 - margin * 2.0 - gap) / 2.0;
-        let page_h = size.height as f32 - margin * 2.0;
-        let rects = [
-            Rect {
-                x: margin,
-                y: margin,
-                w: page_w,
-                h: page_h,
-            },
-            Rect {
-                x: margin + page_w + gap,
-                y: margin,
-                w: page_w,
-                h: page_h,
-            },
-        ];
-        let urls = [
-            "https://www.google.com",
-            // Hex colors avoided deliberately: an unescaped `#` in a `data:`
-            // URL starts a fragment, silently truncating everything after
-            // it from the actual document.
-            "data:text/html,<body style=\"background:rgb(42,106,74);color:rgb(255,255,255);font-family:sans-serif;font-size:48px;display:flex;align-items:center;justify-content:center;height:100vh;margin:0\">Page 2</body>",
-        ];
-        self.pages = rects
-            .into_iter()
-            .zip(urls)
-            .map(|(rect, url)| browser::spawn(&state, &window, url, rect))
-            .collect();
-        self.canvas_size = (size.width as f32, size.height as f32);
+        self.session = persistence::load(&state, &window).unwrap_or_else(|| {
+            // No saved session yet (first run, or a load error) — two
+            // pages side by side, with margins, proves the canvas holds
+            // more than one independently-rendered, independently-placed
+            // page.
+            let size = window.inner_size();
+            let margin = 24.0;
+            let gap = 24.0;
+            let page_w = (size.width as f32 - margin * 2.0 - gap) / 2.0;
+            let page_h = size.height as f32 - margin * 2.0;
+            let rects = [
+                Rect {
+                    x: margin,
+                    y: margin,
+                    w: page_w,
+                    h: page_h,
+                },
+                Rect {
+                    x: margin + page_w + gap,
+                    y: margin,
+                    w: page_w,
+                    h: page_h,
+                },
+            ];
+            let urls = [
+                "https://www.google.com",
+                // Hex colors avoided deliberately: an unescaped `#` in a
+                // `data:` URL starts a fragment, silently truncating
+                // everything after it from the actual document.
+                "data:text/html,<body style=\"background:rgb(42,106,74);color:rgb(255,255,255);font-family:sans-serif;font-size:48px;display:flex;align-items:center;justify-content:center;height:100vh;margin:0\">Page 2</body>",
+            ];
+            let pages = rects
+                .into_iter()
+                .zip(urls)
+                .map(|(rect, url)| browser::spawn(&state, &window, url, rect))
+                .collect();
+            Session::new(pages, Camera::default(), THEMES[0])
+        });
+        self.canvas_size = (window.inner_size().width as f32, window.inner_size().height as f32);
 
         self.state = Some(state);
         window.request_redraw();
@@ -165,7 +186,10 @@ impl ApplicationHandler for App {
         }
 
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                persistence::save(&self.session);
+                event_loop.exit();
+            }
             WindowEvent::Resized(size) => {
                 state.resize(size.width, size.height);
 
@@ -174,15 +198,7 @@ impl ApplicationHandler for App {
                 if old_w > 0.0 && old_h > 0.0 {
                     let (scale_x, scale_y) = (new_w / old_w, new_h / old_h);
                     let dpi_scale = state.window.scale_factor();
-                    for page in &mut self.pages {
-                        let rect = Rect {
-                            x: page.rect.x * scale_x,
-                            y: page.rect.y * scale_y,
-                            w: page.rect.w * scale_x,
-                            h: page.rect.h * scale_y,
-                        };
-                        page.set_rect(rect, dpi_scale);
-                    }
+                    self.session.rescale_pages(scale_x, scale_y, dpi_scale);
                 }
                 self.canvas_size = (new_w, new_h);
             }
@@ -193,43 +209,45 @@ impl ApplicationHandler for App {
                 if let Some((start, offset_at_start)) = self.panning {
                     let dx = self.cursor_window.0 - start.0;
                     let dy = self.cursor_window.1 - start.1;
-                    self.camera.offset = (
-                        offset_at_start.0 - dx / self.camera.zoom,
-                        offset_at_start.1 - dy / self.camera.zoom,
-                    );
+                    let zoom = self.session.camera().zoom;
+                    self.session.pan_camera_to((
+                        offset_at_start.0 - dx / zoom,
+                        offset_at_start.1 - dy / zoom,
+                    ));
                     return;
                 }
 
-                let cursor_world = self.camera.screen_to_world(self.cursor_window);
+                let camera = self.session.camera();
+                let cursor_world = camera.screen_to_world(self.cursor_window);
                 self.resize_hover = self.resizing
-                    || resize_hit_test(&self.pages, &self.camera, self.cursor_window).is_some();
+                    || resize_hit_test(self.session.pages(), &camera, self.cursor_window).is_some();
 
                 if self.resizing {
-                    let page = self.pages.last_mut().expect("resizing with no pages");
+                    let page = self.session.pages().last().expect("resizing with no pages");
                     let rect = Rect {
                         x: page.rect.x,
                         y: page.rect.y,
                         w: (cursor_world.0 - page.rect.x).max(MIN_PAGE_SIZE),
                         h: (cursor_world.1 - page.rect.y).max(MIN_PAGE_SIZE),
                     };
-                    page.set_rect(rect, scale);
+                    self.session.set_topmost_rect(rect, scale);
                     return;
                 }
 
                 if let Some(offset) = self.dragging {
-                    let page = self.pages.last_mut().expect("dragging with no pages");
+                    let page = self.session.pages().last().expect("dragging with no pages");
                     let rect = Rect {
                         x: cursor_world.0 - offset.0,
                         y: cursor_world.1 - offset.1,
                         w: page.rect.w,
                         h: page.rect.h,
                     };
-                    page.set_rect(rect, scale);
+                    self.session.set_topmost_rect(rect, scale);
                     return;
                 }
 
-                if let Some(i) = hit_test(&self.pages, cursor_world.0, cursor_world.1) {
-                    let page = &self.pages[i];
+                if let Some(i) = hit_test(self.session.pages(), cursor_world.0, cursor_world.1) {
+                    let page = &self.session.pages()[i];
                     let local = (
                         (cursor_world.0 - page.rect.x) as f64,
                         (cursor_world.1 - page.rect.y) as f64,
@@ -253,7 +271,7 @@ impl ApplicationHandler for App {
                 {
                     match element_state {
                         ElementState::Pressed => {
-                            self.panning = Some((self.cursor_window, self.camera.offset));
+                            self.panning = Some((self.cursor_window, self.session.camera().offset));
                         }
                         ElementState::Released => self.panning = None,
                     }
@@ -261,13 +279,14 @@ impl ApplicationHandler for App {
                 }
 
                 if button == MouseButton::Left && self.modifiers.alt_key() {
-                    let cursor_world = self.camera.screen_to_world(self.cursor_window);
+                    let cursor_world = self.session.camera().screen_to_world(self.cursor_window);
                     match element_state {
                         ElementState::Pressed => {
-                            if let Some(i) = hit_test(&self.pages, cursor_world.0, cursor_world.1)
+                            if let Some(i) =
+                                hit_test(self.session.pages(), cursor_world.0, cursor_world.1)
                             {
-                                let top = bring_to_front(&mut self.pages, i);
-                                let rect = self.pages[top].rect;
+                                let top = self.session.bring_to_front(i);
+                                let rect = self.session.pages()[top].rect;
                                 self.dragging =
                                     Some((cursor_world.0 - rect.x, cursor_world.1 - rect.y));
                             }
@@ -280,10 +299,12 @@ impl ApplicationHandler for App {
                 if button == MouseButton::Left {
                     match element_state {
                         ElementState::Pressed => {
-                            if let Some(i) =
-                                resize_hit_test(&self.pages, &self.camera, self.cursor_window)
-                            {
-                                bring_to_front(&mut self.pages, i);
+                            if let Some(i) = resize_hit_test(
+                                self.session.pages(),
+                                &self.session.camera(),
+                                self.cursor_window,
+                            ) {
+                                self.session.bring_to_front(i);
                                 self.resizing = true;
                                 return;
                             }
@@ -297,16 +318,17 @@ impl ApplicationHandler for App {
                     }
                 }
 
-                let cursor_world = self.camera.screen_to_world(self.cursor_window);
-                let Some(i) = hit_test(&self.pages, cursor_world.0, cursor_world.1) else {
+                let cursor_world = self.session.camera().screen_to_world(self.cursor_window);
+                let Some(i) = hit_test(self.session.pages(), cursor_world.0, cursor_world.1)
+                else {
                     return;
                 };
                 let i = if element_state == ElementState::Pressed {
-                    bring_to_front(&mut self.pages, i)
+                    self.session.bring_to_front(i)
                 } else {
                     i
                 };
-                let page = &self.pages[i];
+                let page = &self.session.pages()[i];
                 let host = page.browser.host();
                 self.mouse.button(element_state, button, host.as_ref());
             }
@@ -317,25 +339,25 @@ impl ApplicationHandler for App {
                         winit::event::MouseScrollDelta::PixelDelta(p) => (p.y / 40.0) as f32,
                     };
                     let factor = 1.1f32.powf(scroll_y);
-                    self.camera.zoom_at(self.cursor_window, factor);
+                    self.session.zoom_camera_at(self.cursor_window, factor);
                     return;
                 }
 
-                let cursor_world = self.camera.screen_to_world(self.cursor_window);
-                if let Some(i) = hit_test(&self.pages, cursor_world.0, cursor_world.1) {
-                    let host = self.pages[i].browser.host();
+                let cursor_world = self.session.camera().screen_to_world(self.cursor_window);
+                if let Some(i) = hit_test(self.session.pages(), cursor_world.0, cursor_world.1) {
+                    let host = self.session.pages()[i].browser.host();
                     self.mouse.wheel(delta, host.as_ref());
                 }
             }
             WindowEvent::CursorLeft { .. } => {
-                let cursor_world = self.camera.screen_to_world(self.cursor_window);
-                if let Some(i) = hit_test(&self.pages, cursor_world.0, cursor_world.1) {
-                    let host = self.pages[i].browser.host();
+                let cursor_world = self.session.camera().screen_to_world(self.cursor_window);
+                if let Some(i) = hit_test(self.session.pages(), cursor_world.0, cursor_world.1) {
+                    let host = self.session.pages()[i].browser.host();
                     self.mouse.cursor_left(host.as_ref());
                 }
             }
             WindowEvent::Focused(focused) => {
-                for page in &self.pages {
+                for page in self.session.pages() {
                     if let Some(host) = page.browser.host() {
                         host.set_focus(focused as _);
                     }
@@ -346,24 +368,18 @@ impl ApplicationHandler for App {
                 self.keyboard.modifiers_changed(modifiers.state());
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if hotkeys::handle(
-                    &event,
-                    self.modifiers,
-                    &mut self.pages,
-                    state,
-                    &mut self.camera,
-                ) {
+                if hotkeys::handle(&event, self.modifiers, &mut self.session, state) {
                     return;
                 }
                 // No real focus model yet — the topmost (most recently
                 // clicked) page is the closest proxy for "active page".
-                if let Some(page) = self.pages.last() {
+                if let Some(page) = self.session.pages().last() {
                     let host = page.browser.host();
                     self.keyboard.key_event(&event, host.as_ref());
                 }
             }
             WindowEvent::RedrawRequested => {
-                for page in &self.pages {
+                for page in self.session.pages() {
                     if let Some(host) = page.browser.host() {
                         host.send_external_begin_frame();
                     }
@@ -377,22 +393,24 @@ impl ApplicationHandler for App {
                     self.cef_cursor
                 });
 
-                let last_index = self.pages.len().saturating_sub(1);
-                let textures: Vec<_> = self.pages.iter().map(Page::texture).collect();
-                let draws: Vec<PageDraw> = self
-                    .pages
+                let camera = self.session.camera();
+                let pages = self.session.pages();
+                let last_index = pages.len().saturating_sub(1);
+                let textures: Vec<_> = pages.iter().map(Page::texture).collect();
+                let draws: Vec<PageDraw> = pages
                     .iter()
                     .zip(textures.iter())
                     .enumerate()
                     .map(|(i, (page, texture))| PageDraw {
-                        rect: self.camera.rect_to_screen(page.rect),
+                        rect: camera.rect_to_screen(page.rect),
                         quad: &page.quad,
                         texture: texture.as_ref(),
                         focused: i == last_index,
                     })
                     .collect();
 
-                match state.render(&draws) {
+                let theme = self.session.theme();
+                match state.render(&draws, &theme) {
                     FrameOutcome::Rendered | FrameOutcome::Skip => {}
                     FrameOutcome::Reconfigure => {
                         let size = state.window.inner_size();
@@ -403,6 +421,13 @@ impl ApplicationHandler for App {
                         event_loop.exit();
                     }
                 }
+
+                if self.session.dirty() && self.last_save.elapsed() >= SAVE_DEBOUNCE {
+                    persistence::save(&self.session);
+                    self.session.clear_dirty();
+                    self.last_save = Instant::now();
+                }
+
                 state.window.request_redraw();
             }
             _ => {}

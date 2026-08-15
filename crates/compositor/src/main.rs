@@ -17,6 +17,9 @@ mod camera;
 mod hotkeys;
 mod input;
 mod output;
+mod persistence;
+mod session;
+mod single_instance;
 
 use app::App;
 use cef::{args::Args, *};
@@ -46,6 +49,14 @@ fn main() -> ExitCode {
     } else {
         // Non-browser (renderer/gpu/utility) subprocess: execute_process
         // already ran the subprocess entry point above, nothing left to do.
+        return ExitCode::from(0);
+    }
+
+    // Checked only for the actual browser process, never a re-exec'd
+    // subprocess above (which would otherwise collide with the running
+    // instance's own lock and abort CEF entirely). A conflict here means
+    // we're done before paying for CEF's initialize() below.
+    if single_instance::acquire_or_notify() {
         return ExitCode::from(0);
     }
 

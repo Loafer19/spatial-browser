@@ -457,6 +457,8 @@ dependencies = [
  "cef-bridge",
  "log",
  "pollster",
+ "serde",
+ "serde_json",
  "tracing-subscriber",
  "wgpu",
  "winit",

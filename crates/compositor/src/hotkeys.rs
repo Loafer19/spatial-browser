@@ -8,9 +8,9 @@
 // itself is mouse-driven (middle-drag / Ctrl+scroll, see app.rs) — only
 // its keyboard reset lives here.
 
-use crate::browser::{self, Page};
-use crate::camera::Camera;
-use crate::output::{GpuState, Rect, THEMES, Theme};
+use crate::browser;
+use crate::output::{GpuState, Rect, Theme};
+use crate::session::Session;
 use cef::{ImplBrowser, ImplBrowserHost};
 use winit::event::ElementState;
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
@@ -24,9 +24,8 @@ const NEW_PAGE_URL: &str = "https://www.google.com";
 pub fn handle(
     event: &winit::event::KeyEvent,
     modifiers: ModifiersState,
-    pages: &mut Vec<Page>,
-    gpu: &mut GpuState,
-    camera: &mut Camera,
+    session: &mut Session,
+    gpu: &GpuState,
 ) -> bool {
     if event.state != ElementState::Pressed {
         return false;
@@ -35,7 +34,7 @@ pub fn handle(
     // F1 works with no modifier — it's a dedicated function key, not a
     // letter that could be someone typing into a page.
     if event.physical_key == PhysicalKey::Code(KeyCode::F1) {
-        open_help(pages, gpu, camera);
+        open_help(session, gpu);
         return true;
     }
 
@@ -45,11 +44,11 @@ pub fn handle(
     if modifiers.alt_key() && !modifiers.control_key() {
         match event.physical_key {
             PhysicalKey::Code(KeyCode::ArrowLeft) => {
-                go_back(pages);
+                go_back(session);
                 return true;
             }
             PhysicalKey::Code(KeyCode::ArrowRight) => {
-                go_forward(pages);
+                go_forward(session);
                 return true;
             }
             _ => {}
@@ -62,35 +61,33 @@ pub fn handle(
 
     match event.physical_key {
         PhysicalKey::Code(KeyCode::KeyW) => {
-            close_topmost(pages);
+            session.close_topmost();
             true
         }
         PhysicalKey::Code(KeyCode::KeyT) => {
-            open_new(pages, gpu, camera);
+            open_new(session, gpu);
             true
         }
         PhysicalKey::Code(KeyCode::KeyR) => {
-            reload_focused(pages);
+            reload_focused(session);
             true
         }
         PhysicalKey::Code(KeyCode::Tab) => {
             // Focus == topmost (last), so cycling focus is just rotating
             // z-order: rotate_left brings the front page to the back,
             // making the *next* page topmost/focused each press.
-            if !pages.is_empty() {
-                if modifiers.shift_key() {
-                    pages.rotate_right(1);
-                } else {
-                    pages.rotate_left(1);
-                }
-            }
+            session.rotate_focus(modifiers.shift_key());
             true
         }
         PhysicalKey::Code(KeyCode::Space) => {
             if modifiers.shift_key() {
-                cycle_theme(gpu);
+                session.cycle_theme();
             } else {
-                toggle_zoom_focused(pages, gpu, camera);
+                let size = gpu.window.inner_size();
+                session.toggle_zoom_focused(
+                    (size.width as f32, size.height as f32),
+                    gpu.window.scale_factor(),
+                );
             }
             true
         }
@@ -99,18 +96,18 @@ pub fn handle(
         // key with `+` on a US layout, matching every browser's Ctrl+=
         // convention for zoom in.
         PhysicalKey::Code(KeyCode::Equal) => {
-            page_zoom(pages, cef::ZoomCommand::IN);
+            page_zoom(session, cef::ZoomCommand::IN);
             true
         }
         PhysicalKey::Code(KeyCode::Minus) => {
-            page_zoom(pages, cef::ZoomCommand::OUT);
+            page_zoom(session, cef::ZoomCommand::OUT);
             true
         }
         PhysicalKey::Code(KeyCode::Digit0) => {
             if modifiers.shift_key() {
-                camera.reset();
+                session.reset_camera();
             } else {
-                page_zoom(pages, cef::ZoomCommand::RESET);
+                page_zoom(session, cef::ZoomCommand::RESET);
             }
             true
         }
@@ -118,20 +115,14 @@ pub fn handle(
     }
 }
 
-fn close_topmost(pages: &mut Vec<Page>) {
-    let Some(page) = pages.pop() else { return };
-    if let Some(host) = page.browser.host() {
-        host.close_browser(true as _);
-    }
-}
-
-fn open_new(pages: &mut Vec<Page>, gpu: &GpuState, camera: &Camera) {
+fn open_new(session: &mut Session, gpu: &GpuState) {
     // Cascade each new page a bit so it doesn't land exactly on the last
     // one; wrap around after a few so it doesn't walk off-screen forever.
     // Placed by screen position (current view), then converted to world
     // space — so it lands in view regardless of current pan/zoom.
-    let step = ((pages.len() % 8) as f32) * 32.0;
+    let step = ((session.pages().len() % 8) as f32) * 32.0;
     let size = gpu.window.inner_size();
+    let camera = session.camera();
     let world_origin = camera.screen_to_world((48.0 + step, 48.0 + step));
     let rect = Rect {
         x: world_origin.0,
@@ -139,77 +130,44 @@ fn open_new(pages: &mut Vec<Page>, gpu: &GpuState, camera: &Camera) {
         w: (size.width as f32 * 0.5).min(800.0) / camera.zoom,
         h: (size.height as f32 * 0.5).min(600.0) / camera.zoom,
     };
-    pages.push(browser::spawn(gpu, &gpu.window, NEW_PAGE_URL, rect));
+    session.add_page(browser::spawn(gpu, &gpu.window, NEW_PAGE_URL, rect));
 }
 
-fn reload_focused(pages: &[Page]) {
-    if let Some(page) = pages.last() {
+fn reload_focused(session: &Session) {
+    if let Some(page) = session.pages().last() {
         page.browser.reload();
     }
 }
 
-fn go_back(pages: &[Page]) {
-    if let Some(page) = pages.last() {
+fn go_back(session: &Session) {
+    if let Some(page) = session.pages().last() {
         if page.browser.can_go_back() != 0 {
             page.browser.go_back();
         }
     }
 }
 
-fn go_forward(pages: &[Page]) {
-    if let Some(page) = pages.last() {
+fn go_forward(session: &Session) {
+    if let Some(page) = session.pages().last() {
         if page.browser.can_go_forward() != 0 {
             page.browser.go_forward();
         }
     }
 }
 
-fn page_zoom(pages: &[Page], command: cef::ZoomCommand) {
-    if let Some(page) = pages.last() {
+fn page_zoom(session: &Session, command: cef::ZoomCommand) {
+    if let Some(page) = session.pages().last() {
         if let Some(host) = page.browser.host() {
             host.zoom(command);
         }
     }
 }
 
-fn toggle_zoom_focused(pages: &mut [Page], gpu: &GpuState, camera: &Camera) {
-    let Some(page) = pages.last_mut() else {
-        return;
-    };
-    let scale = gpu.window.scale_factor();
-    match page.zoomed_from.take() {
-        Some(previous_rect) => page.set_rect(previous_rect, scale),
-        None => {
-            // Fills the current screen viewport (converted to world
-            // space), not a fixed world rect — so it fills the window
-            // regardless of current pan/zoom.
-            let size = gpu.window.inner_size();
-            let margin = 40.0;
-            let world_origin = camera.screen_to_world((margin, margin));
-            let zoomed_rect = Rect {
-                x: world_origin.0,
-                y: world_origin.1,
-                w: (size.width as f32 - margin * 2.0) / camera.zoom,
-                h: (size.height as f32 - margin * 2.0) / camera.zoom,
-            };
-            page.zoomed_from = Some(page.rect);
-            page.set_rect(zoomed_rect, scale);
-        }
-    }
-}
-
-fn cycle_theme(gpu: &mut GpuState) {
-    let current = THEMES
-        .iter()
-        .position(|t| t.name == gpu.theme.name)
-        .unwrap_or(0);
-    gpu.theme = THEMES[(current + 1) % THEMES.len()];
-}
-
-fn open_help(pages: &mut Vec<Page>, gpu: &GpuState, camera: &Camera) {
+fn open_help(session: &mut Session, gpu: &GpuState) {
     let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.6).clamp(420.0, 720.0);
     let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
+    let camera = session.camera();
     let world_origin =
         camera.screen_to_world(((size.width as f32 - w) / 2.0, (size.height as f32 - h) / 2.0));
     let rect = Rect {
@@ -218,8 +176,8 @@ fn open_help(pages: &mut Vec<Page>, gpu: &GpuState, camera: &Camera) {
         w: w / camera.zoom,
         h: h / camera.zoom,
     };
-    let url = help_page_url(&gpu.theme);
-    pages.push(browser::spawn(gpu, &gpu.window, &url, rect));
+    let url = help_page_url(&session.theme());
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect));
 }
 
 const HELP_ENTRIES: &[(&str, &str)] = &[

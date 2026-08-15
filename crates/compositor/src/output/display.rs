@@ -3,7 +3,8 @@
 // vertex buffer) and CEF texture bind group; `GpuState::render` draws
 // whichever ones it's handed, back-to-front.
 
-use super::theme::{TOKYO_NIGHT, Theme};
+use super::theme::Theme;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use winit::window::Window;
 
@@ -27,11 +28,11 @@ impl Vertex {
     }
 }
 
-/// A page's position and size on the canvas, in physical pixels, origin
-/// top-left, y-down — the same convention as window/mouse coordinates.
-/// The camera is identity for now (canvas space == screen space); pan/
-/// zoom would apply a transform here before converting to NDC.
-#[derive(Clone, Copy, Debug)]
+/// A page's position and size, origin top-left, y-down — the same
+/// convention as window/mouse coordinates. Lives in world space (see
+/// camera.rs for the pan/zoom mapping to screen space); `GpuState::render`
+/// is handed already screen-space rects.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Rect {
     pub x: f32,
     pub y: f32,
@@ -169,7 +170,6 @@ pub struct GpuState {
     pipeline: wgpu::RenderPipeline,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pub style_bind_group_layout: wgpu::BindGroupLayout,
-    pub theme: Theme,
 }
 
 impl GpuState {
@@ -335,7 +335,6 @@ impl GpuState {
             pipeline,
             texture_bind_group_layout,
             style_bind_group_layout,
-            theme: TOKYO_NIGHT,
         }
     }
 
@@ -349,7 +348,7 @@ impl GpuState {
     }
 
     /// Draws `pages` in the given order (back-to-front — last is topmost).
-    pub fn render(&mut self, pages: &[PageDraw<'_>]) -> FrameOutcome {
+    pub fn render(&mut self, pages: &[PageDraw<'_>], theme: &Theme) -> FrameOutcome {
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) => t,
             wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -364,13 +363,8 @@ impl GpuState {
 
         let viewport = (self.config.width as f32, self.config.height as f32);
         for page in pages {
-            page.quad.update(
-                &self.queue,
-                page.rect,
-                viewport,
-                page.focused,
-                &self.theme,
-            );
+            page.quad
+                .update(&self.queue, page.rect, viewport, page.focused, theme);
         }
 
         let view = surface_texture
@@ -388,7 +382,7 @@ impl GpuState {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.theme.canvas_background),
+                        load: wgpu::LoadOp::Clear(theme.canvas_background),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,

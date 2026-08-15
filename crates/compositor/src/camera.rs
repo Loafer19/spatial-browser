@@ -7,7 +7,9 @@
 // for a new offset that keeps some reference point fixed on screen.
 
 use crate::output::Rect;
+use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Camera {
     pub offset: (f32, f32),
     pub zoom: f32,
