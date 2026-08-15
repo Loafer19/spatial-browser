@@ -46,6 +46,14 @@ wrap_app! {
             command_line.append_switch(Some(&"noerrdialogs".into()));
             command_line.append_switch(Some(&"hide-crash-restore-bubble".into()));
             command_line.append_switch(Some(&"use-mock-keychain".into()));
+            // Chromium's soft-navigation/Reading-Mode tracking
+            // (ReadAnythingSoftNavigationObserver) assumes every
+            // WebContents has a real browser Tab; a windowless/OSR
+            // browser has none, and on an SPA-heavy site (confirmed:
+            // YouTube) that observer null-derefs and crashes the whole
+            // process — TabInterface::GetFromContents -> OnSoftNavigation.
+            command_line
+                .append_switch_with_value(Some(&"disable-features".into()), Some(&"ReadAnything".into()));
         }
 
         fn browser_process_handler(&self) -> Option<cef::BrowserProcessHandler> {
