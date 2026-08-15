@@ -46,14 +46,30 @@ wrap_app! {
             command_line.append_switch(Some(&"noerrdialogs".into()));
             command_line.append_switch(Some(&"hide-crash-restore-bubble".into()));
             command_line.append_switch(Some(&"use-mock-keychain".into()));
-            // Chromium's soft-navigation/Reading-Mode tracking
-            // (ReadAnythingSoftNavigationObserver) assumes every
-            // WebContents has a real browser Tab; a windowless/OSR
-            // browser has none, and on an SPA-heavy site (confirmed:
-            // YouTube) that observer null-derefs and crashes the whole
-            // process — TabInterface::GetFromContents -> OnSoftNavigation.
-            command_line
-                .append_switch_with_value(Some(&"disable-features".into()), Some(&"ReadAnything".into()));
+            // Chromium's soft-navigation tracking (used for SPA Web
+            // Vitals) calls PageLoadTracker::OnSoftNavigation, which
+            // notifies every registered observer including
+            // ReadAnythingSoftNavigationObserver — that observer assumes
+            // every WebContents has a real browser Tab, which a
+            // windowless/OSR embedding never has, and null-derefs
+            // (TabInterface::GetFromContents) on any SPA-style client
+            // navigation (confirmed: YouTube, Google Images' lightbox).
+            // Disabling just ReadAnything didn't help — the observer is
+            // apparently registered unconditionally regardless of that
+            // flag. Disabling SoftNavigationHeuristics via
+            // --disable-features (a //base feature) didn't help either,
+            // even though chrome://version confirms the switch reaches
+            // the process — soft-navigation instrumentation is Blink
+            // runtime code, gated through the separate
+            // --disable-blink-features namespace, not --disable-features.
+            command_line.append_switch_with_value(
+                Some(&"disable-features".into()),
+                Some(&"ReadAnything,SoftNavigationHeuristics".into()),
+            );
+            command_line.append_switch_with_value(
+                Some(&"disable-blink-features".into()),
+                Some(&"SoftNavigationHeuristics,SoftNavigationDetection".into()),
+            );
         }
 
         fn browser_process_handler(&self) -> Option<cef::BrowserProcessHandler> {
