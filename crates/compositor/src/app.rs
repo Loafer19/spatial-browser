@@ -21,7 +21,7 @@ use winit::{
     event::{ElementState, MouseButton, WindowEvent},
     event_loop::ActiveEventLoop,
     keyboard::ModifiersState,
-    window::{WindowAttributes, WindowId},
+    window::{CursorIcon, WindowAttributes, WindowId},
 };
 
 #[derive(Default)]
@@ -60,6 +60,16 @@ pub struct App {
     // resize_hit_test) is being dragged to resize it. Its top-left stays
     // fixed; only the corner under the cursor moves.
     resizing: bool,
+    // True whenever the cursor is over a resize corner (or actively
+    // resizing) — overrides whatever cursor shape CEF asked for so the
+    // resize affordance is visible before the user commits to a drag.
+    resize_hover: bool,
+    // Most recent icon CEF asked for via on_cursor_change (cef_bridge::
+    // CURSOR) — CEF only fires that callback on an actual change, so this
+    // has to be cached and re-applied every frame rather than only when
+    // a fresh event arrives; otherwise, once resize_hover's override
+    // takes the cursor, there's no later CEF event to hand it back.
+    cef_cursor: CursorIcon,
 }
 
 /// Screen-space size (regardless of zoom, like a scrollbar grip) of the
@@ -191,6 +201,8 @@ impl ApplicationHandler for App {
                 }
 
                 let cursor_world = self.camera.screen_to_world(self.cursor_window);
+                self.resize_hover = self.resizing
+                    || resize_hit_test(&self.pages, &self.camera, self.cursor_window).is_some();
 
                 if self.resizing {
                     let page = self.pages.last_mut().expect("resizing with no pages");
@@ -231,7 +243,14 @@ impl ApplicationHandler for App {
                 button,
                 ..
             } => {
-                if button == MouseButton::Middle {
+                // Middle-drag pans (works with a real mouse); Shift+Left-drag
+                // is the trackpad-friendly equivalent — most touchpads have
+                // no reliable middle button or a sustained right-click-drag
+                // gesture, but a plain click+drag with a held modifier works
+                // everywhere, same as Alt+Left-drag below for moving a page.
+                if button == MouseButton::Middle
+                    || (button == MouseButton::Left && self.modifiers.shift_key())
+                {
                     match element_state {
                         ElementState::Pressed => {
                             self.panning = Some((self.cursor_window, self.camera.offset));
@@ -350,8 +369,13 @@ impl ApplicationHandler for App {
                     }
                 }
                 if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {
-                    state.window.set_cursor(icon);
+                    self.cef_cursor = icon;
                 }
+                state.window.set_cursor(if self.resize_hover {
+                    CursorIcon::NwseResize
+                } else {
+                    self.cef_cursor
+                });
 
                 let last_index = self.pages.len().saturating_sub(1);
                 let textures: Vec<_> = self.pages.iter().map(Page::texture).collect();

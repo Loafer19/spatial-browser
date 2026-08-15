@@ -235,6 +235,7 @@ const HELP_ENTRIES: &[(&str, &str)] = &[
     ("Alt+Left-drag", "Move a page"),
     ("Drag corner", "Resize a page"),
     ("Middle-drag", "Pan canvas"),
+    ("Shift+Left-drag", "Pan canvas (trackpad)"),
     ("Ctrl+Scroll", "Zoom canvas"),
     ("Ctrl+Shift+0", "Reset canvas view"),
     ("Ctrl+Shift+Space", "Cycle UI theme"),
