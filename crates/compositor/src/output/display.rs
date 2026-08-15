@@ -44,6 +44,20 @@ impl Rect {
     pub fn contains(&self, x: f32, y: f32) -> bool {
         x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
     }
+
+    /// Clamps width/height to `max`. A page's rect drives CEF's actual
+    /// OSR buffer resolution 1:1 (browser::Page), and wgpu aborts the
+    /// whole process on any texture exceeding its dimension limit — no
+    /// graceful fallback — so this has to be enforced wherever a rect
+    /// reaches a page, not trusted to whatever produced it (dividing a
+    /// screen size by a small camera zoom, e.g. zoom-to-canvas while
+    /// zoomed way out, easily produces a world size in the tens of
+    /// thousands of pixels).
+    pub fn clamp_size(mut self, max: f32) -> Self {
+        self.w = self.w.min(max);
+        self.h = self.h.min(max);
+        self
+    }
 }
 
 // Layout must match `PageStyle` in shader.wgsl field-for-field: every

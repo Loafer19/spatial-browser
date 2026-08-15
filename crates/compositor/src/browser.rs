@@ -10,6 +10,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use winit::window::Window;
 
+// Comfortably under wgpu's default 8192 max_texture_dimension_2d (see
+// Rect::clamp_size) — no single floating page plausibly needs more.
+const MAX_PAGE_DIMENSION: f32 = 4096.0;
+
 pub struct Page {
     pub browser: cef::Browser,
     pub rect: Rect,
@@ -33,6 +37,7 @@ impl Page {
 
     /// Update this page's canvas rect and let CEF know its view resized.
     pub fn set_rect(&mut self, rect: Rect, scale_factor: f64) {
+        let rect = rect.clamp_size(MAX_PAGE_DIMENSION);
         self.rect = rect;
         *self.size.borrow_mut() =
             winit::dpi::PhysicalSize::new(rect.w, rect.h).to_logical::<f32>(scale_factor);
@@ -43,6 +48,7 @@ impl Page {
 }
 
 pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect) -> Page {
+    let rect = rect.clamp_size(MAX_PAGE_DIMENSION);
     // Shared-texture (GPU) OSR needs the CEF GPU process's DMA-BUF export
     // and our wgpu Vulkan import to land on the same physical GPU. On a
     // hybrid-graphics laptop, Chromium's GPU process defaults to the
