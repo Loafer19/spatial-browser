@@ -9,6 +9,7 @@
 // convert through. Canvas state itself (pages/camera/theme) lives in
 // session.rs, persisted via persistence.rs.
 
+use crate::bookmarks::{self, Bookmark};
 use crate::browser::{self, Page};
 use crate::camera::Camera;
 use crate::hotkeys;
@@ -17,7 +18,7 @@ use crate::output::{FrameOutcome, GpuState, PageDraw, Rect, THEMES};
 use crate::persistence;
 use crate::session::Session;
 use cef::{ImplBrowser, ImplBrowserHost};
-use cef_bridge::CURSOR;
+use cef_bridge::{CURSOR, PENDING_BOOKMARK};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::{
@@ -36,6 +37,10 @@ const SAVE_DEBOUNCE: Duration = Duration::from_secs(1);
 pub struct App {
     state: Option<GpuState>,
     session: Session,
+    // Loaded once at startup from bookmarks.json, saved immediately on
+    // every change (Ctrl+D) — unlike session state, bookmark edits are
+    // rare and deliberate, so there's no need for the debounce below.
+    bookmarks: Vec<Bookmark>,
     mouse: MouseInput,
     keyboard: KeyboardInput,
     // Raw window-space physical cursor position — updated on every
@@ -82,6 +87,7 @@ impl Default for App {
         Self {
             state: None,
             session: Session::new(Vec::new(), Camera::default(), THEMES[0]),
+            bookmarks: bookmarks::load(),
             mouse: MouseInput::default(),
             keyboard: KeyboardInput::default(),
             cursor_window: (0.0, 0.0),
@@ -368,7 +374,13 @@ impl ApplicationHandler for App {
                 self.keyboard.modifiers_changed(modifiers.state());
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if hotkeys::handle(&event, self.modifiers, &mut self.session, state) {
+                if hotkeys::handle(
+                    &event,
+                    self.modifiers,
+                    &mut self.session,
+                    state,
+                    &mut self.bookmarks,
+                ) {
                     return;
                 }
                 // No real focus model yet — the topmost (most recently
@@ -384,6 +396,34 @@ impl ApplicationHandler for App {
                         host.send_external_begin_frame();
                     }
                 }
+
+                // Set by cef-bridge's OsrRequestHandler when a click
+                // inside the bookmarks-list page (hotkeys::open_bookmarks)
+                // hits one of its `bookmark://<index>` links — that
+                // navigation was already canceled there; open a real page
+                // for it here instead, cascaded like a new page so it
+                // doesn't land exactly on top of the list.
+                if let Some(index) = PENDING_BOOKMARK.with_borrow_mut(|pending| pending.take()) {
+                    if let Some(bookmark) = self.bookmarks.get(index) {
+                        let step = ((self.session.pages().len() % 8) as f32) * 32.0;
+                        let size = state.window.inner_size();
+                        let camera = self.session.camera();
+                        let world_origin = camera.screen_to_world((48.0 + step, 48.0 + step));
+                        let rect = Rect {
+                            x: world_origin.0,
+                            y: world_origin.1,
+                            w: (size.width as f32 * 0.5).min(800.0) / camera.zoom,
+                            h: (size.height as f32 * 0.5).min(600.0) / camera.zoom,
+                        };
+                        self.session.add_page(browser::spawn(
+                            state,
+                            &state.window,
+                            &bookmark.url,
+                            rect,
+                        ));
+                    }
+                }
+
                 if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {
                     self.cef_cursor = icon;
                 }

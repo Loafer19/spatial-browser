@@ -1,17 +1,18 @@
 // Canvas-level keyboard shortcuts — closing/opening/reloading a page,
 // cycling focus, zooming, back/forward navigation, theme switching, the
-// canvas-view reset, and the F1 help page — that must never reach a
-// page's own content (unlike everything routed through
+// canvas-view reset, bookmarks, and the F1 help page — that must never
+// reach a page's own content (unlike everything routed through
 // input::KeyboardInput, which forwards to whichever CEF browser is
 // active). Kept separate from that module for exactly that reason: this
 // is about the canvas, not about one page's text input. Canvas pan/zoom
 // itself is mouse-driven (middle-drag / Ctrl+scroll, see app.rs) — only
 // its keyboard reset lives here.
 
+use crate::bookmarks::{self, Bookmark};
 use crate::browser;
 use crate::output::{GpuState, Rect, Theme};
 use crate::session::Session;
-use cef::{ImplBrowser, ImplBrowserHost};
+use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 use winit::event::ElementState;
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 
@@ -26,6 +27,7 @@ pub fn handle(
     modifiers: ModifiersState,
     session: &mut Session,
     gpu: &GpuState,
+    bookmarks: &mut Vec<Bookmark>,
 ) -> bool {
     if event.state != ElementState::Pressed {
         return false;
@@ -70,6 +72,14 @@ pub fn handle(
         }
         PhysicalKey::Code(KeyCode::KeyR) => {
             reload_focused(session);
+            true
+        }
+        PhysicalKey::Code(KeyCode::KeyD) => {
+            bookmark_focused(session, bookmarks);
+            true
+        }
+        PhysicalKey::Code(KeyCode::KeyB) => {
+            open_bookmarks(session, gpu, bookmarks);
             true
         }
         PhysicalKey::Code(KeyCode::Tab) => {
@@ -163,6 +173,82 @@ fn page_zoom(session: &Session, command: cef::ZoomCommand) {
     }
 }
 
+/// Bookmarks the focused page's current URL, if it isn't already saved.
+fn bookmark_focused(session: &Session, bookmarks: &mut Vec<Bookmark>) {
+    let Some(page) = session.pages().last() else {
+        return;
+    };
+    let Some(url) = page
+        .browser
+        .main_frame()
+        .map(|frame| cef::CefString::from(&frame.url()).to_string())
+    else {
+        return;
+    };
+    if bookmarks.iter().any(|b| b.url == url) {
+        return;
+    }
+    bookmarks.push(Bookmark { url });
+    bookmarks::save(bookmarks);
+}
+
+fn open_bookmarks(session: &mut Session, gpu: &GpuState, bookmarks: &[Bookmark]) {
+    let size = gpu.window.inner_size();
+    let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
+    let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
+    let camera = session.camera();
+    let world_origin =
+        camera.screen_to_world(((size.width as f32 - w) / 2.0, (size.height as f32 - h) / 2.0));
+    let rect = Rect {
+        x: world_origin.0,
+        y: world_origin.1,
+        w: w / camera.zoom,
+        h: h / camera.zoom,
+    };
+    let url = bookmarks_page_url(&session.theme(), bookmarks);
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect));
+}
+
+/// Builds the bookmarks-list page's `data:` URL. Each entry is a real
+/// `<a href="bookmark://{index}">` — clicking it is a normal navigation
+/// CEF's `on_before_browse` (cef-bridge) intercepts and cancels, signaling
+/// the index back to the compositor to open as a real new page instead.
+/// The favicon is fetched live from the bookmark's own site
+/// (`https://{host}/favicon.ico`) rather than captured/stored ourselves.
+fn bookmarks_page_url(theme: &Theme, bookmarks: &[Bookmark]) -> String {
+    let mut rows = String::new();
+    if bookmarks.is_empty() {
+        rows.push_str(&format!(
+            "<p style=\"color:{fg};opacity:0.7\">No bookmarks yet &mdash; Ctrl+D on a page to add one.</p>",
+            fg = theme.help_fg,
+        ));
+    }
+    for (index, bookmark) in bookmarks.iter().enumerate() {
+        let host = bookmarks::host_of(&bookmark.url);
+        rows.push_str(&format!(
+            "<a href=\"bookmark://{index}\" style=\"display:flex;align-items:center;gap:12px;\
+             text-decoration:none;padding:10px 14px;background:{card_bg};border-radius:8px;\
+             border:1px solid {card_border};color:{fg}\">\
+             <img src=\"https://{host}/favicon.ico\" width=\"16\" height=\"16\" \
+             style=\"flex-shrink:0\" onerror=\"this.style.visibility='hidden'\">\
+             <span style=\"overflow:hidden;text-overflow:ellipsis;white-space:nowrap\">{host}</span>\
+             </a>",
+            card_bg = theme.help_card_bg,
+            card_border = theme.help_card_border,
+            fg = theme.help_fg,
+        ));
+    }
+    format!(
+        "data:text/html,<body style=\"margin:0;padding:32px;background:{bg};color:{fg};\
+         font-family:ui-monospace,monospace;font-size:15px\">\
+         <h1 style=\"margin:0 0 20px;color:{heading};font-size:20px\">Bookmarks</h1>\
+         <div style=\"display:flex;flex-direction:column;gap:8px\">{rows}</div></body>",
+        bg = theme.help_bg,
+        fg = theme.help_fg,
+        heading = theme.help_heading,
+    )
+}
+
 fn open_help(session: &mut Session, gpu: &GpuState) {
     let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.6).clamp(420.0, 720.0);
@@ -184,6 +270,8 @@ const HELP_ENTRIES: &[(&str, &str)] = &[
     ("Ctrl+T", "New page"),
     ("Ctrl+W", "Close page"),
     ("Ctrl+R", "Reload page"),
+    ("Ctrl+D", "Bookmark page"),
+    ("Ctrl+B", "Bookmarks list"),
     ("Ctrl+Tab", "Next page"),
     ("Ctrl+Shift+Tab", "Previous page"),
     ("Ctrl+Space", "Zoom to canvas"),

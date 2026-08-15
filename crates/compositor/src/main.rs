@@ -12,6 +12,7 @@
 // loop (do_message_loop_work) instead of blocking in `run_app`.
 
 mod app;
+mod bookmarks;
 mod browser;
 mod camera;
 mod hotkeys;

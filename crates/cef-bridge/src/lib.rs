@@ -9,6 +9,7 @@ use cef::{
 };
 use cef::{ImplRequestContextHandler, RequestContextHandler, WrapRequestContextHandler};
 use cef::{ImplDisplayHandler, WrapDisplayHandler};
+use cef::{ImplRequest, ImplRequestHandler, WrapRequestHandler};
 use std::cell::RefCell;
 use winit::window::CursorIcon;
 
@@ -492,10 +493,60 @@ fn cef_cursor_to_winit(type_: CursorType) -> CursorIcon {
     }
 }
 
+thread_local! {
+    // Set by `OsrRequestHandler::on_before_browse` when a page navigates
+    // to a `bookmark://<index>` link (only the generated bookmarks-list
+    // page ever produces one — see compositor::hotkeys — so a global
+    // slot is safe: no other page's real navigation can collide with
+    // it), read once per frame by the compositor's redraw handler, which
+    // looks up the bookmark by index and opens it as a real new page.
+    pub static PENDING_BOOKMARK: RefCell<Option<usize>> = const { RefCell::new(None) };
+}
+
+#[derive(Clone)]
+pub struct OsrRequestHandler {}
+
+wrap_request_handler! {
+    pub struct RequestHandlerBuilder {
+        handler: OsrRequestHandler,
+    }
+
+    impl RequestHandler {
+        fn on_before_browse(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            request: Option<&mut Request>,
+            _user_gesture: ::std::os::raw::c_int,
+            _is_redirect: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            let Some(request) = request else {
+                return false as _;
+            };
+            let url = cef::CefString::from(&request.url()).to_string();
+            let Some(index) = url
+                .strip_prefix("bookmark://")
+                .and_then(|s| s.parse::<usize>().ok())
+            else {
+                return false as _;
+            };
+            PENDING_BOOKMARK.with_borrow_mut(|pending| *pending = Some(index));
+            true as _ // cancel navigation — the compositor opens a real page instead
+        }
+    }
+}
+
+impl RequestHandlerBuilder {
+    pub fn build(handler: OsrRequestHandler) -> cef::RequestHandler {
+        Self::new(handler)
+    }
+}
+
 wrap_client! {
     pub struct ClientBuilder {
         render_handler: RenderHandler,
         display_handler: DisplayHandler,
+        request_handler: cef::RequestHandler,
     }
 
     impl Client {
@@ -506,6 +557,10 @@ wrap_client! {
         fn display_handler(&self) -> Option<cef::DisplayHandler> {
             Some(self.display_handler.clone())
         }
+
+        fn request_handler(&self) -> Option<cef::RequestHandler> {
+            Some(self.request_handler.clone())
+        }
     }
 }
 
@@ -514,6 +569,7 @@ impl ClientBuilder {
         Self::new(
             RenderHandlerBuilder::build(render_handler),
             DisplayHandlerBuilder::build(OsrDisplayHandler {}),
+            RequestHandlerBuilder::build(OsrRequestHandler {}),
         )
     }
 }
