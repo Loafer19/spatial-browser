@@ -225,11 +225,21 @@ impl GpuState {
             .expect("failed to create device");
 
         let caps = surface.get_capabilities(&adapter);
+        // Exactly Bgra8Unorm, not just "any non-sRGB format": the CEF
+        // paint texture (cef-bridge's on_paint) is plain Bgra8Unorm
+        // holding CEF's raw already-encoded bytes, and this GPU's
+        // capability list order happens to put an HDR float format
+        // (Rgba16Float) before it — matching on "first non-sRGB" picked
+        // that instead, and linear float values presented without a
+        // gamma pass came out visibly washed out/light. An sRGB surface
+        // format has the opposite problem (double gamma-encodes CEF's
+        // bytes on write). Bgra8Unorm is a plain passthrough matching
+        // the source texture format exactly.
         let format = caps
             .formats
             .iter()
             .copied()
-            .find(|f| f.is_srgb())
+            .find(|f| *f == wgpu::TextureFormat::Bgra8Unorm)
             .unwrap_or(caps.formats[0]);
 
         let config = wgpu::SurfaceConfiguration {

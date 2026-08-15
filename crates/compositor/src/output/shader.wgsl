@@ -55,6 +55,13 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let outside_alpha = 1.0 - smoothstep(-aa, aa, dist);
 
     var color = textureSample(tex0, samp0, input.tex);
+    // CEF's CPU OSR buffer doesn't reliably paint alpha=255 everywhere
+    // (its background/off-page pixels can carry a lower alpha) — with
+    // ALPHA_BLENDING that blended page content toward canvas_background,
+    // reading as a gray/washed-out filter over everything. Page content
+    // is always fully opaque within its own rect; only the corner-round
+    // cutout below should ever make a fragment transparent.
+    color.a = 1.0;
 
     if (style.focused.x > 0.5) {
         // 1.0 once `dist` is within `border_width` of the outer edge,
