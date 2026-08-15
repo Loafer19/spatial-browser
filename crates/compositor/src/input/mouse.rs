@@ -75,14 +75,16 @@ impl MouseInput {
     pub fn wheel(&self, delta: MouseScrollDelta, host: Option<&BrowserHost>) {
         // Line-to-pixel scale is arbitrary (CEF/Chromium doesn't define a
         // canonical one for injected events) — 120px/line matches other
-        // browsers' scroll-by-line amount more closely than a smaller
-        // value (40px felt short next to Chrome/Firefox). Smooth trackpad
-        // scrolling (PixelDelta) is doubled for the same reason — CEF's
-        // injected wheel event isn't a 1:1 match for a real touchpad's
-        // native feel otherwise.
+        // browsers' scroll-by-line amount for a real mouse wheel.
+        //
+        // Trackpad smooth-scroll (PixelDelta) needs a much bigger factor:
+        // measured raw deltas on this machine's touchpad are ~1-3 physical
+        // px/event, so anything close to 1:1 passthrough is imperceptible
+        // — other apps are clearly amplifying it well beyond that to feel
+        // natural.
         let (delta_x, delta_y) = match delta {
             MouseScrollDelta::LineDelta(x, y) => ((x * 120.0) as i32, (y * 120.0) as i32),
-            MouseScrollDelta::PixelDelta(pos) => ((pos.x * 2.0) as i32, (pos.y * 2.0) as i32),
+            MouseScrollDelta::PixelDelta(pos) => ((pos.x * 8.0) as i32, (pos.y * 8.0) as i32),
         };
         if let Some(host) = host {
             host.send_mouse_wheel_event(Some(&self.event()), delta_x, delta_y);
