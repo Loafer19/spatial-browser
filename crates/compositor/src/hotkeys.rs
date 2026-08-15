@@ -1,12 +1,15 @@
 // Canvas-level keyboard shortcuts — closing/opening/reloading a page,
-// cycling focus, zooming, back/forward navigation, theme switching, and
-// the F1 help page — that must never reach a page's own content (unlike
-// everything routed through input::KeyboardInput, which forwards to
-// whichever CEF browser is active). Kept separate from that module for
-// exactly that reason: this is about the canvas, not about one page's
-// text input.
+// cycling focus, zooming, back/forward navigation, theme switching, the
+// canvas-view reset, and the F1 help page — that must never reach a
+// page's own content (unlike everything routed through
+// input::KeyboardInput, which forwards to whichever CEF browser is
+// active). Kept separate from that module for exactly that reason: this
+// is about the canvas, not about one page's text input. Canvas pan/zoom
+// itself is mouse-driven (middle-drag / Ctrl+scroll, see app.rs) — only
+// its keyboard reset lives here.
 
 use crate::browser::{self, Page};
+use crate::camera::Camera;
 use crate::output::{GpuState, Rect, THEMES, Theme};
 use cef::{ImplBrowser, ImplBrowserHost};
 use winit::event::ElementState;
@@ -23,6 +26,7 @@ pub fn handle(
     modifiers: ModifiersState,
     pages: &mut Vec<Page>,
     gpu: &mut GpuState,
+    camera: &mut Camera,
 ) -> bool {
     if event.state != ElementState::Pressed {
         return false;
@@ -31,7 +35,7 @@ pub fn handle(
     // F1 works with no modifier — it's a dedicated function key, not a
     // letter that could be someone typing into a page.
     if event.physical_key == PhysicalKey::Code(KeyCode::F1) {
-        open_help(pages, gpu);
+        open_help(pages, gpu, camera);
         return true;
     }
 
@@ -62,7 +66,7 @@ pub fn handle(
             true
         }
         PhysicalKey::Code(KeyCode::KeyT) => {
-            open_new(pages, gpu);
+            open_new(pages, gpu, camera);
             true
         }
         PhysicalKey::Code(KeyCode::KeyR) => {
@@ -86,7 +90,7 @@ pub fn handle(
             if modifiers.shift_key() {
                 cycle_theme(gpu);
             } else {
-                toggle_zoom_focused(pages, gpu);
+                toggle_zoom_focused(pages, gpu, camera);
             }
             true
         }
@@ -103,7 +107,11 @@ pub fn handle(
             true
         }
         PhysicalKey::Code(KeyCode::Digit0) => {
-            page_zoom(pages, cef::ZoomCommand::RESET);
+            if modifiers.shift_key() {
+                camera.reset();
+            } else {
+                page_zoom(pages, cef::ZoomCommand::RESET);
+            }
             true
         }
         _ => false,
@@ -117,16 +125,19 @@ fn close_topmost(pages: &mut Vec<Page>) {
     }
 }
 
-fn open_new(pages: &mut Vec<Page>, gpu: &GpuState) {
+fn open_new(pages: &mut Vec<Page>, gpu: &GpuState, camera: &Camera) {
     // Cascade each new page a bit so it doesn't land exactly on the last
     // one; wrap around after a few so it doesn't walk off-screen forever.
+    // Placed by screen position (current view), then converted to world
+    // space — so it lands in view regardless of current pan/zoom.
     let step = ((pages.len() % 8) as f32) * 32.0;
     let size = gpu.window.inner_size();
+    let world_origin = camera.screen_to_world((48.0 + step, 48.0 + step));
     let rect = Rect {
-        x: 48.0 + step,
-        y: 48.0 + step,
-        w: (size.width as f32 * 0.5).min(800.0),
-        h: (size.height as f32 * 0.5).min(600.0),
+        x: world_origin.0,
+        y: world_origin.1,
+        w: (size.width as f32 * 0.5).min(800.0) / camera.zoom,
+        h: (size.height as f32 * 0.5).min(600.0) / camera.zoom,
     };
     pages.push(browser::spawn(gpu, &gpu.window, NEW_PAGE_URL, rect));
 }
@@ -161,7 +172,7 @@ fn page_zoom(pages: &[Page], command: cef::ZoomCommand) {
     }
 }
 
-fn toggle_zoom_focused(pages: &mut [Page], gpu: &GpuState) {
+fn toggle_zoom_focused(pages: &mut [Page], gpu: &GpuState, camera: &Camera) {
     let Some(page) = pages.last_mut() else {
         return;
     };
@@ -169,13 +180,17 @@ fn toggle_zoom_focused(pages: &mut [Page], gpu: &GpuState) {
     match page.zoomed_from.take() {
         Some(previous_rect) => page.set_rect(previous_rect, scale),
         None => {
+            // Fills the current screen viewport (converted to world
+            // space), not a fixed world rect — so it fills the window
+            // regardless of current pan/zoom.
             let size = gpu.window.inner_size();
             let margin = 40.0;
+            let world_origin = camera.screen_to_world((margin, margin));
             let zoomed_rect = Rect {
-                x: margin,
-                y: margin,
-                w: size.width as f32 - margin * 2.0,
-                h: size.height as f32 - margin * 2.0,
+                x: world_origin.0,
+                y: world_origin.1,
+                w: (size.width as f32 - margin * 2.0) / camera.zoom,
+                h: (size.height as f32 - margin * 2.0) / camera.zoom,
             };
             page.zoomed_from = Some(page.rect);
             page.set_rect(zoomed_rect, scale);
@@ -191,15 +206,17 @@ fn cycle_theme(gpu: &mut GpuState) {
     gpu.theme = THEMES[(current + 1) % THEMES.len()];
 }
 
-fn open_help(pages: &mut Vec<Page>, gpu: &GpuState) {
+fn open_help(pages: &mut Vec<Page>, gpu: &GpuState, camera: &Camera) {
     let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.6).clamp(420.0, 720.0);
     let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
+    let world_origin =
+        camera.screen_to_world(((size.width as f32 - w) / 2.0, (size.height as f32 - h) / 2.0));
     let rect = Rect {
-        x: (size.width as f32 - w) / 2.0,
-        y: (size.height as f32 - h) / 2.0,
-        w,
-        h,
+        x: world_origin.0,
+        y: world_origin.1,
+        w: w / camera.zoom,
+        h: h / camera.zoom,
     };
     let url = help_page_url(&gpu.theme);
     pages.push(browser::spawn(gpu, &gpu.window, &url, rect));
@@ -216,6 +233,9 @@ const HELP_ENTRIES: &[(&str, &str)] = &[
     ("Ctrl+0", "Reset zoom"),
     ("Alt+Left/Right", "Back / forward"),
     ("Alt+Left-drag", "Move a page"),
+    ("Middle-drag", "Pan canvas"),
+    ("Ctrl+Scroll", "Zoom canvas"),
+    ("Ctrl+Shift+0", "Reset canvas view"),
     ("Ctrl+Shift+Space", "Cycle UI theme"),
     ("F1", "This page"),
 ];

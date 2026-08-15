@@ -1,9 +1,9 @@
 // Compositor: owns the window, the GPU surface, and the spatial canvas.
 // Multiple CEF pages, each off-screen rendered (CPU path — see
 // browser.rs) into its own textured quad, placed side by side in canvas
-// space. Camera is identity for now (no pan/zoom yet); see app.rs for the
-// hit-testing/z-order/drag logic that makes it a canvas rather than just
-// two fixed windows.
+// space. See camera.rs for the world<->screen mapping (pan/zoom) and
+// app.rs for the hit-testing/z-order/drag logic that makes it a canvas
+// rather than just two fixed windows.
 //
 // CEF's multi-process model means this same binary is re-exec'd as the
 // renderer/gpu/utility helper processes, so the CEF bootstrap (execute_process
@@ -13,6 +13,7 @@
 
 mod app;
 mod browser;
+mod camera;
 mod hotkeys;
 mod input;
 mod output;

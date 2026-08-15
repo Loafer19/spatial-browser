@@ -7,6 +7,7 @@
 // pan/zoom): canvas space == screen space.
 
 use crate::browser::{self, Page};
+use crate::camera::Camera;
 use crate::hotkeys;
 use crate::input::{KeyboardInput, MouseInput};
 use crate::output::{FrameOutcome, GpuState, PageDraw, Rect};
@@ -41,9 +42,18 @@ pub struct App {
     // whatever size they were last laid out for, keeping draw and
     // hit-test in agreement no matter when the "real" size arrives.
     canvas_size: (f32, f32),
+    // World<->screen mapping for the canvas — pan/zoom. Page rects are
+    // stored in world space (see browser::Page::rect); everything that
+    // touches screen-space input (hit-testing, dragging) converts through
+    // this first.
+    camera: Camera,
     // Offset from the dragged (always-topmost, since dragging brings a
-    // page to front) page's rect origin to the cursor, set at drag start.
+    // page to front) page's rect origin (world space) to the cursor, set
+    // at drag start.
     dragging: Option<(f32, f32)>,
+    // (screen-space cursor position, camera offset) at the start of a
+    // middle-button canvas pan.
+    panning: Option<((f32, f32), (f32, f32))>,
 }
 
 /// Topmost page (last in z-order) whose rect contains the point, if any.
@@ -146,11 +156,23 @@ impl ApplicationHandler for App {
                 let scale = state.window.scale_factor();
                 self.cursor_window = (position.x as f32, position.y as f32);
 
+                if let Some((start, offset_at_start)) = self.panning {
+                    let dx = self.cursor_window.0 - start.0;
+                    let dy = self.cursor_window.1 - start.1;
+                    self.camera.offset = (
+                        offset_at_start.0 - dx / self.camera.zoom,
+                        offset_at_start.1 - dy / self.camera.zoom,
+                    );
+                    return;
+                }
+
+                let cursor_world = self.camera.screen_to_world(self.cursor_window);
+
                 if let Some(offset) = self.dragging {
                     let page = self.pages.last_mut().expect("dragging with no pages");
                     let rect = Rect {
-                        x: self.cursor_window.0 - offset.0,
-                        y: self.cursor_window.1 - offset.1,
+                        x: cursor_world.0 - offset.0,
+                        y: cursor_world.1 - offset.1,
                         w: page.rect.w,
                         h: page.rect.h,
                     };
@@ -158,12 +180,11 @@ impl ApplicationHandler for App {
                     return;
                 }
 
-                if let Some(i) = hit_test(&self.pages, self.cursor_window.0, self.cursor_window.1)
-                {
+                if let Some(i) = hit_test(&self.pages, cursor_world.0, cursor_world.1) {
                     let page = &self.pages[i];
                     let local = (
-                        (self.cursor_window.0 - page.rect.x) as f64,
-                        (self.cursor_window.1 - page.rect.y) as f64,
+                        (cursor_world.0 - page.rect.x) as f64,
+                        (cursor_world.1 - page.rect.y) as f64,
                     );
                     let host = page.browser.host();
                     self.mouse.cursor_moved(local, scale, host.as_ref());
@@ -174,18 +195,26 @@ impl ApplicationHandler for App {
                 button,
                 ..
             } => {
-                if button == MouseButton::Left && self.modifiers.alt_key() {
+                if button == MouseButton::Middle {
                     match element_state {
                         ElementState::Pressed => {
-                            if let Some(i) =
-                                hit_test(&self.pages, self.cursor_window.0, self.cursor_window.1)
+                            self.panning = Some((self.cursor_window, self.camera.offset));
+                        }
+                        ElementState::Released => self.panning = None,
+                    }
+                    return;
+                }
+
+                if button == MouseButton::Left && self.modifiers.alt_key() {
+                    let cursor_world = self.camera.screen_to_world(self.cursor_window);
+                    match element_state {
+                        ElementState::Pressed => {
+                            if let Some(i) = hit_test(&self.pages, cursor_world.0, cursor_world.1)
                             {
                                 let top = bring_to_front(&mut self.pages, i);
                                 let rect = self.pages[top].rect;
-                                self.dragging = Some((
-                                    self.cursor_window.0 - rect.x,
-                                    self.cursor_window.1 - rect.y,
-                                ));
+                                self.dragging =
+                                    Some((cursor_world.0 - rect.x, cursor_world.1 - rect.y));
                             }
                         }
                         ElementState::Released => self.dragging = None,
@@ -193,8 +222,8 @@ impl ApplicationHandler for App {
                     return;
                 }
 
-                let Some(i) = hit_test(&self.pages, self.cursor_window.0, self.cursor_window.1)
-                else {
+                let cursor_world = self.camera.screen_to_world(self.cursor_window);
+                let Some(i) = hit_test(&self.pages, cursor_world.0, cursor_world.1) else {
                     return;
                 };
                 let i = if element_state == ElementState::Pressed {
@@ -207,15 +236,25 @@ impl ApplicationHandler for App {
                 self.mouse.button(element_state, button, host.as_ref());
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                if let Some(i) = hit_test(&self.pages, self.cursor_window.0, self.cursor_window.1)
-                {
+                if self.modifiers.control_key() {
+                    let scroll_y = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                        winit::event::MouseScrollDelta::PixelDelta(p) => (p.y / 40.0) as f32,
+                    };
+                    let factor = 1.1f32.powf(scroll_y);
+                    self.camera.zoom_at(self.cursor_window, factor);
+                    return;
+                }
+
+                let cursor_world = self.camera.screen_to_world(self.cursor_window);
+                if let Some(i) = hit_test(&self.pages, cursor_world.0, cursor_world.1) {
                     let host = self.pages[i].browser.host();
                     self.mouse.wheel(delta, host.as_ref());
                 }
             }
             WindowEvent::CursorLeft { .. } => {
-                if let Some(i) = hit_test(&self.pages, self.cursor_window.0, self.cursor_window.1)
-                {
+                let cursor_world = self.camera.screen_to_world(self.cursor_window);
+                if let Some(i) = hit_test(&self.pages, cursor_world.0, cursor_world.1) {
                     let host = self.pages[i].browser.host();
                     self.mouse.cursor_left(host.as_ref());
                 }
@@ -232,7 +271,13 @@ impl ApplicationHandler for App {
                 self.keyboard.modifiers_changed(modifiers.state());
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if hotkeys::handle(&event, self.modifiers, &mut self.pages, state) {
+                if hotkeys::handle(
+                    &event,
+                    self.modifiers,
+                    &mut self.pages,
+                    state,
+                    &mut self.camera,
+                ) {
                     return;
                 }
                 // No real focus model yet — the topmost (most recently
@@ -260,7 +305,7 @@ impl ApplicationHandler for App {
                     .zip(textures.iter())
                     .enumerate()
                     .map(|(i, (page, texture))| PageDraw {
-                        rect: page.rect,
+                        rect: self.camera.rect_to_screen(page.rect),
                         quad: &page.quad,
                         texture: texture.as_ref(),
                         focused: i == last_index,
