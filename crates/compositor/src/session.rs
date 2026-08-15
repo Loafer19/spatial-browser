@@ -15,6 +15,11 @@ pub struct Session {
     camera: Camera,
     theme: Theme,
     dirty: bool,
+    // Camera stashed while a page is zoomed-to-canvas (see
+    // toggle_zoom_focused), restored when toggled back off. Only one page
+    // can be zoomed at a time in practice (Page::zoomed_from parallels
+    // this), so a single slot is enough.
+    zoomed_camera: Option<Camera>,
 }
 
 impl Session {
@@ -24,6 +29,7 @@ impl Session {
             camera,
             theme,
             dirty: false,
+            zoomed_camera: None,
         }
     }
 
@@ -145,23 +151,37 @@ impl Session {
     }
 
     /// Toggles the topmost page between its normal rect and filling
-    /// `viewport` (screen space, converted through the camera) — a
-    /// pure numeric viewport/scale in rather than a whole `GpuState` so
-    /// this module stays free of window/wgpu dependencies.
+    /// `viewport` (physical pixels) — a pure numeric viewport/scale in
+    /// rather than a whole `GpuState` so this module stays free of
+    /// window/wgpu dependencies.
+    ///
+    /// Also resets the camera to identity for the duration (restored on
+    /// toggle-back-off): computing the fill size as `viewport /
+    /// camera.zoom` instead would blow up at a small zoom (zoomed way
+    /// out) into a world size of tens of thousands of pixels — since a
+    /// page's rect drives CEF's actual OSR buffer resolution 1:1, that
+    /// either gets clamped (page ends up *not* filling the screen) or,
+    /// before that clamp existed, crashed the whole process outright.
     pub fn toggle_zoom_focused(&mut self, viewport: (f32, f32), scale_factor: f64) {
         let Some(page) = self.pages.last_mut() else {
             return;
         };
         match page.zoomed_from.take() {
-            Some(previous_rect) => page.set_rect(previous_rect, scale_factor),
+            Some(previous_rect) => {
+                page.set_rect(previous_rect, scale_factor);
+                if let Some(camera) = self.zoomed_camera.take() {
+                    self.camera = camera;
+                }
+            }
             None => {
+                self.zoomed_camera = Some(self.camera);
+                self.camera = Camera::default();
                 let margin = 40.0;
-                let world_origin = self.camera.screen_to_world((margin, margin));
                 let zoomed_rect = Rect {
-                    x: world_origin.0,
-                    y: world_origin.1,
-                    w: (viewport.0 - margin * 2.0) / self.camera.zoom,
-                    h: (viewport.1 - margin * 2.0) / self.camera.zoom,
+                    x: margin,
+                    y: margin,
+                    w: viewport.0 - margin * 2.0,
+                    h: viewport.1 - margin * 2.0,
                 };
                 page.zoomed_from = Some(page.rect);
                 page.set_rect(zoomed_rect, scale_factor);
