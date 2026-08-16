@@ -18,7 +18,7 @@ use crate::output::{FrameOutcome, GpuState, PageDraw, Rect, THEMES};
 use crate::persistence;
 use crate::session::Session;
 use cef::{ImplBrowser, ImplBrowserHost};
-use cef_bridge::{CURSOR, PENDING_BOOKMARK};
+use cef_bridge::{BookmarkAction, CURSOR, PENDING_BOOKMARK};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::{
@@ -126,6 +126,30 @@ fn hit_test(pages: &[Page], x: f32, y: f32) -> Option<usize> {
     pages.iter().rposition(|p| p.rect.contains(x, y))
 }
 
+/// Replaces the bookmarks-list page identified by `browser_id` (CEF's
+/// own per-browser id) with a fresh one at the same rect, if it's still
+/// open — used after a delete/rename so the list reflects the change
+/// without the user having to close and reopen it themselves. Closes and
+/// respawns rather than `load_url` in place: a navigation issued right
+/// after CEF just canceled one on that same frame isn't reliable. A free
+/// function, not an App method: `self.state` is already mutably borrowed
+/// as `state` for most of `window_event`, so this only takes the
+/// specific fields it needs.
+fn refresh_bookmarks_page(session: &mut Session, gpu: &GpuState, bookmarks: &[Bookmark], browser_id: i32) {
+    let Some(index) = session
+        .pages()
+        .iter()
+        .position(|p| p.browser.identifier() == browser_id)
+    else {
+        return;
+    };
+    let Some(rect) = session.close_at(index) else {
+        return;
+    };
+    let url = hotkeys::bookmarks_page_url(&session.theme(), bookmarks);
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_some() {
@@ -173,7 +197,7 @@ impl ApplicationHandler for App {
             let pages = rects
                 .into_iter()
                 .zip(urls)
-                .map(|(rect, url)| browser::spawn(&state, &window, url, rect))
+                .map(|(rect, url)| browser::spawn(&state, &window, url, rect, false))
                 .collect();
             Session::new(pages, Camera::default(), THEMES[0])
         });
@@ -397,30 +421,55 @@ impl ApplicationHandler for App {
                     }
                 }
 
-                // Set by cef-bridge's OsrRequestHandler when a click
-                // inside the bookmarks-list page (hotkeys::open_bookmarks)
-                // hits one of its `bookmark://<index>` links — that
-                // navigation was already canceled there; open a real page
-                // for it here instead, cascaded like a new page so it
-                // doesn't land exactly on top of the list.
-                if let Some(index) = PENDING_BOOKMARK.with_borrow_mut(|pending| pending.take()) {
-                    if let Some(bookmark) = self.bookmarks.get(index) {
-                        let step = ((self.session.pages().len() % 8) as f32) * 32.0;
-                        let size = state.window.inner_size();
-                        let camera = self.session.camera();
-                        let world_origin = camera.screen_to_world((48.0 + step, 48.0 + step));
-                        let rect = Rect {
-                            x: world_origin.0,
-                            y: world_origin.1,
-                            w: (size.width as f32 * 0.5).min(800.0) / camera.zoom,
-                            h: (size.height as f32 * 0.5).min(600.0) / camera.zoom,
-                        };
-                        self.session.add_page(browser::spawn(
-                            state,
-                            &state.window,
-                            &bookmark.url,
-                            rect,
-                        ));
+                // Set by cef-bridge's OsrRequestHandler when a click or
+                // form submit inside the bookmarks-list page
+                // (hotkeys::open_bookmarks) hits one of its
+                // `bookmark://...` links — that navigation was already
+                // canceled there; act on it here instead. `browser_id`
+                // identifies exactly which bookmarks-list page asked, so
+                // delete/rename can reload that same page in place
+                // rather than guessing which open page (if any) it was.
+                if let Some((browser_id, action)) =
+                    PENDING_BOOKMARK.with_borrow_mut(|pending| pending.take())
+                {
+                    match action {
+                        BookmarkAction::Open(index) => {
+                            if let Some(bookmark) = self.bookmarks.get(index) {
+                                let step = ((self.session.pages().len() % 8) as f32) * 32.0;
+                                let size = state.window.inner_size();
+                                let camera = self.session.camera();
+                                let world_origin =
+                                    camera.screen_to_world((48.0 + step, 48.0 + step));
+                                let rect = Rect {
+                                    x: world_origin.0,
+                                    y: world_origin.1,
+                                    w: (size.width as f32 * 0.5).min(800.0) / camera.zoom,
+                                    h: (size.height as f32 * 0.5).min(600.0) / camera.zoom,
+                                };
+                                self.session.add_page(browser::spawn(
+                                    state,
+                                    &state.window,
+                                    &bookmark.url,
+                                    rect,
+                                    false,
+                                ));
+                            }
+                        }
+                        BookmarkAction::Delete(index) => {
+                            if index < self.bookmarks.len() {
+                                self.bookmarks.remove(index);
+                                bookmarks::save(&self.bookmarks);
+                            }
+                            refresh_bookmarks_page(&mut self.session, state, &self.bookmarks, browser_id);
+                        }
+                        BookmarkAction::Rename(index, title, folder) => {
+                            if let Some(bookmark) = self.bookmarks.get_mut(index) {
+                                bookmark.title = (!title.is_empty()).then_some(title);
+                                bookmark.folder = (!folder.is_empty()).then_some(folder);
+                            }
+                            bookmarks::save(&self.bookmarks);
+                            refresh_bookmarks_page(&mut self.session, state, &self.bookmarks, browser_id);
+                        }
                     }
                 }
 

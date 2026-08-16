@@ -26,6 +26,13 @@ pub struct Page {
     // The rect this page had before the zoom-toggle hotkey enlarged it —
     // `Some` while zoomed in, restored and cleared on toggling back out.
     pub zoomed_from: Option<Rect>,
+    // True for generated utility pages (F1 help, the bookmarks list) —
+    // persistence.rs skips these when saving. Without this, a bookmarks-
+    // list page opened once gets frozen into session.json and reopens on
+    // every future launch as a stale snapshot: outdated content, and
+    // bookmark:// indices inside it that no longer match the current
+    // bookmarks list.
+    pub ephemeral: bool,
 }
 
 impl Page {
@@ -47,7 +54,7 @@ impl Page {
     }
 }
 
-pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect) -> Page {
+pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect, ephemeral: bool) -> Page {
     let rect = rect.clamp_size(MAX_PAGE_DIMENSION);
     // Shared-texture (GPU) OSR needs the CEF GPU process's DMA-BUF export
     // and our wgpu Vulkan import to land on the same physical GPU. On a
@@ -101,5 +108,6 @@ pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect) -> Page {
         size: handles.size,
         texture: handles.texture,
         zoomed_from: None,
+        ephemeral,
     }
 }

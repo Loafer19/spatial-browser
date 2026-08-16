@@ -45,9 +45,14 @@ pub fn save(session: &Session) {
     let data = SessionFile {
         theme: session.theme().name.to_string(),
         camera: session.camera(),
+        // Skips ephemeral pages (F1 help, bookmarks list): they're
+        // regenerated fresh from current data whenever reopened, so
+        // persisting one would just freeze a stale snapshot that reopens
+        // on every future launch instead of real content.
         pages: session
             .pages()
             .iter()
+            .filter(|p| !p.ephemeral)
             .map(|p| PageFile {
                 url: current_url(p),
                 rect: p.rect,
@@ -86,7 +91,7 @@ pub fn load(gpu: &GpuState, window: &Window) -> Option<Session> {
     let pages = data
         .pages
         .into_iter()
-        .map(|p| browser::spawn(gpu, window, &p.url, p.rect))
+        .map(|p| browser::spawn(gpu, window, &p.url, p.rect, false))
         .collect();
     Some(Session::new(pages, data.camera, theme))
 }

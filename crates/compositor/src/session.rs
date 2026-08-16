@@ -9,7 +9,7 @@
 use crate::browser::Page;
 use crate::camera::Camera;
 use crate::output::{Rect, THEMES, Theme};
-use cef::{ImplBrowser, ImplFrame};
+use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 
 // How many recently-closed pages Ctrl+Shift+T can reach back through.
 const MAX_CLOSED: usize = 20;
@@ -89,7 +89,7 @@ impl Session {
             }
         }
         if let Some(host) = page.browser.host() {
-            cef::ImplBrowserHost::close_browser(&host, true as _);
+            host.close_browser(true as _);
         }
         self.mark_dirty();
     }
@@ -99,6 +99,27 @@ impl Session {
     /// Session itself doesn't own GpuState/CEF spawning.
     pub fn pop_closed(&mut self) -> Option<(Rect, String)> {
         self.closed.pop()
+    }
+
+    /// Closes and removes the page at `index`, returning its former
+    /// rect — used to refresh a page whose content needs to be rebuilt
+    /// from fresh Rust-side data (the bookmarks-list page after a
+    /// delete/rename) by closing it and spawning a replacement at the
+    /// same rect, rather than reloading in place: a `load_url` issued
+    /// right after CEF just canceled a navigation on that same frame
+    /// isn't reliable. Does *not* go through the closed-page undo stack
+    /// (pop_closed) — this isn't a user-initiated close.
+    pub fn close_at(&mut self, index: usize) -> Option<Rect> {
+        if index >= self.pages.len() {
+            return None;
+        }
+        let page = self.pages.remove(index);
+        let rect = page.rect;
+        if let Some(host) = page.browser.host() {
+            host.close_browser(true as _);
+        }
+        self.mark_dirty();
+        Some(rect)
     }
 
     /// Moves the page at `index` to the end of z-order (topmost) and

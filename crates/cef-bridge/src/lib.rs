@@ -493,14 +493,87 @@ fn cef_cursor_to_winit(type_: CursorType) -> CursorIcon {
     }
 }
 
+/// What the bookmarks-list page (compositor::hotkeys) asked for, parsed
+/// from a `bookmark://...` link/form it navigated to.
+pub enum BookmarkAction {
+    Open(usize),
+    Delete(usize),
+    /// index, new title, new folder (empty string = clear/ungrouped)
+    Rename(usize, String, String),
+}
+
 thread_local! {
     // Set by `OsrRequestHandler::on_before_browse` when a page navigates
-    // to a `bookmark://<index>` link (only the generated bookmarks-list
-    // page ever produces one — see compositor::hotkeys — so a global
-    // slot is safe: no other page's real navigation can collide with
-    // it), read once per frame by the compositor's redraw handler, which
-    // looks up the bookmark by index and opens it as a real new page.
-    pub static PENDING_BOOKMARK: RefCell<Option<usize>> = const { RefCell::new(None) };
+    // to a `bookmark://...` link or form (only the generated
+    // bookmarks-list page ever produces one — see compositor::hotkeys —
+    // so a global slot is safe: no other page's real navigation can
+    // collide with it). The browser identifier (CEF's own per-instance
+    // id) tags *which* page asked, so the compositor can reload that
+    // exact bookmarks-list page in place after a delete/rename rather
+    // than guessing. Read once per frame by the compositor's redraw
+    // handler.
+    pub static PENDING_BOOKMARK: RefCell<Option<(i32, BookmarkAction)>> = const { RefCell::new(None) };
+}
+
+/// Minimal `application/x-www-form-urlencoded` decode (`+` -> space,
+/// `%XX` -> byte) — just enough for the rename form's `title`/`folder`
+/// values, without pulling in a URL crate for it.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("");
+                match u8::from_str_radix(hex, 16) {
+                    Ok(byte) => {
+                        out.push(byte);
+                        i += 3;
+                    }
+                    Err(_) => {
+                        out.push(bytes[i]);
+                        i += 1;
+                    }
+                }
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Pulls a query parameter's decoded value out of `a=1&b=2`-style text.
+fn query_param(query: &str, name: &str) -> Option<String> {
+    query.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        (key == name).then(|| percent_decode(value))
+    })
+}
+
+fn parse_bookmark_action(url: &str) -> Option<BookmarkAction> {
+    let rest = url.strip_prefix("bookmark://")?;
+    if let Some(index) = rest.strip_prefix("open/") {
+        return index.parse().ok().map(BookmarkAction::Open);
+    }
+    if let Some(index) = rest.strip_prefix("delete/") {
+        return index.parse().ok().map(BookmarkAction::Delete);
+    }
+    if let Some(after) = rest.strip_prefix("rename/") {
+        let (index, query) = after.split_once('?').unwrap_or((after, ""));
+        let index = index.parse().ok()?;
+        let title = query_param(query, "title").unwrap_or_default();
+        let folder = query_param(query, "folder").unwrap_or_default();
+        return Some(BookmarkAction::Rename(index, title, folder));
+    }
+    None
 }
 
 #[derive(Clone)]
@@ -514,24 +587,22 @@ wrap_request_handler! {
     impl RequestHandler {
         fn on_before_browse(
             &self,
-            _browser: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             _frame: Option<&mut Frame>,
             request: Option<&mut Request>,
             _user_gesture: ::std::os::raw::c_int,
             _is_redirect: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
-            let Some(request) = request else {
+            let (Some(browser), Some(request)) = (browser, request) else {
                 return false as _;
             };
             let url = cef::CefString::from(&request.url()).to_string();
-            let Some(index) = url
-                .strip_prefix("bookmark://")
-                .and_then(|s| s.parse::<usize>().ok())
-            else {
+            let Some(action) = parse_bookmark_action(&url) else {
                 return false as _;
             };
-            PENDING_BOOKMARK.with_borrow_mut(|pending| *pending = Some(index));
-            true as _ // cancel navigation — the compositor opens a real page instead
+            let id = browser.identifier();
+            PENDING_BOOKMARK.with_borrow_mut(|pending| *pending = Some((id, action)));
+            true as _ // cancel navigation — the compositor acts on it instead
         }
     }
 }

@@ -144,14 +144,14 @@ fn open_new(session: &mut Session, gpu: &GpuState) {
         w: (size.width as f32 * 0.5).min(800.0) / camera.zoom,
         h: (size.height as f32 * 0.5).min(600.0) / camera.zoom,
     };
-    session.add_page(browser::spawn(gpu, &gpu.window, NEW_PAGE_URL, rect));
+    session.add_page(browser::spawn(gpu, &gpu.window, NEW_PAGE_URL, rect, false));
 }
 
 /// Reopens the most recently closed page (if any) at its former rect,
 /// bringing it to front.
 fn reopen_closed(session: &mut Session, gpu: &GpuState) {
     if let Some((rect, url)) = session.pop_closed() {
-        session.add_page(browser::spawn(gpu, &gpu.window, &url, rect));
+        session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, false));
     }
 }
 
@@ -186,10 +186,16 @@ fn page_zoom(session: &Session, command: cef::ZoomCommand) {
 }
 
 /// Bookmarks the focused page's current URL, if it isn't already saved.
+/// Refuses on an ephemeral page (F1 help, the bookmarks list itself) —
+/// otherwise Ctrl+D on one of those saves its entire generated HTML as a
+/// "URL".
 fn bookmark_focused(session: &Session, bookmarks: &mut Vec<Bookmark>) {
     let Some(page) = session.pages().last() else {
         return;
     };
+    if page.ephemeral {
+        return;
+    }
     let Some(url) = page
         .browser
         .main_frame()
@@ -200,7 +206,11 @@ fn bookmark_focused(session: &Session, bookmarks: &mut Vec<Bookmark>) {
     if bookmarks.iter().any(|b| b.url == url) {
         return;
     }
-    bookmarks.push(Bookmark { url });
+    bookmarks.push(Bookmark {
+        url,
+        title: None,
+        folder: None,
+    });
     bookmarks::save(bookmarks);
 }
 
@@ -218,16 +228,31 @@ fn open_bookmarks(session: &mut Session, gpu: &GpuState, bookmarks: &[Bookmark])
         h: h / camera.zoom,
     };
     let url = bookmarks_page_url(&session.theme(), bookmarks);
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect));
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
-/// Builds the bookmarks-list page's `data:` URL. Each entry is a real
-/// `<a href="bookmark://{index}">` — clicking it is a normal navigation
-/// CEF's `on_before_browse` (cef-bridge) intercepts and cancels, signaling
-/// the index back to the compositor to open as a real new page instead.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Builds the bookmarks-list page's `data:` URL — grouped by folder
+/// (ungrouped entries first, then each named folder in order of first
+/// appearance). Each row is a real `<a href="bookmark://open/{index}">`
+/// plus a delete link and a rename form; all three are normal
+/// navigations that CEF's `on_before_browse` (cef-bridge) intercepts and
+/// cancels, signaling the action back to the compositor
+/// (`app.rs`'s `PENDING_BOOKMARK` handling) instead of actually loading
+/// `bookmark://...`. `pub(crate)` so app.rs can rebuild this page in
+/// place after a delete/rename.
+///
 /// The favicon is fetched live from the bookmark's own site
-/// (`https://{host}/favicon.ico`) rather than captured/stored ourselves.
-fn bookmarks_page_url(theme: &Theme, bookmarks: &[Bookmark]) -> String {
+/// (`https://{host}/favicon.ico`) rather than captured/stored ourselves;
+/// a colored initial-letter tile sits underneath it as a fallback that
+/// never needs the network, shown until (or unless) the real icon loads.
+pub(crate) fn bookmarks_page_url(theme: &Theme, bookmarks: &[Bookmark]) -> String {
     let mut rows = String::new();
     if bookmarks.is_empty() {
         rows.push_str(&format!(
@@ -235,26 +260,93 @@ fn bookmarks_page_url(theme: &Theme, bookmarks: &[Bookmark]) -> String {
             fg = theme.help_fg,
         ));
     }
-    for (index, bookmark) in bookmarks.iter().enumerate() {
-        let host = bookmarks::host_of(&bookmark.url);
-        rows.push_str(&format!(
-            "<a href=\"bookmark://{index}\" style=\"display:flex;align-items:center;gap:12px;\
-             text-decoration:none;padding:10px 14px;background:{card_bg};border-radius:8px;\
-             border:1px solid {card_border};color:{fg}\">\
-             <img src=\"https://{host}/favicon.ico\" width=\"16\" height=\"16\" \
-             style=\"flex-shrink:0\" onerror=\"this.style.visibility='hidden'\">\
-             <span style=\"overflow:hidden;text-overflow:ellipsis;white-space:nowrap\">{host}</span>\
-             </a>",
-            card_bg = theme.help_card_bg,
-            card_border = theme.help_card_border,
-            fg = theme.help_fg,
-        ));
+
+    let mut folders: Vec<Option<&str>> = Vec::new();
+    for bookmark in bookmarks {
+        let folder = bookmark.folder.as_deref();
+        if !folders.contains(&folder) {
+            folders.push(folder);
+        }
     }
+
+    for folder in folders {
+        if let Some(name) = folder {
+            rows.push_str(&format!(
+                "<h2 style=\"margin:12px 0 0;font-size:13px;text-transform:uppercase;\
+                 letter-spacing:0.05em;color:{heading};opacity:0.8\">{name}</h2>",
+                heading = theme.help_heading,
+                name = html_escape(name),
+            ));
+        }
+        for (index, bookmark) in bookmarks.iter().enumerate() {
+            if bookmark.folder.as_deref() != folder {
+                continue;
+            }
+            let host = bookmarks::host_of(&bookmark.url);
+            let label = bookmarks::display_label(bookmark);
+            let letter = label.chars().next().unwrap_or('?').to_uppercase();
+            rows.push_str(&format!(
+                "<div style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
+                 background:{card_bg};border-radius:8px;border:1px solid {card_border}\">\
+                 <a href=\"bookmark://open/{index}\" style=\"display:flex;flex-shrink:0\">\
+                 <span style=\"position:relative;width:20px;height:20px\">\
+                 <span style=\"position:absolute;inset:0;border-radius:4px;background:{key_bg};\
+                 color:{key_fg};display:flex;align-items:center;justify-content:center;\
+                 font-size:11px;font-weight:700\">{letter}</span>\
+                 <img src=\"https://{host}/favicon.ico\" width=\"20\" height=\"20\" \
+                 style=\"position:absolute;inset:0;border-radius:4px\" \
+                 onerror=\"this.style.display='none'\"></span></a>\
+                 <form method=\"get\" action=\"bookmark://rename/{index}\" \
+                 style=\"display:flex;align-items:center;gap:6px;flex:1;min-width:0;margin:0\">\
+                 <span onclick=\"this.style.display='none';\
+                 this.nextElementSibling.style.display='inline-block';\
+                 this.nextElementSibling.focus();this.nextElementSibling.select()\" \
+                 style=\"cursor:text;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\
+                 flex:1;color:{fg}\" title=\"Click to rename\">{label}</span>\
+                 <input name=\"title\" value=\"{label_attr}\" \
+                 style=\"display:none;flex:1;min-width:0;background:{bg};color:{fg};\
+                 border:1px solid {card_border};border-radius:4px;padding:2px 6px;\
+                 font:inherit;font-size:13px\">\
+                 <input name=\"folder\" value=\"{folder_attr}\" placeholder=\"folder\" \
+                 style=\"width:70px;flex-shrink:0;background:{bg};color:{fg};\
+                 border:1px solid {card_border};border-radius:4px;padding:2px 6px;\
+                 font:inherit;font-size:12px\">\
+                 <button type=\"submit\" title=\"Save\" class=\"bm-icon-btn\" style=\"flex-shrink:0;\
+                 margin-left:4px;display:flex;align-items:center;justify-content:center;\
+                 width:26px;height:26px;border-radius:6px;background:{bg};color:{fg};\
+                 opacity:0.7;border:none;cursor:pointer;font:inherit\">\
+                 <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"currentColor\">\
+                 <path d=\"M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z\"/></svg></button>\
+                 </form>\
+                 <a href=\"bookmark://delete/{index}\" title=\"Delete\" class=\"bm-icon-btn\" \
+                 style=\"flex-shrink:0;margin-left:4px;display:flex;align-items:center;\
+                 justify-content:center;width:26px;height:26px;border-radius:6px;\
+                 background:{bg};color:{fg};opacity:0.7;text-decoration:none\">\
+                 <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"currentColor\">\
+                 <path d=\"M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z\"/>\
+                 </svg></a>\
+                 </div>",
+                card_bg = theme.help_card_bg,
+                card_border = theme.help_card_border,
+                fg = theme.help_fg,
+                key_bg = theme.help_key_bg,
+                key_fg = theme.help_key_fg,
+                bg = theme.help_bg,
+                label_attr = html_escape(label),
+                folder_attr = html_escape(bookmark.folder.as_deref().unwrap_or("")),
+            ));
+        }
+    }
+
     format!(
-        "data:text/html,<body style=\"margin:0;padding:32px;background:{bg};color:{fg};\
+        "data:text/html,<style>.bm-icon-btn:hover{{background:{key_bg}!important;\
+         color:{key_fg}!important;opacity:1!important}}</style>\
+         <body style=\"margin:0;padding:32px;background:{bg};color:{fg};\
          font-family:ui-monospace,monospace;font-size:15px\">\
          <h1 style=\"margin:0 0 20px;color:{heading};font-size:20px\">Bookmarks</h1>\
          <div style=\"display:flex;flex-direction:column;gap:8px\">{rows}</div></body>",
+        key_bg = theme.help_key_bg,
+        key_fg = theme.help_key_fg,
         bg = theme.help_bg,
         fg = theme.help_fg,
         heading = theme.help_heading,
@@ -275,7 +367,7 @@ fn open_help(session: &mut Session, gpu: &GpuState) {
         h: h / camera.zoom,
     };
     let url = help_page_url(&session.theme());
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect));
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
 const HELP_ENTRIES: &[(&str, &str)] = &[
