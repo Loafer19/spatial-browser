@@ -30,7 +30,7 @@ impl Vertex {
 
 /// A page's position and size, origin top-left, y-down — the same
 /// convention as window/mouse coordinates. Lives in world space (see
-/// camera.rs for the pan/zoom mapping to screen space); `GpuState::render`
+/// viewport.rs for the pan/zoom mapping to screen space); `GpuState::render`
 /// is handed already screen-space rects.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Rect {
@@ -50,7 +50,7 @@ impl Rect {
     /// whole process on any texture exceeding its dimension limit — no
     /// graceful fallback — so this has to be enforced wherever a rect
     /// reaches a page, not trusted to whatever produced it (dividing a
-    /// screen size by a small camera zoom, e.g. zoom-to-canvas while
+    /// screen size by a small viewport zoom, e.g. zoom-to-canvas while
     /// zoomed way out, easily produces a world size in the tens of
     /// thousands of pixels).
     pub fn clamp_size(mut self, max: f32) -> Self {

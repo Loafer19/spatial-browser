@@ -576,6 +576,30 @@ fn parse_bookmark_action(url: &str) -> Option<BookmarkAction> {
     None
 }
 
+/// What the omnibox page (compositor::hotkeys::omnibox_page_url) asked
+/// for, parsed from an `omnibox://go?q=...&url=...` navigation it made.
+/// `raw` is exactly what the user typed (for history); `url` is what the
+/// page's own JS already resolved it to (URL detection / @prefix search
+/// engines / default search) — the compositor doesn't need to know that
+/// resolution logic, just where to navigate.
+pub struct OmniboxSubmit {
+    pub raw: String,
+    pub url: String,
+}
+
+thread_local! {
+    // Same shape/reasoning as PENDING_BOOKMARK, for the omnibox page.
+    pub static PENDING_OMNIBOX: RefCell<Option<(i32, OmniboxSubmit)>> = const { RefCell::new(None) };
+}
+
+fn parse_omnibox_submit(url: &str) -> Option<OmniboxSubmit> {
+    let query = url.strip_prefix("omnibox://go?")?;
+    Some(OmniboxSubmit {
+        raw: query_param(query, "q")?,
+        url: query_param(query, "url")?,
+    })
+}
+
 #[derive(Clone)]
 pub struct OsrRequestHandler {}
 
@@ -597,12 +621,16 @@ wrap_request_handler! {
                 return false as _;
             };
             let url = cef::CefString::from(&request.url()).to_string();
-            let Some(action) = parse_bookmark_action(&url) else {
-                return false as _;
-            };
             let id = browser.identifier();
-            PENDING_BOOKMARK.with_borrow_mut(|pending| *pending = Some((id, action)));
-            true as _ // cancel navigation — the compositor acts on it instead
+            if let Some(action) = parse_bookmark_action(&url) {
+                PENDING_BOOKMARK.with_borrow_mut(|pending| *pending = Some((id, action)));
+                return true as _; // cancel navigation — the compositor acts on it instead
+            }
+            if let Some(submit) = parse_omnibox_submit(&url) {
+                PENDING_OMNIBOX.with_borrow_mut(|pending| *pending = Some((id, submit)));
+                return true as _;
+            }
+            false as _
         }
     }
 }

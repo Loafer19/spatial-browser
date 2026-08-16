@@ -1,7 +1,7 @@
 // World-space <-> screen-space mapping for the 2D canvas. Page rects
 // (browser.rs::Page::rect) live in world space and drive CEF's actual
-// backing resolution — zooming the camera never re-renders a page at a
-// different resolution, it only changes where/how large its quad is
+// backing resolution — zooming the viewport never re-renders a page at
+// a different resolution, it only changes where/how large its quad is
 // drawn and hit-tested. `offset` is the world-space point that currently
 // maps to screen origin (0,0); pan and zoom-to-cursor both just solve
 // for a new offset that keeps some reference point fixed on screen.
@@ -10,12 +10,12 @@ use crate::output::Rect;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
-pub struct Camera {
+pub struct Viewport {
     pub offset: (f32, f32),
     pub zoom: f32,
 }
 
-impl Default for Camera {
+impl Default for Viewport {
     fn default() -> Self {
         Self {
             offset: (0.0, 0.0),
@@ -24,7 +24,7 @@ impl Default for Camera {
     }
 }
 
-impl Camera {
+impl Viewport {
     const MIN_ZOOM: f32 = 0.2;
     const MAX_ZOOM: f32 = 3.0;
 

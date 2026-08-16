@@ -4,21 +4,25 @@
 // per-page dragging (Alt+Left-drag moves a page — same convention as
 // borderless-window drag in most Linux window managers, including
 // Hyprland's own `bindm ... movewindow`) and resizing (dragging a page's
-// bottom-right corner). Page rects live in world space; see camera.rs
+// bottom-right corner). Page rects live in world space; see viewport.rs
 // for the pan/zoom mapping to screen space that hit-testing and drawing
-// convert through. Canvas state itself (pages/camera/theme) lives in
-// session.rs, persisted via persistence.rs.
+// convert through. Canvas state itself (pages/viewport/theme) lives in
+// session.rs, persisted via persistence/mod.rs.
 
-use crate::bookmarks::{self, Bookmark};
 use crate::browser::{self, Page};
-use crate::camera::Camera;
 use crate::hotkeys;
 use crate::input::{KeyboardInput, MouseInput};
 use crate::output::{FrameOutcome, GpuState, PageDraw, Rect, THEMES};
-use crate::persistence;
+use crate::pages;
+use crate::persistence::{
+    self,
+    bookmarks::{self, Bookmark},
+    history,
+};
 use crate::session::Session;
+use crate::viewport::Viewport;
 use cef::{ImplBrowser, ImplBrowserHost};
-use cef_bridge::{BookmarkAction, CURSOR, PENDING_BOOKMARK};
+use cef_bridge::{BookmarkAction, CURSOR, PENDING_BOOKMARK, PENDING_OMNIBOX};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::{
@@ -41,6 +45,9 @@ pub struct App {
     // every change (Ctrl+D) — unlike session state, bookmark edits are
     // rare and deliberate, so there's no need for the debounce below.
     bookmarks: Vec<Bookmark>,
+    // Loaded once at startup from history.json, saved immediately on
+    // every omnibox submission (see PENDING_OMNIBOX handling below).
+    history: Vec<String>,
     mouse: MouseInput,
     keyboard: KeyboardInput,
     // Raw window-space physical cursor position — updated on every
@@ -61,7 +68,7 @@ pub struct App {
     // page to front) page's rect origin (world space) to the cursor, set
     // at drag start.
     dragging: Option<(f32, f32)>,
-    // (screen-space cursor position, camera offset) at the start of a
+    // (screen-space cursor position, viewport offset) at the start of a
     // middle-button canvas pan.
     panning: Option<((f32, f32), (f32, f32))>,
     // Set while the topmost page's bottom-right corner (see
@@ -86,8 +93,9 @@ impl Default for App {
     fn default() -> Self {
         Self {
             state: None,
-            session: Session::new(Vec::new(), Camera::default(), THEMES[0]),
+            session: Session::new(Vec::new(), Viewport::default(), THEMES[0]),
             bookmarks: bookmarks::load(),
+            history: history::load(),
             mouse: MouseInput::default(),
             keyboard: KeyboardInput::default(),
             cursor_window: (0.0, 0.0),
@@ -112,10 +120,10 @@ const MIN_PAGE_SIZE: f32 = 160.0;
 
 /// Topmost page (last in z-order) whose bottom-right corner (screen
 /// space) is within `RESIZE_HANDLE` of the cursor, if any.
-fn resize_hit_test(pages: &[Page], camera: &Camera, cursor_screen: (f32, f32)) -> Option<usize> {
+fn resize_hit_test(pages: &[Page], viewport: &Viewport, cursor_screen: (f32, f32)) -> Option<usize> {
     let half = RESIZE_HANDLE / 2.0;
     pages.iter().rposition(|p| {
-        let r = camera.rect_to_screen(p.rect);
+        let r = viewport.rect_to_screen(p.rect);
         let corner = (r.x + r.w, r.y + r.h);
         (cursor_screen.0 - corner.0).abs() <= half && (cursor_screen.1 - corner.1).abs() <= half
     })
@@ -146,7 +154,7 @@ fn refresh_bookmarks_page(session: &mut Session, gpu: &GpuState, bookmarks: &[Bo
     let Some(rect) = session.close_at(index) else {
         return;
     };
-    let url = hotkeys::bookmarks_page_url(&session.theme(), bookmarks);
+    let url = pages::bookmarks_list::page_url(&session.theme(), bookmarks);
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
@@ -199,7 +207,7 @@ impl ApplicationHandler for App {
                 .zip(urls)
                 .map(|(rect, url)| browser::spawn(&state, &window, url, rect, false))
                 .collect();
-            Session::new(pages, Camera::default(), THEMES[0])
+            Session::new(pages, Viewport::default(), THEMES[0])
         });
         self.canvas_size = (window.inner_size().width as f32, window.inner_size().height as f32);
 
@@ -239,18 +247,18 @@ impl ApplicationHandler for App {
                 if let Some((start, offset_at_start)) = self.panning {
                     let dx = self.cursor_window.0 - start.0;
                     let dy = self.cursor_window.1 - start.1;
-                    let zoom = self.session.camera().zoom;
-                    self.session.pan_camera_to((
+                    let zoom = self.session.viewport().zoom;
+                    self.session.pan_viewport_to((
                         offset_at_start.0 - dx / zoom,
                         offset_at_start.1 - dy / zoom,
                     ));
                     return;
                 }
 
-                let camera = self.session.camera();
-                let cursor_world = camera.screen_to_world(self.cursor_window);
+                let viewport = self.session.viewport();
+                let cursor_world = viewport.screen_to_world(self.cursor_window);
                 self.resize_hover = self.resizing
-                    || resize_hit_test(self.session.pages(), &camera, self.cursor_window).is_some();
+                    || resize_hit_test(self.session.pages(), &viewport, self.cursor_window).is_some();
 
                 if self.resizing {
                     let page = self.session.pages().last().expect("resizing with no pages");
@@ -301,7 +309,7 @@ impl ApplicationHandler for App {
                 {
                     match element_state {
                         ElementState::Pressed => {
-                            self.panning = Some((self.cursor_window, self.session.camera().offset));
+                            self.panning = Some((self.cursor_window, self.session.viewport().offset));
                         }
                         ElementState::Released => self.panning = None,
                     }
@@ -309,7 +317,7 @@ impl ApplicationHandler for App {
                 }
 
                 if button == MouseButton::Left && self.modifiers.alt_key() {
-                    let cursor_world = self.session.camera().screen_to_world(self.cursor_window);
+                    let cursor_world = self.session.viewport().screen_to_world(self.cursor_window);
                     match element_state {
                         ElementState::Pressed => {
                             if let Some(i) =
@@ -331,7 +339,7 @@ impl ApplicationHandler for App {
                         ElementState::Pressed => {
                             if let Some(i) = resize_hit_test(
                                 self.session.pages(),
-                                &self.session.camera(),
+                                &self.session.viewport(),
                                 self.cursor_window,
                             ) {
                                 self.session.bring_to_front(i);
@@ -348,7 +356,7 @@ impl ApplicationHandler for App {
                     }
                 }
 
-                let cursor_world = self.session.camera().screen_to_world(self.cursor_window);
+                let cursor_world = self.session.viewport().screen_to_world(self.cursor_window);
                 let Some(i) = hit_test(self.session.pages(), cursor_world.0, cursor_world.1)
                 else {
                     return;
@@ -369,18 +377,18 @@ impl ApplicationHandler for App {
                         winit::event::MouseScrollDelta::PixelDelta(p) => (p.y / 40.0) as f32,
                     };
                     let factor = 1.1f32.powf(scroll_y);
-                    self.session.zoom_camera_at(self.cursor_window, factor);
+                    self.session.zoom_viewport_at(self.cursor_window, factor);
                     return;
                 }
 
-                let cursor_world = self.session.camera().screen_to_world(self.cursor_window);
+                let cursor_world = self.session.viewport().screen_to_world(self.cursor_window);
                 if let Some(i) = hit_test(self.session.pages(), cursor_world.0, cursor_world.1) {
                     let host = self.session.pages()[i].browser.host();
                     self.mouse.wheel(delta, host.as_ref());
                 }
             }
             WindowEvent::CursorLeft { .. } => {
-                let cursor_world = self.session.camera().screen_to_world(self.cursor_window);
+                let cursor_world = self.session.viewport().screen_to_world(self.cursor_window);
                 if let Some(i) = hit_test(self.session.pages(), cursor_world.0, cursor_world.1) {
                     let host = self.session.pages()[i].browser.host();
                     self.mouse.cursor_left(host.as_ref());
@@ -404,6 +412,7 @@ impl ApplicationHandler for App {
                     &mut self.session,
                     state,
                     &mut self.bookmarks,
+                    &self.history,
                 ) {
                     return;
                 }
@@ -437,14 +446,14 @@ impl ApplicationHandler for App {
                             if let Some(bookmark) = self.bookmarks.get(index) {
                                 let step = ((self.session.pages().len() % 8) as f32) * 32.0;
                                 let size = state.window.inner_size();
-                                let camera = self.session.camera();
+                                let viewport = self.session.viewport();
                                 let world_origin =
-                                    camera.screen_to_world((48.0 + step, 48.0 + step));
+                                    viewport.screen_to_world((48.0 + step, 48.0 + step));
                                 let rect = Rect {
                                     x: world_origin.0,
                                     y: world_origin.1,
-                                    w: (size.width as f32 * 0.5).min(800.0) / camera.zoom,
-                                    h: (size.height as f32 * 0.5).min(600.0) / camera.zoom,
+                                    w: (size.width as f32 * 0.5).min(800.0) / viewport.zoom,
+                                    h: (size.height as f32 * 0.5).min(600.0) / viewport.zoom,
                                 };
                                 self.session.add_page(browser::spawn(
                                     state,
@@ -473,6 +482,36 @@ impl ApplicationHandler for App {
                     }
                 }
 
+                // Set by cef-bridge's OsrRequestHandler when the omnibox
+                // page (hotkeys::open_new / omnibox_page_url) submits an
+                // `omnibox://go?q=...&url=...` — that navigation was
+                // already canceled there. Log the raw typed text, then
+                // replace the omnibox page with a real one at the
+                // resolved destination (close+respawn rather than
+                // `load_url` in place, same reliability reason as
+                // refresh_bookmarks_page).
+                if let Some((browser_id, submit)) =
+                    PENDING_OMNIBOX.with_borrow_mut(|pending| pending.take())
+                {
+                    history::record(&mut self.history, &submit.raw);
+                    if let Some(index) = self
+                        .session
+                        .pages()
+                        .iter()
+                        .position(|p| p.browser.identifier() == browser_id)
+                    {
+                        if let Some(rect) = self.session.close_at(index) {
+                            self.session.add_page(browser::spawn(
+                                state,
+                                &state.window,
+                                &submit.url,
+                                rect,
+                                false,
+                            ));
+                        }
+                    }
+                }
+
                 if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {
                     self.cef_cursor = icon;
                 }
@@ -482,7 +521,7 @@ impl ApplicationHandler for App {
                     self.cef_cursor
                 });
 
-                let camera = self.session.camera();
+                let viewport = self.session.viewport();
                 let pages = self.session.pages();
                 let last_index = pages.len().saturating_sub(1);
                 let textures: Vec<_> = pages.iter().map(Page::texture).collect();
@@ -491,7 +530,7 @@ impl ApplicationHandler for App {
                     .zip(textures.iter())
                     .enumerate()
                     .map(|(i, (page, texture))| PageDraw {
-                        rect: camera.rect_to_screen(page.rect),
+                        rect: viewport.rect_to_screen(page.rect),
                         quad: &page.quad,
                         texture: texture.as_ref(),
                         focused: i == last_index,

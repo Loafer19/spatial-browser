@@ -1,7 +1,7 @@
 // Compositor: owns the window, the GPU surface, and the spatial canvas.
 // Multiple CEF pages, each off-screen rendered (CPU path — see
 // browser.rs) into its own textured quad, placed side by side in canvas
-// space. See camera.rs for the world<->screen mapping (pan/zoom) and
+// space. See viewport.rs for the world<->screen mapping (pan/zoom) and
 // app.rs for the hit-testing/z-order/drag logic that makes it a canvas
 // rather than just two fixed windows.
 //
@@ -12,15 +12,15 @@
 // loop (do_message_loop_work) instead of blocking in `run_app`.
 
 mod app;
-mod bookmarks;
 mod browser;
-mod camera;
 mod hotkeys;
 mod input;
 mod output;
+mod pages;
 mod persistence;
 mod session;
 mod single_instance;
+mod viewport;
 
 use app::App;
 use cef::{args::Args, *};

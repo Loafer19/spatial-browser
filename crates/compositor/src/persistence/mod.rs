@@ -1,13 +1,23 @@
-// Saves/restores the canvas across restarts: active theme, camera
-// pan/zoom, and each page's URL/rect (z-order = list order). One JSON
-// file — the whole point of a spatial canvas is one session, not
-// per-window profiles (see single_instance.rs) — written debounced on
-// change and once more on clean exit (see app.rs).
+// Everything that reads/writes a JSON file under
+// ~/.config/spatial-browser/: this module is the canvas session itself
+// (save/load below); bookmarks.rs and history.rs are their own separate
+// files/concerns (bookmarks change rarely and deliberately, history is a
+// flat list of typed omnibox input) grouped here because they share the
+// same shape of problem, not because they share data.
+//
+// Canvas session: active theme, viewport pan/zoom, and each page's
+// URL/rect (z-order = list order). One JSON file — the whole point of a
+// spatial canvas is one session, not per-window profiles (see
+// single_instance.rs) — written debounced on change and once more on
+// clean exit (see app.rs).
+
+pub mod bookmarks;
+pub mod history;
 
 use crate::browser::{self, Page};
-use crate::camera::Camera;
 use crate::output::{GpuState, Rect, THEMES};
 use crate::session::Session;
+use crate::viewport::Viewport;
 use cef::{ImplBrowser, ImplFrame};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -16,7 +26,7 @@ use winit::window::Window;
 #[derive(Serialize, Deserialize)]
 struct SessionFile {
     theme: String,
-    camera: Camera,
+    viewport: Viewport,
     pages: Vec<PageFile>,
 }
 
@@ -44,7 +54,7 @@ fn current_url(page: &Page) -> String {
 pub fn save(session: &Session) {
     let data = SessionFile {
         theme: session.theme().name.to_string(),
-        camera: session.camera(),
+        viewport: session.viewport(),
         // Skips ephemeral pages (F1 help, bookmarks list): they're
         // regenerated fresh from current data whenever reopened, so
         // persisting one would just freeze a stale snapshot that reopens
@@ -93,5 +103,5 @@ pub fn load(gpu: &GpuState, window: &Window) -> Option<Session> {
         .into_iter()
         .map(|p| browser::spawn(gpu, window, &p.url, p.rect, false))
         .collect();
-    Some(Session::new(pages, data.camera, theme))
+    Some(Session::new(pages, data.viewport, theme))
 }

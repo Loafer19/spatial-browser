@@ -1,7 +1,8 @@
-// Classic URL bookmarks — a separate file from session.json (persistence.rs)
-// on purpose: bookmarks change rarely and deliberately (one hotkey press),
-// unlike canvas state which changes continuously, and should survive
-// independent of whatever happens to the canvas session.
+// Classic URL bookmarks — their own bookmarks.json, separate from the
+// canvas session (persistence/mod.rs) on purpose: bookmarks change
+// rarely and deliberately (one hotkey press), unlike canvas state which
+// changes continuously, and should survive independent of whatever
+// happens to the canvas session.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
