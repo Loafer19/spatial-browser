@@ -5,6 +5,7 @@
 // handling.
 
 pub mod bookmarks_list;
+pub mod downloads_list;
 pub mod help;
 pub mod omnibox;
 pub mod switcher;

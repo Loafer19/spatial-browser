@@ -15,6 +15,7 @@ use crate::browser;
 use crate::output::{GpuState, Rect};
 use crate::pages;
 use crate::persistence::bookmarks::{self, Bookmark};
+use crate::persistence::downloads::DownloadRecord;
 use crate::session::Session;
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 use winit::event::ElementState;
@@ -30,6 +31,7 @@ pub fn handle(
     gpu: &GpuState,
     bookmarks: &mut Vec<Bookmark>,
     history: &[String],
+    downloads: &[DownloadRecord],
 ) -> bool {
     if event.state != ElementState::Pressed {
         return false;
@@ -94,6 +96,10 @@ pub fn handle(
         }
         PhysicalKey::Code(KeyCode::KeyK) => {
             open_switcher(session, gpu);
+            true
+        }
+        PhysicalKey::Code(KeyCode::KeyJ) => {
+            open_downloads(session, gpu, downloads);
             true
         }
         PhysicalKey::Code(KeyCode::Tab) => {
@@ -263,6 +269,24 @@ fn open_switcher(session: &mut Session, gpu: &GpuState) {
         .map(|p| (p.browser.identifier(), p.url()))
         .collect();
     let url = pages::switcher::page_url(&session.theme(), &entries);
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
+/// Opens the Ctrl+J downloads list.
+fn open_downloads(session: &mut Session, gpu: &GpuState, downloads: &[DownloadRecord]) {
+    let size = gpu.window.inner_size();
+    let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
+    let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
+    let viewport = session.viewport();
+    let world_origin =
+        viewport.screen_to_world(((size.width as f32 - w) / 2.0, (size.height as f32 - h) / 2.0));
+    let rect = Rect {
+        x: world_origin.0,
+        y: world_origin.1,
+        w: w / viewport.zoom,
+        h: h / viewport.zoom,
+    };
+    let url = pages::downloads_list::page_url(&session.theme(), downloads);
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 

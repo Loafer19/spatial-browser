@@ -17,12 +17,16 @@ use crate::pages;
 use crate::persistence::{
     self,
     bookmarks::{self, Bookmark},
+    downloads::{self, DownloadRecord},
     history,
 };
 use crate::session::Session;
 use crate::viewport::Viewport;
 use cef::{ImplBrowser, ImplBrowserHost};
-use cef_bridge::{BookmarkAction, CURSOR, PENDING_BOOKMARK, PENDING_OMNIBOX, PENDING_SWITCH};
+use cef_bridge::{
+    BookmarkAction, CURSOR, DownloadPageAction, PENDING_BOOKMARK, PENDING_DOWNLOAD_ACTION,
+    PENDING_DOWNLOADS, PENDING_OMNIBOX, PENDING_SWITCH,
+};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::{
@@ -48,6 +52,9 @@ pub struct App {
     // Loaded once at startup from history.json, saved immediately on
     // every omnibox submission (see PENDING_OMNIBOX handling below).
     history: Vec<String>,
+    // Loaded once at startup from downloads.json, saved immediately on
+    // every completed download (see PENDING_DOWNLOADS handling below).
+    downloads: Vec<DownloadRecord>,
     mouse: MouseInput,
     keyboard: KeyboardInput,
     // Raw window-space physical cursor position — updated on every
@@ -96,6 +103,7 @@ impl Default for App {
             session: Session::new(Vec::new(), Viewport::default(), THEMES[0]),
             bookmarks: bookmarks::load(),
             history: history::load(),
+            downloads: downloads::load(),
             mouse: MouseInput::default(),
             keyboard: KeyboardInput::default(),
             cursor_window: (0.0, 0.0),
@@ -155,6 +163,28 @@ fn refresh_bookmarks_page(session: &mut Session, gpu: &GpuState, bookmarks: &[Bo
         return;
     };
     let url = pages::bookmarks_list::page_url(&session.theme(), bookmarks);
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
+/// Same as `refresh_bookmarks_page`, for the downloads-list page after
+/// a remove.
+fn refresh_downloads_page(
+    session: &mut Session,
+    gpu: &GpuState,
+    downloads: &[DownloadRecord],
+    browser_id: i32,
+) {
+    let Some(index) = session
+        .pages()
+        .iter()
+        .position(|p| p.browser.identifier() == browser_id)
+    else {
+        return;
+    };
+    let Some(rect) = session.close_at(index) else {
+        return;
+    };
+    let url = pages::downloads_list::page_url(&session.theme(), downloads);
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
@@ -413,6 +443,7 @@ impl ApplicationHandler for App {
                     state,
                     &mut self.bookmarks,
                     &self.history,
+                    &self.downloads,
                 ) {
                     return;
                 }
@@ -553,6 +584,63 @@ impl ApplicationHandler for App {
                         .position(|p| p.browser.identifier() == switcher_id)
                     {
                         self.session.close_at(switcher_index);
+                    }
+                }
+
+                // Appended by cef-bridge's OsrDownloadHandler the first
+                // time a download reports complete. Record each into
+                // downloads.json and fire a desktop notification —
+                // there's no in-canvas download UI (progress bar,
+                // toast): a system notification is visible regardless of
+                // window focus/workspace, and needs no native GPU text
+                // rendering the way an in-canvas toast would.
+                let completed = PENDING_DOWNLOADS.with_borrow_mut(std::mem::take);
+                for download in completed {
+                    let filename = std::path::Path::new(&download.path)
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                        .unwrap_or(&download.path)
+                        .to_string();
+                    downloads::record(
+                        &mut self.downloads,
+                        DownloadRecord {
+                            url: download.url,
+                            path: download.path,
+                        },
+                    );
+                    if let Err(e) = std::process::Command::new("notify-send")
+                        .arg("Download complete")
+                        .arg(&filename)
+                        .spawn()
+                    {
+                        log::warn!("notify-send failed (download {filename:?} still saved): {e}");
+                    }
+                }
+
+                // Set by cef-bridge's OsrRequestHandler when a click
+                // inside the downloads-list page (hotkeys::
+                // open_downloads) hits a `download://...` link — that
+                // navigation was already canceled there.
+                if let Some((browser_id, action)) =
+                    PENDING_DOWNLOAD_ACTION.with_borrow_mut(|pending| pending.take())
+                {
+                    match action {
+                        DownloadPageAction::Open(index) => {
+                            if let Some(download) = self.downloads.get(index) {
+                                if let Err(e) =
+                                    std::process::Command::new("xdg-open").arg(&download.path).spawn()
+                                {
+                                    log::warn!("xdg-open failed for {:?}: {e}", download.path);
+                                }
+                            }
+                        }
+                        DownloadPageAction::Remove(index) => {
+                            if index < self.downloads.len() {
+                                self.downloads.remove(index);
+                                downloads::save(&self.downloads);
+                            }
+                            refresh_downloads_page(&mut self.session, state, &self.downloads, browser_id);
+                        }
                     }
                 }
 
