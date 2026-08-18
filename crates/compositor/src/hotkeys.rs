@@ -30,7 +30,7 @@ pub fn handle(
     session: &mut Session,
     gpu: &GpuState,
     bookmarks: &mut Vec<Bookmark>,
-    history: &[String],
+    typed_history: &[String],
     downloads: &[DownloadRecord],
 ) -> bool {
     if event.state != ElementState::Pressed {
@@ -74,7 +74,7 @@ pub fn handle(
             if modifiers.shift_key() {
                 reopen_closed(session, gpu);
             } else {
-                open_new(session, gpu, history);
+                open_new(session, gpu, typed_history);
             }
             true
         }
@@ -150,22 +150,10 @@ pub fn handle(
 /// immediately closes and replaces it with a real page for the resolved
 /// destination (see app.rs's PENDING_OMNIBOX handling); if left
 /// untouched there's nothing worth freezing into session.json either.
-fn open_new(session: &mut Session, gpu: &GpuState, history: &[String]) {
-    // Cascade each new page a bit so it doesn't land exactly on the last
-    // one; wrap around after a few so it doesn't walk off-screen forever.
-    // Placed by screen position (current view), then converted to world
-    // space — so it lands in view regardless of current pan/zoom.
-    let step = ((session.pages().len() % 8) as f32) * 32.0;
+fn open_new(session: &mut Session, gpu: &GpuState, typed_history: &[String]) {
     let size = gpu.window.inner_size();
-    let viewport = session.viewport();
-    let world_origin = viewport.screen_to_world((48.0 + step, 48.0 + step));
-    let rect = Rect {
-        x: world_origin.0,
-        y: world_origin.1,
-        w: (size.width as f32 * 0.5).min(800.0) / viewport.zoom,
-        h: (size.height as f32 * 0.5).min(600.0) / viewport.zoom,
-    };
-    let url = pages::omnibox::page_url(&session.theme(), history);
+    let rect = session.cascade_rect((size.width as f32, size.height as f32));
+    let url = pages::omnibox::page_url(&session.theme(), typed_history);
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 

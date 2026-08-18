@@ -18,14 +18,14 @@ use crate::persistence::{
     self,
     bookmarks::{self, Bookmark},
     downloads::{self, DownloadRecord},
-    history,
+    typed_history,
 };
 use crate::session::Session;
 use crate::viewport::Viewport;
 use cef::{ImplBrowser, ImplBrowserHost};
 use cef_bridge::{
     BookmarkAction, CURSOR, DownloadPageAction, PENDING_BOOKMARK, PENDING_DOWNLOAD_ACTION,
-    PENDING_DOWNLOADS, PENDING_OMNIBOX, PENDING_SWITCH,
+    PENDING_DOWNLOADS, PENDING_OMNIBOX, PENDING_POPUPS, PENDING_SWITCH,
 };
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -49,9 +49,9 @@ pub struct App {
     // every change (Ctrl+D) — unlike session state, bookmark edits are
     // rare and deliberate, so there's no need for the debounce below.
     bookmarks: Vec<Bookmark>,
-    // Loaded once at startup from history.json, saved immediately on
-    // every omnibox submission (see PENDING_OMNIBOX handling below).
-    history: Vec<String>,
+    // Loaded once at startup from typed_history.json, saved immediately
+    // on every omnibox submission (see PENDING_OMNIBOX handling below).
+    typed_history: Vec<String>,
     // Loaded once at startup from downloads.json, saved immediately on
     // every completed download (see PENDING_DOWNLOADS handling below).
     downloads: Vec<DownloadRecord>,
@@ -102,7 +102,7 @@ impl Default for App {
             state: None,
             session: Session::new(Vec::new(), Viewport::default(), THEMES[0]),
             bookmarks: bookmarks::load(),
-            history: history::load(),
+            typed_history: typed_history::load(),
             downloads: downloads::load(),
             mouse: MouseInput::default(),
             keyboard: KeyboardInput::default(),
@@ -442,7 +442,7 @@ impl ApplicationHandler for App {
                     &mut self.session,
                     state,
                     &mut self.bookmarks,
-                    &self.history,
+                    &self.typed_history,
                     &self.downloads,
                 ) {
                     return;
@@ -475,17 +475,10 @@ impl ApplicationHandler for App {
                     match action {
                         BookmarkAction::Open(index) => {
                             if let Some(bookmark) = self.bookmarks.get(index) {
-                                let step = ((self.session.pages().len() % 8) as f32) * 32.0;
                                 let size = state.window.inner_size();
-                                let viewport = self.session.viewport();
-                                let world_origin =
-                                    viewport.screen_to_world((48.0 + step, 48.0 + step));
-                                let rect = Rect {
-                                    x: world_origin.0,
-                                    y: world_origin.1,
-                                    w: (size.width as f32 * 0.5).min(800.0) / viewport.zoom,
-                                    h: (size.height as f32 * 0.5).min(600.0) / viewport.zoom,
-                                };
+                                let rect = self
+                                    .session
+                                    .cascade_rect((size.width as f32, size.height as f32));
                                 self.session.add_page(browser::spawn(
                                     state,
                                     &state.window,
@@ -524,7 +517,7 @@ impl ApplicationHandler for App {
                 if let Some((browser_id, submit)) =
                     PENDING_OMNIBOX.with_borrow_mut(|pending| pending.take())
                 {
-                    history::record(&mut self.history, &submit.raw);
+                    typed_history::record(&mut self.typed_history, &submit.raw);
                     if let Some(index) = self
                         .session
                         .pages()
@@ -642,6 +635,36 @@ impl ApplicationHandler for App {
                             refresh_downloads_page(&mut self.session, state, &self.downloads, browser_id);
                         }
                     }
+                }
+
+                // Appended by cef-bridge's OsrLifeSpanHandler when a page
+                // tries to open a link in a new tab/window
+                // (target="_blank", window.open, middle-click) — canceled
+                // there so CEF doesn't spawn its own native popup window
+                // outside the canvas. Spawn a regular Page instead,
+                // cascaded from the opener's rect if it's still open.
+                let popups = PENDING_POPUPS.with_borrow_mut(std::mem::take);
+                for (opener_id, url) in popups {
+                    let opener_rect = self
+                        .session
+                        .pages()
+                        .iter()
+                        .find(|p| p.browser.identifier() == opener_id)
+                        .map(|p| p.rect);
+                    let size = state.window.inner_size();
+                    let rect = match opener_rect {
+                        Some(r) => Rect {
+                            x: r.x + 40.0,
+                            y: r.y + 40.0,
+                            w: r.w,
+                            h: r.h,
+                        },
+                        None => self
+                            .session
+                            .cascade_rect((size.width as f32, size.height as f32)),
+                    };
+                    self.session
+                        .add_page(browser::spawn(state, &state.window, &url, rect, false));
                 }
 
                 if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {

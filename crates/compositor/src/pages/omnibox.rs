@@ -44,9 +44,9 @@ function go(raw) {
 /// intercepts and cancels, handing the raw text and resolved destination
 /// back to the compositor (app.rs's PENDING_OMNIBOX) to log and actually
 /// navigate to.
-pub fn page_url(theme: &Theme, history: &[String]) -> String {
+pub fn page_url(theme: &Theme, typed_history: &[String]) -> String {
     let mut chips = String::new();
-    for entry in history.iter().take(10) {
+    for entry in typed_history.iter().take(10) {
         chips.push_str(&format!(
             "<button onclick=\"go({entry_js})\" style=\"background:{card_bg};color:{fg};\
              border:1px solid {card_border};border-radius:6px;padding:6px 10px;\

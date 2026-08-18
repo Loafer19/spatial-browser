@@ -50,6 +50,24 @@ impl Session {
         self.viewport
     }
 
+    /// A rect for a newly spawned page with no better anchor (a fresh
+    /// omnibox/bookmark-open/popup-with-no-known-opener page): cascaded
+    /// a bit further each time so it doesn't land exactly on the last
+    /// one, wrapping around after a few so it doesn't walk off-screen
+    /// forever. Placed by screen position (current view), then
+    /// converted to world space — so it lands in view regardless of
+    /// current pan/zoom. `screen_size` is the window's physical size.
+    pub fn cascade_rect(&self, screen_size: (f32, f32)) -> Rect {
+        let step = ((self.pages.len() % 8) as f32) * 32.0;
+        let world_origin = self.viewport.screen_to_world((48.0 + step, 48.0 + step));
+        Rect {
+            x: world_origin.0,
+            y: world_origin.1,
+            w: (screen_size.0 * 0.5).min(800.0) / self.viewport.zoom,
+            h: (screen_size.1 * 0.5).min(600.0) / self.viewport.zoom,
+        }
+    }
+
     pub fn theme(&self) -> Theme {
         self.theme
     }
