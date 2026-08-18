@@ -7,7 +7,7 @@
 // Session's own methods gets persisted for free.
 
 use crate::browser::Page;
-use crate::output::{Rect, THEMES, Theme};
+use crate::output::{Rect, Theme, THEMES};
 use crate::viewport::Viewport;
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 
@@ -65,6 +65,24 @@ impl Session {
             y: world_origin.1,
             w: (screen_size.0 * 0.5).min(800.0) / self.viewport.zoom,
             h: (screen_size.1 * 0.5).min(600.0) / self.viewport.zoom,
+        }
+    }
+
+    /// A rect for a centered utility page (bookmarks/downloads/
+    /// history/help/switcher list) of `size` (physical pixels, already
+    /// clamped by the caller) — centered in the current view, converted
+    /// to world space so it lands in view regardless of current
+    /// pan/zoom. `screen_size` is the window's physical size.
+    pub fn centered_rect(&self, screen_size: (f32, f32), size: (f32, f32)) -> Rect {
+        let world_origin = self.viewport.screen_to_world((
+            (screen_size.0 - size.0) / 2.0,
+            (screen_size.1 - size.1) / 2.0,
+        ));
+        Rect {
+            x: world_origin.0,
+            y: world_origin.1,
+            w: size.0 / self.viewport.zoom,
+            h: size.1 / self.viewport.zoom,
         }
     }
 

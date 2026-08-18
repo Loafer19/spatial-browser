@@ -43,7 +43,11 @@ fn main() -> ExitCode {
     let is_browser_process = cmd.has_switch(Some(&"type".into())) != 1;
 
     let mut app = AppBuilder::build(OsrApp::new());
-    let ret = execute_process(Some(args.as_main_args()), Some(&mut app), std::ptr::null_mut());
+    let ret = execute_process(
+        Some(args.as_main_args()),
+        Some(&mut app),
+        std::ptr::null_mut(),
+    );
 
     if is_browser_process {
         assert!(ret == -1, "cannot execute browser process");
@@ -67,7 +71,12 @@ fn main() -> ExitCode {
         ..Default::default()
     };
     assert_eq!(
-        initialize(Some(args.as_main_args()), Some(&settings), Some(&mut app), std::ptr::null_mut()),
+        initialize(
+            Some(args.as_main_args()),
+            Some(&settings),
+            Some(&mut app),
+            std::ptr::null_mut()
+        ),
         1,
         "CEF initialize failed"
     );

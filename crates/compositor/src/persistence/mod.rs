@@ -1,12 +1,12 @@
 // Everything that reads/writes a JSON file under
 // ~/.config/spatial-browser/: this module is the canvas session itself
-// (save/load below); bookmarks.rs, typed_history.rs, and downloads.rs
-// are their own separate files/concerns (bookmarks change rarely and
-// deliberately, typed_history is a flat list of typed omnibox input —
-// deliberately not named history.rs, which is reserved for real
-// visited-page history — downloads is a log of completed CEF
-// downloads) grouped here because they share the same shape of
-// problem, not because they share data.
+// (save/load below); bookmarks.rs, history.rs, typed_history.rs, and
+// downloads.rs are their own separate files/concerns (bookmarks change
+// rarely and deliberately, history.rs is a log of actual page visits,
+// typed_history.rs is a flat list of typed omnibox input — a
+// deliberately different name so the two don't get confused —
+// downloads is a log of completed CEF downloads) grouped here because
+// they share the same shape of problem, not because they share data.
 //
 // Canvas session: active theme, viewport pan/zoom, and each page's
 // URL/rect (z-order = list order). One JSON file — the whole point of a
@@ -16,6 +16,7 @@
 
 pub mod bookmarks;
 pub mod downloads;
+pub mod history;
 pub mod typed_history;
 
 use crate::browser;

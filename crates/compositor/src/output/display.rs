@@ -126,7 +126,14 @@ impl PageQuad {
         }
     }
 
-    fn update(&self, queue: &wgpu::Queue, rect: Rect, viewport: (f32, f32), focused: bool, theme: &Theme) {
+    fn update(
+        &self,
+        queue: &wgpu::Queue,
+        rect: Rect,
+        viewport: (f32, f32),
+        focused: bool,
+        theme: &Theme,
+    ) {
         let (vw, vh) = viewport;
         let left = (rect.x / vw) * 2.0 - 1.0;
         let right = ((rect.x + rect.w) / vw) * 2.0 - 1.0;
@@ -157,7 +164,12 @@ impl PageQuad {
             &self.style_buffer,
             0,
             bytemuck::cast_slice(&[PageStyleUniform {
-                size_radius: [rect.w, rect.h, theme.corner_radius, theme.focus_border_width],
+                size_radius: [
+                    rect.w,
+                    rect.h,
+                    theme.corner_radius,
+                    theme.focus_border_width,
+                ],
                 border_color: theme.focus_border_color,
                 focused: [if focused { 1.0 } else { 0.0 }; 4],
             }]),

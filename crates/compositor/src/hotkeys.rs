@@ -1,21 +1,23 @@
 // Canvas-level keyboard shortcuts — closing/opening/reloading a page,
 // cycling focus, zooming, back/forward navigation, theme switching, the
-// canvas-view reset, auto-layout, the page switcher, bookmarks, and the
-// F1 help page — that must never reach a page's own content (unlike
-// everything routed through input::KeyboardInput, which forwards to
-// whichever CEF browser is active). Kept separate from that module for
-// exactly that reason: this is about the canvas, not about one page's
-// text input. Canvas pan/zoom itself is mouse-driven (middle-drag /
-// Ctrl+scroll, see app.rs) — only its keyboard reset lives here. The
-// HTML/CSS/JS for the pages some of these open (F1 help, bookmarks
-// list, omnibox, switcher) lives in pages/, not here — this file is
+// canvas-view reset, auto-layout, the page switcher, bookmarks,
+// downloads, history, and the F1 help page — that must never reach a
+// page's own content (unlike everything routed through
+// input::KeyboardInput, which forwards to whichever CEF browser is
+// active). Kept separate from that module for exactly that reason:
+// this is about the canvas, not about one page's text input. Canvas
+// pan/zoom itself is mouse-driven (middle-drag / Ctrl+scroll, see
+// app.rs) — only its keyboard reset lives here. The HTML/CSS/JS for
+// the pages some of these open (F1 help, bookmarks/downloads/history
+// lists, omnibox, switcher) lives in pages/, not here — this file is
 // only "what does each shortcut do".
 
 use crate::browser;
-use crate::output::{GpuState, Rect};
+use crate::output::GpuState;
 use crate::pages;
 use crate::persistence::bookmarks::{self, Bookmark};
 use crate::persistence::downloads::DownloadRecord;
+use crate::persistence::history::HistoryEntry;
 use crate::session::Session;
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 use winit::event::ElementState;
@@ -32,6 +34,7 @@ pub fn handle(
     bookmarks: &mut Vec<Bookmark>,
     typed_history: &[String],
     downloads: &[DownloadRecord],
+    history: &[HistoryEntry],
 ) -> bool {
     if event.state != ElementState::Pressed {
         return false;
@@ -66,10 +69,7 @@ pub fn handle(
     }
 
     match event.physical_key {
-        PhysicalKey::Code(KeyCode::KeyW) => {
-            session.close_topmost();
-            true
-        }
+        // --- Pages ---
         PhysicalKey::Code(KeyCode::KeyT) => {
             if modifiers.shift_key() {
                 reopen_closed(session, gpu);
@@ -78,10 +78,39 @@ pub fn handle(
             }
             true
         }
+        PhysicalKey::Code(KeyCode::KeyW) => {
+            session.close_topmost();
+            true
+        }
         PhysicalKey::Code(KeyCode::KeyR) => {
             reload_focused(session);
             true
         }
+        // Page content zoom (CEF's own zoom_level), distinct from
+        // Ctrl+Space's canvas-rect zoom below. Equal shares its physical
+        // key with `+` on a US layout, matching every browser's Ctrl+=
+        // convention for zoom in.
+        PhysicalKey::Code(KeyCode::Equal) => {
+            page_zoom(session, cef::ZoomCommand::IN);
+            true
+        }
+        PhysicalKey::Code(KeyCode::Minus) => {
+            page_zoom(session, cef::ZoomCommand::OUT);
+            true
+        }
+        // Ctrl+Shift+0 (Canvas group: reset canvas view) shares this
+        // physical key with plain Ctrl+0 (reset page zoom) — one match
+        // arm, not a missing group.
+        PhysicalKey::Code(KeyCode::Digit0) => {
+            if modifiers.shift_key() {
+                session.reset_viewport();
+            } else {
+                page_zoom(session, cef::ZoomCommand::RESET);
+            }
+            true
+        }
+
+        // --- Lists ---
         PhysicalKey::Code(KeyCode::KeyD) => {
             bookmark_focused(session, bookmarks);
             true
@@ -90,16 +119,22 @@ pub fn handle(
             open_bookmarks(session, gpu, bookmarks);
             true
         }
-        PhysicalKey::Code(KeyCode::KeyG) => {
-            auto_layout(session, gpu);
+        PhysicalKey::Code(KeyCode::KeyJ) => {
+            open_downloads(session, gpu, downloads);
+            true
+        }
+        PhysicalKey::Code(KeyCode::KeyH) => {
+            open_history(session, gpu, history);
             true
         }
         PhysicalKey::Code(KeyCode::KeyK) => {
             open_switcher(session, gpu);
             true
         }
-        PhysicalKey::Code(KeyCode::KeyJ) => {
-            open_downloads(session, gpu, downloads);
+
+        // --- Canvas ---
+        PhysicalKey::Code(KeyCode::KeyG) => {
+            auto_layout(session, gpu);
             true
         }
         PhysicalKey::Code(KeyCode::Tab) => {
@@ -109,6 +144,9 @@ pub fn handle(
             session.rotate_focus(modifiers.shift_key());
             true
         }
+        // Ctrl+Shift+Space (Other group: cycle theme) shares this
+        // physical key with plain Ctrl+Space (zoom to canvas) — same
+        // situation as Digit0 above.
         PhysicalKey::Code(KeyCode::Space) => {
             if modifiers.shift_key() {
                 session.cycle_theme();
@@ -121,29 +159,12 @@ pub fn handle(
             }
             true
         }
-        // Page content zoom (CEF's own zoom_level), distinct from
-        // Ctrl+Space's canvas-rect zoom above. Equal shares its physical
-        // key with `+` on a US layout, matching every browser's Ctrl+=
-        // convention for zoom in.
-        PhysicalKey::Code(KeyCode::Equal) => {
-            page_zoom(session, cef::ZoomCommand::IN);
-            true
-        }
-        PhysicalKey::Code(KeyCode::Minus) => {
-            page_zoom(session, cef::ZoomCommand::OUT);
-            true
-        }
-        PhysicalKey::Code(KeyCode::Digit0) => {
-            if modifiers.shift_key() {
-                session.reset_viewport();
-            } else {
-                page_zoom(session, cef::ZoomCommand::RESET);
-            }
-            true
-        }
+
         _ => false,
     }
 }
+
+// --- Pages ---
 
 /// Opens the omnibox page (type-to-search-or-navigate) rather than a
 /// fixed URL directly — ephemeral like F1/bookmarks, since submitting it
@@ -195,6 +216,8 @@ fn page_zoom(session: &Session, command: cef::ZoomCommand) {
     }
 }
 
+// --- Lists ---
+
 /// Bookmarks the focused page's current URL, if it isn't already saved.
 /// Refuses on an ephemeral page (F1 help, the bookmarks list itself) —
 /// otherwise Ctrl+D on one of those saves its entire generated HTML as a
@@ -224,14 +247,33 @@ fn bookmark_focused(session: &Session, bookmarks: &mut Vec<Bookmark>) {
     bookmarks::save(bookmarks);
 }
 
-/// Rearranges every open page into a grid filling the current window —
-/// see `Session::auto_layout`.
-fn auto_layout(session: &mut Session, gpu: &GpuState) {
+fn open_bookmarks(session: &mut Session, gpu: &GpuState, bookmarks: &[Bookmark]) {
     let size = gpu.window.inner_size();
-    session.auto_layout(
-        (size.width as f32, size.height as f32),
-        gpu.window.scale_factor(),
-    );
+    let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
+    let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
+    let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
+    let url = pages::bookmarks_list::page_url(&session.theme(), bookmarks);
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
+/// Opens the Ctrl+J downloads list.
+fn open_downloads(session: &mut Session, gpu: &GpuState, downloads: &[DownloadRecord]) {
+    let size = gpu.window.inner_size();
+    let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
+    let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
+    let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
+    let url = pages::downloads_list::page_url(&session.theme(), downloads);
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
+/// Opens the Ctrl+H history list.
+fn open_history(session: &mut Session, gpu: &GpuState, history: &[HistoryEntry]) {
+    let size = gpu.window.inner_size();
+    let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
+    let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
+    let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
+    let url = pages::history_list::page_url(&session.theme(), history);
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
 /// Opens the Ctrl+K page switcher: a filterable list of every open,
@@ -241,15 +283,7 @@ fn open_switcher(session: &mut Session, gpu: &GpuState) {
     let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
     let h = (size.height as f32 * 0.6).clamp(360.0, 640.0);
-    let viewport = session.viewport();
-    let world_origin =
-        viewport.screen_to_world(((size.width as f32 - w) / 2.0, (size.height as f32 - h) / 2.0));
-    let rect = Rect {
-        x: world_origin.0,
-        y: world_origin.1,
-        w: w / viewport.zoom,
-        h: h / viewport.zoom,
-    };
+    let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
     let entries: Vec<(i32, String)> = session
         .pages()
         .iter()
@@ -260,54 +294,25 @@ fn open_switcher(session: &mut Session, gpu: &GpuState) {
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
-/// Opens the Ctrl+J downloads list.
-fn open_downloads(session: &mut Session, gpu: &GpuState, downloads: &[DownloadRecord]) {
+// --- Canvas ---
+
+/// Rearranges every open page into a grid filling the current window —
+/// see `Session::auto_layout`.
+fn auto_layout(session: &mut Session, gpu: &GpuState) {
     let size = gpu.window.inner_size();
-    let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
-    let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
-    let viewport = session.viewport();
-    let world_origin =
-        viewport.screen_to_world(((size.width as f32 - w) / 2.0, (size.height as f32 - h) / 2.0));
-    let rect = Rect {
-        x: world_origin.0,
-        y: world_origin.1,
-        w: w / viewport.zoom,
-        h: h / viewport.zoom,
-    };
-    let url = pages::downloads_list::page_url(&session.theme(), downloads);
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+    session.auto_layout(
+        (size.width as f32, size.height as f32),
+        gpu.window.scale_factor(),
+    );
 }
 
-fn open_bookmarks(session: &mut Session, gpu: &GpuState, bookmarks: &[Bookmark]) {
-    let size = gpu.window.inner_size();
-    let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
-    let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
-    let viewport = session.viewport();
-    let world_origin =
-        viewport.screen_to_world(((size.width as f32 - w) / 2.0, (size.height as f32 - h) / 2.0));
-    let rect = Rect {
-        x: world_origin.0,
-        y: world_origin.1,
-        w: w / viewport.zoom,
-        h: h / viewport.zoom,
-    };
-    let url = pages::bookmarks_list::page_url(&session.theme(), bookmarks);
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
-}
+// --- Other ---
 
 fn open_help(session: &mut Session, gpu: &GpuState) {
     let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.6).clamp(420.0, 720.0);
     let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
-    let viewport = session.viewport();
-    let world_origin =
-        viewport.screen_to_world(((size.width as f32 - w) / 2.0, (size.height as f32 - h) / 2.0));
-    let rect = Rect {
-        x: world_origin.0,
-        y: world_origin.1,
-        w: w / viewport.zoom,
-        h: h / viewport.zoom,
-    };
+    let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
     let url = pages::help::page_url(&session.theme());
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }

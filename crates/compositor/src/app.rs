@@ -18,14 +18,16 @@ use crate::persistence::{
     self,
     bookmarks::{self, Bookmark},
     downloads::{self, DownloadRecord},
+    history::{self, HistoryEntry},
     typed_history,
 };
 use crate::session::Session;
 use crate::viewport::Viewport;
 use cef::{ImplBrowser, ImplBrowserHost};
 use cef_bridge::{
-    BookmarkAction, CURSOR, DownloadPageAction, PENDING_BOOKMARK, PENDING_DOWNLOAD_ACTION,
-    PENDING_DOWNLOADS, PENDING_OMNIBOX, PENDING_POPUPS, PENDING_SWITCH,
+    BookmarkAction, DownloadPageAction, HistoryPageAction, CURSOR, PENDING_BOOKMARK,
+    PENDING_DOWNLOADS, PENDING_DOWNLOAD_ACTION, PENDING_HISTORY_ACTION, PENDING_OMNIBOX,
+    PENDING_POPUPS, PENDING_SWITCH, PENDING_VISITS,
 };
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -55,6 +57,9 @@ pub struct App {
     // Loaded once at startup from downloads.json, saved immediately on
     // every completed download (see PENDING_DOWNLOADS handling below).
     downloads: Vec<DownloadRecord>,
+    // Loaded once at startup from history.json, saved immediately on
+    // every completed page visit (see PENDING_VISITS handling below).
+    history: Vec<HistoryEntry>,
     mouse: MouseInput,
     keyboard: KeyboardInput,
     // Raw window-space physical cursor position — updated on every
@@ -104,6 +109,7 @@ impl Default for App {
             bookmarks: bookmarks::load(),
             typed_history: typed_history::load(),
             downloads: downloads::load(),
+            history: history::load(),
             mouse: MouseInput::default(),
             keyboard: KeyboardInput::default(),
             cursor_window: (0.0, 0.0),
@@ -128,7 +134,11 @@ const MIN_PAGE_SIZE: f32 = 160.0;
 
 /// Topmost page (last in z-order) whose bottom-right corner (screen
 /// space) is within `RESIZE_HANDLE` of the cursor, if any.
-fn resize_hit_test(pages: &[Page], viewport: &Viewport, cursor_screen: (f32, f32)) -> Option<usize> {
+fn resize_hit_test(
+    pages: &[Page],
+    viewport: &Viewport,
+    cursor_screen: (f32, f32),
+) -> Option<usize> {
     let half = RESIZE_HANDLE / 2.0;
     pages.iter().rposition(|p| {
         let r = viewport.rect_to_screen(p.rect);
@@ -151,7 +161,12 @@ fn hit_test(pages: &[Page], x: f32, y: f32) -> Option<usize> {
 /// function, not an App method: `self.state` is already mutably borrowed
 /// as `state` for most of `window_event`, so this only takes the
 /// specific fields it needs.
-fn refresh_bookmarks_page(session: &mut Session, gpu: &GpuState, bookmarks: &[Bookmark], browser_id: i32) {
+fn refresh_bookmarks_page(
+    session: &mut Session,
+    gpu: &GpuState,
+    bookmarks: &[Bookmark],
+    browser_id: i32,
+) {
     let Some(index) = session
         .pages()
         .iter()
@@ -186,6 +201,39 @@ fn refresh_downloads_page(
     };
     let url = pages::downloads_list::page_url(&session.theme(), downloads);
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
+/// Same as `refresh_bookmarks_page`, for the history-list page after a
+/// remove/clear.
+fn refresh_history_page(
+    session: &mut Session,
+    gpu: &GpuState,
+    history: &[HistoryEntry],
+    browser_id: i32,
+) {
+    let Some(index) = session
+        .pages()
+        .iter()
+        .position(|p| p.browser.identifier() == browser_id)
+    else {
+        return;
+    };
+    let Some(rect) = session.close_at(index) else {
+        return;
+    };
+    let url = pages::history_list::page_url(&session.theme(), history);
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
+/// Seconds since the Unix epoch, UTC — used to stamp a new history
+/// entry (see PENDING_VISITS handling below). `UNIX_EPOCH` is always in
+/// the past on any correctly set clock, so the `unwrap` only panics on
+/// a system clock set before 1970.
+fn now_unix_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
 }
 
 impl ApplicationHandler for App {
@@ -239,7 +287,10 @@ impl ApplicationHandler for App {
                 .collect();
             Session::new(pages, Viewport::default(), THEMES[0])
         });
-        self.canvas_size = (window.inner_size().width as f32, window.inner_size().height as f32);
+        self.canvas_size = (
+            window.inner_size().width as f32,
+            window.inner_size().height as f32,
+        );
 
         self.state = Some(state);
         window.request_redraw();
@@ -288,7 +339,8 @@ impl ApplicationHandler for App {
                 let viewport = self.session.viewport();
                 let cursor_world = viewport.screen_to_world(self.cursor_window);
                 self.resize_hover = self.resizing
-                    || resize_hit_test(self.session.pages(), &viewport, self.cursor_window).is_some();
+                    || resize_hit_test(self.session.pages(), &viewport, self.cursor_window)
+                        .is_some();
 
                 if self.resizing {
                     let page = self.session.pages().last().expect("resizing with no pages");
@@ -339,7 +391,8 @@ impl ApplicationHandler for App {
                 {
                     match element_state {
                         ElementState::Pressed => {
-                            self.panning = Some((self.cursor_window, self.session.viewport().offset));
+                            self.panning =
+                                Some((self.cursor_window, self.session.viewport().offset));
                         }
                         ElementState::Released => self.panning = None,
                     }
@@ -387,8 +440,7 @@ impl ApplicationHandler for App {
                 }
 
                 let cursor_world = self.session.viewport().screen_to_world(self.cursor_window);
-                let Some(i) = hit_test(self.session.pages(), cursor_world.0, cursor_world.1)
-                else {
+                let Some(i) = hit_test(self.session.pages(), cursor_world.0, cursor_world.1) else {
                     return;
                 };
                 let i = if element_state == ElementState::Pressed {
@@ -444,6 +496,7 @@ impl ApplicationHandler for App {
                     &mut self.bookmarks,
                     &self.typed_history,
                     &self.downloads,
+                    &self.history,
                 ) {
                     return;
                 }
@@ -493,7 +546,12 @@ impl ApplicationHandler for App {
                                 self.bookmarks.remove(index);
                                 bookmarks::save(&self.bookmarks);
                             }
-                            refresh_bookmarks_page(&mut self.session, state, &self.bookmarks, browser_id);
+                            refresh_bookmarks_page(
+                                &mut self.session,
+                                state,
+                                &self.bookmarks,
+                                browser_id,
+                            );
                         }
                         BookmarkAction::Rename(index, title, folder) => {
                             if let Some(bookmark) = self.bookmarks.get_mut(index) {
@@ -501,7 +559,12 @@ impl ApplicationHandler for App {
                                 bookmark.folder = (!folder.is_empty()).then_some(folder);
                             }
                             bookmarks::save(&self.bookmarks);
-                            refresh_bookmarks_page(&mut self.session, state, &self.bookmarks, browser_id);
+                            refresh_bookmarks_page(
+                                &mut self.session,
+                                state,
+                                &self.bookmarks,
+                                browser_id,
+                            );
                         }
                     }
                 }
@@ -620,8 +683,9 @@ impl ApplicationHandler for App {
                     match action {
                         DownloadPageAction::Open(index) => {
                             if let Some(download) = self.downloads.get(index) {
-                                if let Err(e) =
-                                    std::process::Command::new("xdg-open").arg(&download.path).spawn()
+                                if let Err(e) = std::process::Command::new("xdg-open")
+                                    .arg(&download.path)
+                                    .spawn()
                                 {
                                     log::warn!("xdg-open failed for {:?}: {e}", download.path);
                                 }
@@ -632,7 +696,12 @@ impl ApplicationHandler for App {
                                 self.downloads.remove(index);
                                 downloads::save(&self.downloads);
                             }
-                            refresh_downloads_page(&mut self.session, state, &self.downloads, browser_id);
+                            refresh_downloads_page(
+                                &mut self.session,
+                                state,
+                                &self.downloads,
+                                browser_id,
+                            );
                         }
                     }
                 }
@@ -665,6 +734,74 @@ impl ApplicationHandler for App {
                     };
                     self.session
                         .add_page(browser::spawn(state, &state.window, &url, rect, false));
+                }
+
+                // Appended by cef-bridge's OsrLoadHandler for every
+                // completed top-level navigation. Skipped for ephemeral
+                // pages (F1 help, bookmarks/downloads/history lists,
+                // omnibox, switcher) — those aren't something the user
+                // navigated to themselves, and would otherwise flood
+                // history with generated UI.
+                let visits = PENDING_VISITS.with_borrow_mut(std::mem::take);
+                for (browser_id, url) in visits {
+                    let is_ephemeral = self
+                        .session
+                        .pages()
+                        .iter()
+                        .find(|p| p.browser.identifier() == browser_id)
+                        .map(|p| p.ephemeral)
+                        .unwrap_or(true);
+                    if !is_ephemeral {
+                        history::record(&mut self.history, &url, now_unix_secs());
+                    }
+                }
+
+                // Set by cef-bridge's OsrRequestHandler when a click
+                // inside the history-list page (hotkeys::open_history)
+                // hits a `history://...` link — that navigation was
+                // already canceled there.
+                if let Some((browser_id, action)) =
+                    PENDING_HISTORY_ACTION.with_borrow_mut(|pending| pending.take())
+                {
+                    match action {
+                        HistoryPageAction::Open(index) => {
+                            if let Some(entry) = self.history.get(index) {
+                                let size = state.window.inner_size();
+                                let rect = self
+                                    .session
+                                    .cascade_rect((size.width as f32, size.height as f32));
+                                self.session.add_page(browser::spawn(
+                                    state,
+                                    &state.window,
+                                    &entry.url,
+                                    rect,
+                                    false,
+                                ));
+                            }
+                        }
+                        HistoryPageAction::Remove(index) => {
+                            if index < self.history.len() {
+                                self.history.remove(index);
+                                history::save(&self.history);
+                            }
+                            refresh_history_page(
+                                &mut self.session,
+                                state,
+                                &self.history,
+                                browser_id,
+                            );
+                        }
+                        HistoryPageAction::Clear => {
+                            self.history.clear();
+                            history::save(&self.history);
+                            refresh_history_page(
+                                &mut self.session,
+                                state,
+                                &self.history,
+                                browser_id,
+                            );
+                        }
+                    }
                 }
 
                 if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {
