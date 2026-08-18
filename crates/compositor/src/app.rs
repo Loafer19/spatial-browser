@@ -22,7 +22,7 @@ use crate::persistence::{
 use crate::session::Session;
 use crate::viewport::Viewport;
 use cef::{ImplBrowser, ImplBrowserHost};
-use cef_bridge::{BookmarkAction, CURSOR, PENDING_BOOKMARK, PENDING_OMNIBOX};
+use cef_bridge::{BookmarkAction, CURSOR, PENDING_BOOKMARK, PENDING_OMNIBOX, PENDING_SWITCH};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::{
@@ -509,6 +509,50 @@ impl ApplicationHandler for App {
                                 false,
                             ));
                         }
+                    }
+                }
+
+                // Set by cef-bridge's OsrRequestHandler when a row click
+                // or Enter inside the switcher page (hotkeys::
+                // open_switcher) hits a `switcher://go/{id}` link — that
+                // navigation was already canceled there. Bring the
+                // target page to front and pan it to screen center (kept
+                // at the current zoom level), then close the switcher
+                // page — a permanent close, not through the closed-page
+                // undo stack (pop_closed): this isn't a user-initiated
+                // close of *their* content.
+                if let Some((switcher_id, target_id)) =
+                    PENDING_SWITCH.with_borrow_mut(|pending| pending.take())
+                {
+                    if let Some(target_index) = self
+                        .session
+                        .pages()
+                        .iter()
+                        .position(|p| p.browser.identifier() == target_id)
+                    {
+                        self.session.bring_to_front(target_index);
+                        let rect = self
+                            .session
+                            .pages()
+                            .last()
+                            .expect("just brought a page to front")
+                            .rect;
+                        let viewport = self.session.viewport();
+                        let size = state.window.inner_size();
+                        let screen_center = (size.width as f32 / 2.0, size.height as f32 / 2.0);
+                        let world_center = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
+                        self.session.pan_viewport_to((
+                            world_center.0 - screen_center.0 / viewport.zoom,
+                            world_center.1 - screen_center.1 / viewport.zoom,
+                        ));
+                    }
+                    if let Some(switcher_index) = self
+                        .session
+                        .pages()
+                        .iter()
+                        .position(|p| p.browser.identifier() == switcher_id)
+                    {
+                        self.session.close_at(switcher_index);
                     }
                 }
 

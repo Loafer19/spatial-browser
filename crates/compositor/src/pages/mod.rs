@@ -7,6 +7,7 @@
 pub mod bookmarks_list;
 pub mod help;
 pub mod omnibox;
+pub mod switcher;
 
 pub(crate) fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")

@@ -42,6 +42,16 @@ impl Page {
         self.texture.borrow().clone()
     }
 
+    /// Reads this page's *current* URL straight from CEF rather than
+    /// tracking it ourselves, so in-page navigation (a clicked link,
+    /// back/forward) is reflected too, not just the URL it was spawned
+    /// with.
+    pub fn url(&self) -> String {
+        cef::ImplBrowser::main_frame(&self.browser)
+            .map(|frame| cef::CefString::from(&cef::ImplFrame::url(&frame)).to_string())
+            .unwrap_or_default()
+    }
+
     /// Update this page's canvas rect and let CEF know its view resized.
     pub fn set_rect(&mut self, rect: Rect, scale_factor: f64) {
         let rect = rect.clamp_size(MAX_PAGE_DIMENSION);

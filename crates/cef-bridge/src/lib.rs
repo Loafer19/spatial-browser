@@ -600,6 +600,18 @@ fn parse_omnibox_submit(url: &str) -> Option<OmniboxSubmit> {
     })
 }
 
+thread_local! {
+    // Same shape/reasoning as PENDING_BOOKMARK, for the Ctrl+K page
+    // switcher. Holds (switcher page's own browser id, target page's
+    // browser id) — the compositor brings the target to front and pans
+    // to it, then closes the switcher page.
+    pub static PENDING_SWITCH: RefCell<Option<(i32, i32)>> = const { RefCell::new(None) };
+}
+
+fn parse_switch_target(url: &str) -> Option<i32> {
+    url.strip_prefix("switcher://go/")?.parse().ok()
+}
+
 #[derive(Clone)]
 pub struct OsrRequestHandler {}
 
@@ -628,6 +640,10 @@ wrap_request_handler! {
             }
             if let Some(submit) = parse_omnibox_submit(&url) {
                 PENDING_OMNIBOX.with_borrow_mut(|pending| *pending = Some((id, submit)));
+                return true as _;
+            }
+            if let Some(target_id) = parse_switch_target(&url) {
+                PENDING_SWITCH.with_borrow_mut(|pending| *pending = Some((id, target_id)));
                 return true as _;
             }
             false as _

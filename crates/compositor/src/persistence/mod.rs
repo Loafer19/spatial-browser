@@ -14,11 +14,10 @@
 pub mod bookmarks;
 pub mod history;
 
-use crate::browser::{self, Page};
+use crate::browser;
 use crate::output::{GpuState, Rect, THEMES};
 use crate::session::Session;
 use crate::viewport::Viewport;
-use cef::{ImplBrowser, ImplFrame};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use winit::window::Window;
@@ -41,16 +40,6 @@ fn path() -> PathBuf {
     PathBuf::from(home).join(".config/spatial-browser/session.json")
 }
 
-/// Reads a page's *current* URL straight from CEF rather than tracking
-/// it ourselves, so in-page navigation (a clicked link, back/forward)
-/// is captured too, not just the URL it was spawned with.
-fn current_url(page: &Page) -> String {
-    page.browser
-        .main_frame()
-        .map(|frame| cef::CefString::from(&frame.url()).to_string())
-        .unwrap_or_default()
-}
-
 pub fn save(session: &Session) {
     let data = SessionFile {
         theme: session.theme().name.to_string(),
@@ -64,7 +53,7 @@ pub fn save(session: &Session) {
             .iter()
             .filter(|p| !p.ephemeral)
             .map(|p| PageFile {
-                url: current_url(p),
+                url: p.url(),
                 rect: p.rect,
             })
             .collect(),

@@ -11,6 +11,7 @@ pub const HELP_ENTRIES: &[(&str, &str)] = &[
     ("Ctrl+D", "Bookmark page"),
     ("Ctrl+B", "Bookmarks list"),
     ("Ctrl+G", "Auto-layout pages into a grid"),
+    ("Ctrl+K", "Switch to an open page"),
     ("Ctrl+Tab", "Next page"),
     ("Ctrl+Shift+Tab", "Previous page"),
     ("Ctrl+Space", "Zoom to canvas"),

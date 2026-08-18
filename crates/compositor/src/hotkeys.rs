@@ -1,14 +1,15 @@
 // Canvas-level keyboard shortcuts — closing/opening/reloading a page,
 // cycling focus, zooming, back/forward navigation, theme switching, the
-// canvas-view reset, bookmarks, and the F1 help page — that must never
-// reach a page's own content (unlike everything routed through
-// input::KeyboardInput, which forwards to whichever CEF browser is
-// active). Kept separate from that module for exactly that reason: this
-// is about the canvas, not about one page's text input. Canvas pan/zoom
-// itself is mouse-driven (middle-drag / Ctrl+scroll, see app.rs) — only
-// its keyboard reset lives here. The HTML/CSS/JS for the pages some of
-// these open (F1 help, bookmarks list, omnibox) lives in pages/, not
-// here — this file is only "what does each shortcut do".
+// canvas-view reset, auto-layout, the page switcher, bookmarks, and the
+// F1 help page — that must never reach a page's own content (unlike
+// everything routed through input::KeyboardInput, which forwards to
+// whichever CEF browser is active). Kept separate from that module for
+// exactly that reason: this is about the canvas, not about one page's
+// text input. Canvas pan/zoom itself is mouse-driven (middle-drag /
+// Ctrl+scroll, see app.rs) — only its keyboard reset lives here. The
+// HTML/CSS/JS for the pages some of these open (F1 help, bookmarks
+// list, omnibox, switcher) lives in pages/, not here — this file is
+// only "what does each shortcut do".
 
 use crate::browser;
 use crate::output::{GpuState, Rect};
@@ -89,6 +90,10 @@ pub fn handle(
         }
         PhysicalKey::Code(KeyCode::KeyG) => {
             auto_layout(session, gpu);
+            true
+        }
+        PhysicalKey::Code(KeyCode::KeyK) => {
+            open_switcher(session, gpu);
             true
         }
         PhysicalKey::Code(KeyCode::Tab) => {
@@ -233,6 +238,32 @@ fn auto_layout(session: &mut Session, gpu: &GpuState) {
         (size.width as f32, size.height as f32),
         gpu.window.scale_factor(),
     );
+}
+
+/// Opens the Ctrl+K page switcher: a filterable list of every open,
+/// non-ephemeral page. Ephemeral pages (F1 help, bookmarks list, and
+/// this switcher itself) are excluded — see pages::switcher::page_url.
+fn open_switcher(session: &mut Session, gpu: &GpuState) {
+    let size = gpu.window.inner_size();
+    let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
+    let h = (size.height as f32 * 0.6).clamp(360.0, 640.0);
+    let viewport = session.viewport();
+    let world_origin =
+        viewport.screen_to_world(((size.width as f32 - w) / 2.0, (size.height as f32 - h) / 2.0));
+    let rect = Rect {
+        x: world_origin.0,
+        y: world_origin.1,
+        w: w / viewport.zoom,
+        h: h / viewport.zoom,
+    };
+    let entries: Vec<(i32, String)> = session
+        .pages()
+        .iter()
+        .filter(|p| !p.ephemeral)
+        .map(|p| (p.browser.identifier(), p.url()))
+        .collect();
+    let url = pages::switcher::page_url(&session.theme(), &entries);
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
 fn open_bookmarks(session: &mut Session, gpu: &GpuState, bookmarks: &[Bookmark]) {
