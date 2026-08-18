@@ -185,6 +185,43 @@ impl Session {
         self.mark_dirty();
     }
 
+    /// Arranges every open page into a grid filling `screen_size`
+    /// (physical pixels) and resets the viewport to identity — so the
+    /// grid is computed directly in screen space rather than juggling a
+    /// pan/zoom that would just fight the new layout. Also drops any
+    /// zoomed-to-canvas state (both the per-page `zoomed_from` and the
+    /// session's stashed `zoomed_viewport`): laying pages out into a
+    /// fresh grid makes "restore to the rect before zooming" moot.
+    pub fn auto_layout(&mut self, screen_size: (f32, f32), scale_factor: f64) {
+        let n = self.pages.len();
+        if n == 0 {
+            return;
+        }
+        self.viewport.reset();
+        self.zoomed_viewport = None;
+
+        let cols = (n as f32).sqrt().ceil() as usize;
+        let rows = (n + cols - 1) / cols;
+        let margin = 24.0;
+        let gap = 24.0;
+        let cell_w = (screen_size.0 - margin * 2.0 - gap * (cols - 1) as f32) / cols as f32;
+        let cell_h = (screen_size.1 - margin * 2.0 - gap * (rows - 1) as f32) / rows as f32;
+
+        for (i, page) in self.pages.iter_mut().enumerate() {
+            page.zoomed_from = None;
+            let col = i % cols;
+            let row = i / cols;
+            let rect = Rect {
+                x: margin + col as f32 * (cell_w + gap),
+                y: margin + row as f32 * (cell_h + gap),
+                w: cell_w,
+                h: cell_h,
+            };
+            page.set_rect(rect, scale_factor);
+        }
+        self.mark_dirty();
+    }
+
     pub fn set_theme(&mut self, theme: Theme) {
         self.theme = theme;
         self.mark_dirty();

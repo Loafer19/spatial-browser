@@ -87,6 +87,10 @@ pub fn handle(
             open_bookmarks(session, gpu, bookmarks);
             true
         }
+        PhysicalKey::Code(KeyCode::KeyG) => {
+            auto_layout(session, gpu);
+            true
+        }
         PhysicalKey::Code(KeyCode::Tab) => {
             // Focus == topmost (last), so cycling focus is just rotating
             // z-order: rotate_left brings the front page to the back,
@@ -219,6 +223,16 @@ fn bookmark_focused(session: &Session, bookmarks: &mut Vec<Bookmark>) {
         folder: None,
     });
     bookmarks::save(bookmarks);
+}
+
+/// Rearranges every open page into a grid filling the current window —
+/// see `Session::auto_layout`.
+fn auto_layout(session: &mut Session, gpu: &GpuState) {
+    let size = gpu.window.inner_size();
+    session.auto_layout(
+        (size.width as f32, size.height as f32),
+        gpu.window.scale_factor(),
+    );
 }
 
 fn open_bookmarks(session: &mut Session, gpu: &GpuState, bookmarks: &[Bookmark]) {
