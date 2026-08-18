@@ -1,0 +1,74 @@
+name: Release
+
+# Fires on a version tag push (git tag v0.2.0 && git push --tags) —
+# no workflow_dispatch: pushing a tag is already the manual trigger,
+# a second one would just be a different way to ask the same question
+# (what version is this).
+on:
+  push:
+    tags:
+      - "v*"
+
+# Default GITHUB_TOKEN is read-only on some repo settings; the release
+# step needs to create a release + upload assets.
+permissions:
+  contents: write
+
+env:
+  # Keep in sync with the `cef = { version = "..." }` line in
+  # crates/*/Cargo.toml. Not read dynamically from Cargo.lock: this
+  # changes rarely enough that a hardcoded value + this comment is
+  # simpler than a parsing step.
+  CEF_VERSION: 151.4.0+151.3.17
+  CEF_PATH: ${{ github.workspace }}/.cef-cache
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Speeds up the ordinary cargo registry/target-dir side of the
+      # build. Separate from the CEF caching below — this is standard
+      # Rust build-artifact caching, unrelated to CEF's own binary
+      # distribution.
+      - uses: Swatinem/rust-cache@v2
+
+      # cef-dll-sys's build.rs auto-downloads the CEF binary
+      # distribution into CEF_PATH the first time it's missing (the
+      # same thing that happens on a fresh local `cargo build` — see
+      # README's Build section) — no export-cef-dir step needed here,
+      # just give it somewhere to land and cache that somewhere.
+      # bundle-cef-app (installed below) reads the same CEF_PATH to
+      # find the files it copies into target/bundle/, so one download
+      # serves both steps.
+      - name: Cache CEF distribution
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CEF_PATH }}
+          key: cef-${{ env.CEF_VERSION }}-${{ runner.os }}
+
+      - name: Cache bundle-cef-app
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/cargo-cef-tools
+          key: cargo-cef-tools-${{ env.CEF_VERSION }}-${{ runner.os }}
+
+      - name: Install bundle-cef-app
+        run: |
+          cargo install cef --version "${CEF_VERSION}" --locked \
+            --root ~/.local/share/cargo-cef-tools
+
+      - name: Bundle
+        run: ./scripts/bundle.sh compositor
+
+      - name: Package
+        run: tar czf spatial-browser-linux-x86_64.tar.gz -C target/bundle .
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: spatial-browser-linux-x86_64.tar.gz
+          generate_release_notes: true

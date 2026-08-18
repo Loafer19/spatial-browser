@@ -2,6 +2,7 @@
 name = "compositor"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 [package.metadata.cef.bundle]
 helper_name = "compositor_helper"
