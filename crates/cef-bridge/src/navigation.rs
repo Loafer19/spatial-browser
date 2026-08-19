@@ -245,6 +245,9 @@ pub enum SettingsPageAction {
     SetTheme(usize),
     AddBlockedHost(String),
     RemoveBlockedHost(usize),
+    /// One of the settings page's own fixed choices (60/90/120), not
+    /// free text — see compositor::browser::set_target_frame_rate.
+    SetFrameRate(u32),
 }
 
 thread_local! {
@@ -274,6 +277,9 @@ fn parse_settings_action(url: &str) -> Option<SettingsPageAction> {
             .parse()
             .ok()
             .map(SettingsPageAction::RemoveBlockedHost);
+    }
+    if let Some(fps) = rest.strip_prefix("frame-rate/") {
+        return fps.parse().ok().map(SettingsPageAction::SetFrameRate);
     }
     None
 }

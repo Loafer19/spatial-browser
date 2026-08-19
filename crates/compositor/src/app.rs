@@ -111,10 +111,21 @@ pub struct App {
     last_save: Instant,
 }
 
+impl App {
+    /// Read by main.rs's own event-loop pacing (the other half of the
+    /// frame-rate setting, alongside browser::set_target_frame_rate) —
+    /// live, not cached at startup, so turning it up/down in Settings
+    /// takes effect on the very next loop iteration.
+    pub fn target_fps(&self) -> u32 {
+        self.settings.target_fps
+    }
+}
+
 impl Default for App {
     fn default() -> Self {
         let settings = settings::load();
         pending_actions::sync_blocklist_settings(&settings);
+        browser::set_target_frame_rate(settings.target_fps);
         Self {
             state: None,
             session: Session::new(Vec::new(), Viewport::default(), THEMES[0]),

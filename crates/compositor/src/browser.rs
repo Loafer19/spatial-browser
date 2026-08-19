@@ -12,11 +12,29 @@ use crate::output::{GpuState, PageQuad, Rect};
 use cef_bridge::{ClientBuilder, OsrRenderHandler};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use winit::window::Window;
 
 // Comfortably under wgpu's default 8192 max_texture_dimension_2d (see
 // Rect::clamp_size) — no single floating page plausibly needs more.
 const MAX_PAGE_DIMENSION: f32 = 4096.0;
+
+// The Settings page's frame-rate choice (60/90/120 — see
+// pages::settings_list), read by every future `spawn()` and pushed live
+// into every currently-open page's CEF host
+// (pending_actions.rs's SettingsPageAction::SetFrameRate). A plain
+// static, not threaded through every one of spawn()'s dozen-plus call
+// sites: this is the same "runtime state many scattered callers need to
+// read without changing every signature" shape as blocklist.rs's
+// ENABLED/CUSTOM_HOSTS, just on this crate's own UI thread instead of
+// across the UI/IO-thread split those have to handle.
+static TARGET_FRAME_RATE: AtomicU32 = AtomicU32::new(60);
+
+/// Called once at startup (from the loaded settings.json) and again on
+/// every Settings-page frame-rate change.
+pub fn set_target_frame_rate(fps: u32) {
+    TARGET_FRAME_RATE.store(fps, Ordering::Relaxed);
+}
 
 pub struct Page {
     pub browser: cef::Browser,
@@ -95,7 +113,7 @@ pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect, ephemeral: 
     );
 
     let browser_settings = cef::BrowserSettings {
-        windowless_frame_rate: 60,
+        windowless_frame_rate: TARGET_FRAME_RATE.load(Ordering::Relaxed) as _,
         ..Default::default()
     };
     let browser = cef::browser_host_create_browser_sync(

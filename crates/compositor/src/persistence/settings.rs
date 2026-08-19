@@ -23,6 +23,13 @@ pub struct AppSettings {
     /// just using this instead of that map's hardcoded default.
     pub default_search_engine: String,
     pub custom_blocked_hosts: Vec<String>,
+    /// CEF's `windowless_frame_rate` for every page, and the main
+    /// event loop's own pacing (main.rs) — one of 60/90/120, picked
+    /// from Settings, not free text (a monitor's actual max refresh
+    /// rate is the real ceiling regardless of this; higher just gives
+    /// CEF/the loop room to produce frames that fast if the display can
+    /// show them).
+    pub target_fps: u32,
 }
 
 impl Default for AppSettings {
@@ -31,6 +38,7 @@ impl Default for AppSettings {
             ad_block_enabled: true,
             default_search_engine: "https://www.google.com/search?q=".to_string(),
             custom_blocked_hosts: Vec::new(),
+            target_fps: 60,
         }
     }
 }

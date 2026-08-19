@@ -1,9 +1,11 @@
 // The Ctrl+, settings page: ad-block on/off, the omnibox's default
 // search engine, a direct theme picker (Ctrl+Shift+Space already cycles
-// themes — this is the same choice, just click instead of cycle), and
-// the user's own additions to the ad/tracker blocklist (on top of
-// cef-bridge's compiled-in one — see blocklist.rs's header comment for
-// why that one stays static). See cef-bridge's OsrRequestHandler /
+// themes — this is the same choice, just click instead of cycle), the
+// target frame rate (60/90/120 — a monitor's own max refresh rate is
+// still the real ceiling, this just gives the pipeline room to reach
+// it), and the user's own additions to the ad/tracker blocklist (on top
+// of cef-bridge's compiled-in one — see blocklist.rs's header comment
+// for why that one stays static). See cef-bridge's OsrRequestHandler /
 // app.rs's PENDING_SETTINGS_ACTION for how clicks on this page's
 // `settings://...` links get handled.
 
@@ -19,6 +21,14 @@ const SEARCH_ENGINES: &[(&str, &str)] = &[
     ("DuckDuckGo", "https://duckduckgo.com/?q="),
     ("Bing", "https://www.bing.com/search?q="),
 ];
+
+/// Frame-rate choices offered — CEF's own `windowless_frame_rate` and
+/// the main event loop's pacing both get set to this (browser.rs's
+/// `set_target_frame_rate`, main.rs's own loop reading `App::target_fps`
+/// live). A monitor's actual max refresh rate is still the real
+/// ceiling regardless of this setting; 120 just gives the pipeline room
+/// to hit it if the display can show it.
+const FRAME_RATES: &[u32] = &[60, 90, 120];
 
 /// A small static checkmark (not a button) marking whichever choice in
 /// a settings section is currently active — reuses `help_key_bg` as the
@@ -101,6 +111,27 @@ pub(crate) fn page_url(theme: &Theme, settings: &AppSettings) -> String {
             card_border = theme.help_card_border,
             fg = theme.help_fg,
             name = candidate.name,
+            checkmark = checkmark(theme, is_current),
+        ));
+    }
+
+    rows.push_str(&format!(
+        "<h2 style=\"margin:16px 0 8px;font-size:13px;text-transform:uppercase;\
+         letter-spacing:0.05em;color:{heading};opacity:0.8\">Performance</h2>",
+        heading = theme.help_heading,
+    ));
+    for fps in FRAME_RATES {
+        let is_current = settings.target_fps == *fps;
+        rows.push_str(&format!(
+            "<div class=\"list-row\" data-open=\"settings://frame-rate/{fps}\" \
+             onclick=\"location='settings://frame-rate/{fps}'\" \
+             style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
+             cursor:pointer;background:{card_bg};border-radius:8px;\
+             border:1px solid {card_border}\">\
+             <span style=\"flex:1;color:{fg}\">{fps} fps</span>{checkmark}</div>",
+            card_bg = theme.help_card_bg,
+            card_border = theme.help_card_border,
+            fg = theme.help_fg,
             checkmark = checkmark(theme, is_current),
         ));
     }

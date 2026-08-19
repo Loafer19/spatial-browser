@@ -21,7 +21,7 @@ use crate::persistence::{
     workspaces::{self, Workspace, WorkspacePage},
 };
 use crate::session::Session;
-use cef::{ImplBrowser, ImplFrame};
+use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 use cef_bridge::{
     BookmarkAction, DownloadPageAction, HistoryPageAction, SettingsPageAction, WorkspacePageAction,
     PENDING_BOOKMARK, PENDING_DOWNLOADS, PENDING_DOWNLOAD_ACTION, PENDING_HISTORY_ACTION,
@@ -398,6 +398,23 @@ pub fn apply(
                     settings.custom_blocked_hosts.remove(index);
                     settings::save(settings);
                     sync_blocklist_settings(settings);
+                }
+                refresh_settings_page(session, gpu, settings, browser_id);
+            }
+            SettingsPageAction::SetFrameRate(fps) => {
+                settings.target_fps = fps;
+                settings::save(settings);
+                browser::set_target_frame_rate(fps);
+                // Applied immediately to every currently-open page's own
+                // CEF host, not just future spawns — same reasoning as
+                // the (now-removed) page-label toggle had: a setting a
+                // user can visibly judge (does it feel smoother?) left
+                // stale until next launch would be a much more
+                // noticeable inconsistency than most settings here.
+                for page in session.pages() {
+                    if let Some(host) = page.browser.host() {
+                        host.set_windowless_frame_rate(fps as _);
+                    }
                 }
                 refresh_settings_page(session, gpu, settings, browser_id);
             }

@@ -113,7 +113,13 @@ fn main() -> ExitCode {
             PumpStatus::Exit(code) => break ExitCode::from(code as u8),
             PumpStatus::Continue => {}
         }
-        sleep(Duration::from_millis(1000 / 60));
+        // Read live, not cached at startup: this is one of two places
+        // (the other is browser::set_target_frame_rate, which caps how
+        // often CEF itself produces a new frame) that used to hardcode
+        // 60 regardless of the Settings page's frame-rate choice — this
+        // loop's own pacing was a second, independent 60fps ceiling on
+        // top of CEF's, unrelated to CPU-vs-GPU OSR rendering.
+        sleep(Duration::from_millis(1000 / app.target_fps() as u64));
     };
 
     cef::shutdown();
