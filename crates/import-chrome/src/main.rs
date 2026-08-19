@@ -1,6 +1,5 @@
-// One-time migration: read Chrome's Bookmarks JSON and History SQLite file and
-// merge them into spatial-browser's own bookmarks.json / history.json,
-// preserving any existing entries.
+// One-time migration: read Chrome's Bookmarks JSON and merge the entries
+// into spatial-browser's own bookmarks.json, preserving existing bookmarks.
 //
 // Chrome stores bookmarks as a tree of arbitrary depth. This tool flattens
 // that tree into the existing flat `folder: Option<String>` scheme by joining
@@ -10,28 +9,19 @@
 //   Bookmarks bar / Work            →  folder = "Bookmarks bar/Work"
 //   (root level with no parents)    →  folder = None
 //
-// History: Chrome's History file is an SQLite database. The `urls` table
-// contains the URL and title, the `visits` table contains per-visit timestamps
-// (stored as microseconds since 1601-01-01 00:00:00 UTC, the Windows FILETIME
-// epoch). This tool converts those timestamps to Unix seconds (UTC) and merges
-// them into spatial-browser's history.json, keeping existing entries and
-// skipping duplicates (same URL + visited_at pair).
+// This means the existing bookmarks.json format and all compositor code that
+// reads it are unchanged — no schema migration, no UI changes needed.
 //
 // Usage:
 //   import-chrome
 //       Reads  ~/.config/google-chrome/Default/Bookmarks
-//              ~/.config/google-chrome/Default/History
 //       Writes ~/.config/spatial-browser/bookmarks.json
-//              ~/.config/spatial-browser/history.json
 //
 //   import-chrome /path/to/chrome/profile/Bookmarks
-//       Explicit bookmarks source path (history not imported).
+//       Explicit source path.
 //
 //   import-chrome /path/to/Bookmarks /path/to/bookmarks.json
-//       Explicit bookmarks source and destination paths (history not imported).
-//
-//   import-chrome --history /path/to/History /path/to/history.json
-//       Import only history with explicit source and destination paths.
+//       Explicit source and destination paths.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -77,19 +67,6 @@ struct Bookmark {
 #[derive(Default, Serialize, Deserialize)]
 struct BookmarksFile {
     bookmarks: Vec<Bookmark>,
-}
-
-// ── spatial-browser on-disk history format (mirrors persistence/history.rs) ──
-
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-struct HistoryEntry {
-    url: String,
-    visited_at: i64, // Unix seconds, UTC
-}
-
-#[derive(Default, Serialize, Deserialize)]
-struct HistoryFile {
-    entries: Vec<HistoryEntry>,
 }
 
 // ── Conversion ───────────────────────────────────────────────────────────────
@@ -146,124 +123,10 @@ fn default_output_path() -> PathBuf {
     PathBuf::from(home).join(".config/spatial-browser/bookmarks.json")
 }
 
-fn default_chrome_history_path() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME not set");
-    PathBuf::from(home).join(".config/google-chrome/Default/History")
-}
-
-fn default_history_output_path() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME not set");
-    PathBuf::from(home).join(".config/spatial-browser/history.json")
-}
-
 // ── Main ─────────────────────────────────────────────────────────────────────
-
-/// Import Chrome history from `history_path` into `output_path`.
-///
-/// Chrome stores visit timestamps as microseconds since 1601-01-01 (Windows
-/// FILETIME epoch). The offset from that epoch to the Unix epoch (1970-01-01)
-/// is 11_644_473_600 seconds = 11_644_473_600_000_000 microseconds.
-fn import_history(history_path: &PathBuf, output_path: &PathBuf) -> Result<()> {
-    use rusqlite::{Connection, OpenFlags};
-
-    // Open the SQLite file in read-only mode so we never corrupt Chrome's live
-    // database. Chrome may have the file locked; if so we get a clear error.
-    let conn = Connection::open_with_flags(
-        history_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .with_context(|| format!("opening history db {}", history_path.display()))?;
-
-    // Microsecond offset between Windows FILETIME epoch and Unix epoch.
-    const EPOCH_OFFSET_US: i64 = 11_644_473_600_000_000;
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT u.url, v.visit_time \
-             FROM visits v \
-             JOIN urls u ON u.id = v.url \
-             WHERE v.visit_time > 0 \
-             ORDER BY v.visit_time DESC",
-        )
-        .context("preparing history query")?;
-
-    let imported: Vec<HistoryEntry> = stmt
-        .query_map([], |row| {
-            let url: String = row.get(0)?;
-            let visit_time_us: i64 = row.get(1)?;
-            // Convert Windows FILETIME microseconds → Unix seconds.
-            let visited_at = (visit_time_us - EPOCH_OFFSET_US) / 1_000_000;
-            Ok(HistoryEntry { url, visited_at })
-        })
-        .context("querying history")?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    eprintln!(
-        "import-chrome: found {} history visit(s) in {}",
-        imported.len(),
-        history_path.display()
-    );
-
-    // Load existing history (or start empty).
-    let existing: HistoryFile = std::fs::read(output_path)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default();
-
-    // Dedup by (url, visited_at) pair.
-    let existing_set: HashSet<(&str, i64)> = existing
-        .entries
-        .iter()
-        .map(|e| (e.url.as_str(), e.visited_at))
-        .collect();
-    let imported_count = imported.len();
-    let new_entries: Vec<HistoryEntry> = imported
-        .into_iter()
-        .filter(|e| !existing_set.contains(&(e.url.as_str(), e.visited_at)))
-        .collect();
-
-    eprintln!(
-        "import-chrome: {} new history visit(s) (skipping {} already present)",
-        new_entries.len(),
-        imported_count - new_entries.len(),
-    );
-
-    let mut merged = existing.entries;
-    merged.extend(new_entries);
-    // Keep newest first, matching spatial-browser's history.json convention.
-    merged.sort_unstable_by(|a, b| b.visited_at.cmp(&a.visited_at));
-
-    let result = HistoryFile { entries: merged };
-
-    if let Some(parent) = output_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating directory {}", parent.display()))?;
-    }
-    let bytes = serde_json::to_vec_pretty(&result).context("serializing history")?;
-    std::fs::write(output_path, bytes)
-        .with_context(|| format!("writing {}", output_path.display()))?;
-
-    eprintln!("import-chrome: wrote {}", output_path.display());
-    Ok(())
-}
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-
-    // `import-chrome --history [<src> [<dst>]]` — import only history.
-    if args.get(1).map(|s| s.as_str()) == Some("--history") {
-        let history_path = args
-            .get(2)
-            .map(PathBuf::from)
-            .unwrap_or_else(default_chrome_history_path);
-        let output_path = args
-            .get(3)
-            .map(PathBuf::from)
-            .unwrap_or_else(default_history_output_path);
-        return import_history(&history_path, &output_path);
-    }
-
     let chrome_path = args
         .get(1)
         .map(PathBuf::from)
@@ -333,23 +196,5 @@ fn main() -> Result<()> {
         .with_context(|| format!("writing {}", output_path.display()))?;
 
     eprintln!("import-chrome: wrote {}", output_path.display());
-
-    // When invoked with no arguments, also import history from the default
-    // Chrome profile location alongside bookmarks.
-    if args.len() == 1 {
-        let history_path = default_chrome_history_path();
-        let history_output = default_history_output_path();
-        if history_path.exists() {
-            if let Err(e) = import_history(&history_path, &history_output) {
-                eprintln!("import-chrome: history import failed: {e:#}");
-            }
-        } else {
-            eprintln!(
-                "import-chrome: skipping history (not found at {})",
-                history_path.display()
-            );
-        }
-    }
-
     Ok(())
 }
