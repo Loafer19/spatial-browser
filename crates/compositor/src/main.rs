@@ -65,9 +65,29 @@ fn main() -> ExitCode {
         return ExitCode::from(0);
     }
 
+    // Both under our own config dir (same place session.json/
+    // bookmarks.json/etc. already live) rather than CEF's
+    // platform-default (~/.config/cef_user_data) — that default prints
+    // a startup warning every launch ("customize root_cache_path...")
+    // and, more importantly, leaving cache_path empty puts every
+    // browser in "incognito mode": in-memory-only storage, wiped on
+    // every restart (including scripts/run.sh's auto-restart on the
+    // known SPA-navigation crash — every recovery was silently logging
+    // the user out of everything). See browser.rs: pages now pass
+    // `None` for their request_context, so they all share this one
+    // persistent global context instead of getting one fresh, isolated,
+    // non-persistent context each.
+    let home = std::env::var_os("HOME").expect("HOME not set");
+    let cef_data_path: CefString = std::path::Path::new(&home)
+        .join(".config/spatial-browser/cef_data")
+        .to_string_lossy()
+        .as_ref()
+        .into();
     let settings = Settings {
         windowless_rendering_enabled: true as _,
         external_message_pump: true as _,
+        cache_path: cef_data_path.clone(),
+        root_cache_path: cef_data_path,
         ..Default::default()
     };
     assert_eq!(

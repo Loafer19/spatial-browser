@@ -6,9 +6,8 @@
 //!
 //! One file per CEF client-handler interface this bridge implements —
 //! `app`, `render`, `display`, `download`, `life_span`, `load` each wrap
-//! exactly one `cef::ImplXxxHandler`, plus `request_context` for the
-//! (currently empty) per-browser request context handler. `navigation`
-//! is the one exception: it groups every custom-scheme (`bookmark://`,
+//! exactly one `cef::ImplXxxHandler`. `navigation` is the one
+//! exception: it groups every custom-scheme (`bookmark://`,
 //! `omnibox://`, `switcher://`, `download://`, `history://`)
 //! interception together, since all five are the same `RequestHandler`
 //! dispatching on a URL prefix — one concern, not five. `client` ties
@@ -16,6 +15,14 @@
 //! spawned browser. Every module is private; everything `pub` in them
 //! is re-exported flat here so callers keep using `cef_bridge::Thing`
 //! rather than `cef_bridge::whichever_module::Thing`.
+//!
+//! Deliberately no request-context handler: every page passes `None`
+//! for its request context (browser.rs), so they all share CEF's one
+//! global context (persisted via main.rs's `cache_path`) instead of
+//! each getting its own fresh, isolated, in-memory-only one — the
+//! previous per-page context meant no page shared a login with any
+//! other, and every restart (including scripts/run.sh's auto-restart
+//! on the known SPA-navigation crash) silently logged everything out.
 
 mod app;
 mod client;
@@ -25,7 +32,6 @@ mod life_span;
 mod load;
 mod navigation;
 mod render;
-mod request_context;
 
 pub use app::*;
 pub use client::*;
@@ -35,4 +41,3 @@ pub use life_span::*;
 pub use load::*;
 pub use navigation::*;
 pub use render::*;
-pub use request_context::*;

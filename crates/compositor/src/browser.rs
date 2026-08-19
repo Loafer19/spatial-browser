@@ -1,11 +1,15 @@
 // Spawning a CEF browser instance for one page of the spatial canvas:
 // its own render handler (own texture + own logical size, independent of
 // every other page), its own GPU quad, and its own canvas-space rect.
+// Deliberately no request_context of its own — passing `None` for one
+// (see spawn, below) makes CEF use the single global context every
+// page shares, so cookies/logins are shared across pages and persist
+// across restarts (see main.rs's `cache_path`/`root_cache_path`)
+// instead of every page getting its own fresh, isolated, in-memory-only
+// one.
 
 use crate::output::{GpuState, PageQuad, Rect};
-use cef_bridge::{
-    ClientBuilder, OsrRenderHandler, OsrRequestContextHandler, RequestContextHandlerBuilder,
-};
+use cef_bridge::{ClientBuilder, OsrRenderHandler};
 use std::cell::RefCell;
 use std::rc::Rc;
 use winit::window::Window;
@@ -94,20 +98,13 @@ pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect, ephemeral: 
         windowless_frame_rate: 60,
         ..Default::default()
     };
-    let mut context = cef::request_context_create_context(
-        Some(&cef::RequestContextSettings::default()),
-        Some(&mut RequestContextHandlerBuilder::build(
-            OsrRequestContextHandler {},
-        )),
-    );
-
     let browser = cef::browser_host_create_browser_sync(
         Some(&window_info),
         Some(&mut ClientBuilder::build(render_handler)),
         Some(&url.into()),
         Some(&browser_settings),
         None,
-        context.as_mut(),
+        None, // global request context — see this file's header comment
     )
     .expect("failed to create CEF browser");
 
