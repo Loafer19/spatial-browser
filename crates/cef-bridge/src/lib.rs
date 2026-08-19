@@ -25,6 +25,7 @@
 //! on the known SPA-navigation crash) silently logged everything out.
 
 mod app;
+mod blocklist;
 mod client;
 mod display;
 mod download;
@@ -34,6 +35,7 @@ mod navigation;
 mod render;
 
 pub use app::*;
+pub use blocklist::{set_custom_hosts, set_enabled};
 pub use client::*;
 pub use display::*;
 pub use download::*;

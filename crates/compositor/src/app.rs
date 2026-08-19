@@ -19,6 +19,7 @@ use crate::persistence::{
     bookmarks::{self, Bookmark},
     downloads::{self, DownloadRecord},
     history::{self, HistoryEntry},
+    settings::{self, AppSettings},
     typed_history,
     workspaces::{self, Workspace},
 };
@@ -62,6 +63,13 @@ pub struct App {
     // below) — rare, deliberate actions, no need for the canvas
     // session's debounce.
     workspaces: Vec<Workspace>,
+    // Loaded once at startup from settings.json, saved immediately on
+    // every change (see PENDING_SETTINGS_ACTION handling below).
+    // cef-bridge's own live ad-block state (blocklist::ENABLED/
+    // CUSTOM_HOSTS) is kept in sync with this at startup and on every
+    // change — see `sync_blocklist_settings` below — since that's what
+    // `on_before_resource_load` actually reads from, not this struct.
+    settings: AppSettings,
     mouse: MouseInput,
     keyboard: KeyboardInput,
     // Raw window-space physical cursor position — updated on every
@@ -105,6 +113,8 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
+        let settings = settings::load();
+        pending_actions::sync_blocklist_settings(&settings);
         Self {
             state: None,
             session: Session::new(Vec::new(), Viewport::default(), THEMES[0]),
@@ -113,6 +123,7 @@ impl Default for App {
             downloads: downloads::load(),
             history: history::load(),
             workspaces: workspaces::load(),
+            settings,
             mouse: MouseInput::default(),
             keyboard: KeyboardInput::default(),
             cursor_window: (0.0, 0.0),
@@ -417,6 +428,7 @@ impl ApplicationHandler for App {
                     &self.downloads,
                     &self.history,
                     &self.workspaces,
+                    &self.settings,
                 ) {
                     return;
                 }
@@ -442,6 +454,7 @@ impl ApplicationHandler for App {
                     &mut self.downloads,
                     &mut self.history,
                     &mut self.workspaces,
+                    &mut self.settings,
                 );
 
                 if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {

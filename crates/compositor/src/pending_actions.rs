@@ -16,16 +16,29 @@ use crate::persistence::{
     bookmarks::{self, Bookmark},
     downloads::{self, DownloadRecord},
     history::{self, HistoryEntry},
+    settings::{self, AppSettings},
     typed_history,
     workspaces::{self, Workspace, WorkspacePage},
 };
 use crate::session::Session;
 use cef::{ImplBrowser, ImplFrame};
 use cef_bridge::{
-    BookmarkAction, DownloadPageAction, HistoryPageAction, WorkspacePageAction, PENDING_BOOKMARK,
-    PENDING_DOWNLOADS, PENDING_DOWNLOAD_ACTION, PENDING_HISTORY_ACTION, PENDING_OMNIBOX,
-    PENDING_POPUPS, PENDING_SWITCH, PENDING_VISITS, PENDING_WORKSPACE_ACTION,
+    BookmarkAction, DownloadPageAction, HistoryPageAction, SettingsPageAction, WorkspacePageAction,
+    PENDING_BOOKMARK, PENDING_DOWNLOADS, PENDING_DOWNLOAD_ACTION, PENDING_HISTORY_ACTION,
+    PENDING_OMNIBOX, PENDING_POPUPS, PENDING_SETTINGS_ACTION, PENDING_SWITCH, PENDING_VISITS,
+    PENDING_WORKSPACE_ACTION,
 };
+
+/// Pushes the current ad-block toggle/custom-hosts into cef-bridge's
+/// own live state (a thread_local, not part of `AppSettings` itself) —
+/// called once at startup (app.rs's `Default::default`) and again after
+/// every settings change that touches either field, since
+/// `on_before_resource_load` (cef-bridge) reads that thread_local
+/// directly, not `AppSettings`.
+pub(crate) fn sync_blocklist_settings(settings: &AppSettings) {
+    cef_bridge::set_enabled(settings.ad_block_enabled);
+    cef_bridge::set_custom_hosts(settings.custom_blocked_hosts.clone());
+}
 
 /// Drains and acts on every pending action queued since the last frame.
 /// Called once per `RedrawRequested`, before rendering.
@@ -37,6 +50,7 @@ pub fn apply(
     downloads: &mut Vec<DownloadRecord>,
     history: &mut Vec<HistoryEntry>,
     workspaces: &mut Vec<Workspace>,
+    settings: &mut AppSettings,
 ) {
     // Set by cef-bridge's OsrRequestHandler when a click or form submit
     // inside the bookmarks-list page (hotkeys::open_bookmarks) hits one
@@ -345,6 +359,50 @@ pub fn apply(
             }
         }
     }
+
+    // Set by cef-bridge's OsrRequestHandler when a click inside the
+    // settings page (hotkeys::open_settings) hits a `settings://...`
+    // link — that navigation was already canceled there.
+    if let Some((browser_id, action)) =
+        PENDING_SETTINGS_ACTION.with_borrow_mut(|pending| pending.take())
+    {
+        match action {
+            SettingsPageAction::ToggleAdBlock => {
+                settings.ad_block_enabled = !settings.ad_block_enabled;
+                settings::save(settings);
+                sync_blocklist_settings(settings);
+                refresh_settings_page(session, gpu, settings, browser_id);
+            }
+            SettingsPageAction::SetSearchEngine(engine) => {
+                settings.default_search_engine = engine;
+                settings::save(settings);
+                refresh_settings_page(session, gpu, settings, browser_id);
+            }
+            SettingsPageAction::SetTheme(index) => {
+                if let Some(theme) = THEMES.get(index) {
+                    session.set_theme(*theme);
+                }
+                refresh_settings_page(session, gpu, settings, browser_id);
+            }
+            SettingsPageAction::AddBlockedHost(host) => {
+                let host = host.trim();
+                if !host.is_empty() && !settings.custom_blocked_hosts.iter().any(|h| h == host) {
+                    settings.custom_blocked_hosts.push(host.to_string());
+                    settings::save(settings);
+                    sync_blocklist_settings(settings);
+                }
+                refresh_settings_page(session, gpu, settings, browser_id);
+            }
+            SettingsPageAction::RemoveBlockedHost(index) => {
+                if index < settings.custom_blocked_hosts.len() {
+                    settings.custom_blocked_hosts.remove(index);
+                    settings::save(settings);
+                    sync_blocklist_settings(settings);
+                }
+                refresh_settings_page(session, gpu, settings, browser_id);
+            }
+        }
+    }
 }
 
 /// Replaces the bookmarks-list page identified by `browser_id` (CEF's
@@ -439,6 +497,30 @@ fn refresh_workspaces_page(
         return;
     };
     let url = pages::workspace_list::page_url(&session.theme(), workspaces);
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
+/// Same as `refresh_bookmarks_page`, for the settings page after any
+/// change — every `SettingsPageAction` refreshes it, since every one
+/// changes something the page displays (the ad-block state, which
+/// engine/theme is checked, the custom-hosts list).
+fn refresh_settings_page(
+    session: &mut Session,
+    gpu: &GpuState,
+    settings: &AppSettings,
+    browser_id: i32,
+) {
+    let Some(index) = session
+        .pages()
+        .iter()
+        .position(|p| p.browser.identifier() == browser_id)
+    else {
+        return;
+    };
+    let Some(rect) = session.close_at(index) else {
+        return;
+    };
+    let url = pages::settings_list::page_url(&session.theme(), settings);
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 

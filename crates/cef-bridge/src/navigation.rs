@@ -1,7 +1,7 @@
 // Custom-scheme interception: every generated list page (bookmarks,
-// omnibox, the page switcher, downloads, history, workspaces) signals
-// an action back to the compositor by navigating to a fake
-// `whatever://...` URL rather than a real one —
+// omnibox, the page switcher, downloads, history, workspaces,
+// settings) signals an action back to the compositor by navigating to
+// a fake `whatever://...` URL rather than a real one —
 // `OsrRequestHandler::on_before_browse` cancels that navigation and
 // parses it into one of the types below, left in a thread_local for
 // the compositor's redraw handler to act on (same shape for six of
@@ -14,6 +14,7 @@
 // and the whole point of a shared file is that dispatch living next to
 // every action it dispatches to.
 
+use crate::blocklist::{OsrResourceRequestHandler, ResourceRequestHandlerBuilder};
 use cef::{self, rc::Rc, *};
 use std::cell::RefCell;
 
@@ -234,6 +235,49 @@ fn parse_workspace_action(url: &str) -> Option<WorkspacePageAction> {
     None
 }
 
+/// What the settings page (compositor::hotkeys) asked for, parsed from
+/// a `settings://...` link/form.
+pub enum SettingsPageAction {
+    ToggleAdBlock,
+    /// A full search URL template (e.g. `https://www.bing.com/search?q=`)
+    /// — one of the settings page's own fixed choices, not free text.
+    SetSearchEngine(String),
+    SetTheme(usize),
+    AddBlockedHost(String),
+    RemoveBlockedHost(usize),
+}
+
+thread_local! {
+    // Same shape/reasoning as PENDING_BOOKMARK, for the settings page.
+    pub static PENDING_SETTINGS_ACTION: RefCell<Option<(i32, SettingsPageAction)>> =
+        const { RefCell::new(None) };
+}
+
+fn parse_settings_action(url: &str) -> Option<SettingsPageAction> {
+    let rest = url.strip_prefix("settings://")?;
+    if rest == "toggle-adblock" {
+        return Some(SettingsPageAction::ToggleAdBlock);
+    }
+    if let Some(query) = rest.strip_prefix("search-engine?") {
+        let engine = query_param(query, "engine")?;
+        return Some(SettingsPageAction::SetSearchEngine(engine));
+    }
+    if let Some(index) = rest.strip_prefix("theme/") {
+        return index.parse().ok().map(SettingsPageAction::SetTheme);
+    }
+    if let Some(query) = rest.strip_prefix("add-host?") {
+        let host = query_param(query, "host")?;
+        return Some(SettingsPageAction::AddBlockedHost(host));
+    }
+    if let Some(index) = rest.strip_prefix("remove-host/") {
+        return index
+            .parse()
+            .ok()
+            .map(SettingsPageAction::RemoveBlockedHost);
+    }
+    None
+}
+
 /// Parses a `clipboard://copy?text=...` navigation into the copied
 /// text — sent by the copy-bridge script every page has injected into
 /// it (compositor::clipboard_bridge), since CEF's windowless/OSR
@@ -302,11 +346,34 @@ wrap_request_handler! {
                 PENDING_WORKSPACE_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
                 return true as _;
             }
+            if let Some(action) = parse_settings_action(&url) {
+                PENDING_SETTINGS_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
+                return true as _;
+            }
             if let Some(text) = parse_clipboard_copy(&url) {
                 write_to_clipboard(&text);
                 return true as _;
             }
             false as _
+        }
+
+        // Ad/tracker request blocking (see blocklist.rs) — every
+        // request, not just top-level navigations, needs this same
+        // handler, so it's returned unconditionally rather than only
+        // for some subset.
+        fn resource_request_handler(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _request: Option<&mut Request>,
+            _is_navigation: ::std::os::raw::c_int,
+            _is_download: ::std::os::raw::c_int,
+            _request_initiator: Option<&CefString>,
+            _disable_default_handling: Option<&mut ::std::os::raw::c_int>,
+        ) -> Option<cef::ResourceRequestHandler> {
+            Some(ResourceRequestHandlerBuilder::build(
+                OsrResourceRequestHandler {},
+            ))
         }
     }
 }

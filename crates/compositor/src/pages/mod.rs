@@ -11,6 +11,7 @@ pub mod downloads_list;
 pub mod help;
 pub mod history_list;
 pub mod omnibox;
+pub mod settings_list;
 pub mod switcher;
 pub mod workspace_list;
 

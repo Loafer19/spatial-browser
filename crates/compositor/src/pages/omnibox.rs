@@ -6,6 +6,20 @@
 use super::{html_escape, js_string_literal};
 use crate::output::Theme;
 
+/// A `<script>` reassigning `SCRIPT`'s `DEFAULT_ENGINE` — kept as a tiny
+/// separate tag run right after `SCRIPT` (script tags execute in
+/// document order) rather than templating it into `SCRIPT` itself,
+/// since `SCRIPT` is a plain constant specifically so its `{`/`}` don't
+/// need doubling for `format!` (see `SCRIPT`'s own doc comment).
+/// `js_string_literal` isn't used here — it HTML-attribute-escapes on
+/// top of the JS escaping (meant for embedding inside e.g.
+/// `onclick="..."`), which would be wrong inside a `<script>` text
+/// node; a plain JS single-quote escape is all this needs.
+fn default_engine_override(default_engine: &str) -> String {
+    let js_escaped = default_engine.replace('\\', "\\\\").replace('\'', "\\'");
+    format!("<script>DEFAULT_ENGINE = '{js_escaped}';</script>")
+}
+
 /// Not run through `format!` (it's a plain constant, substituted whole
 /// into `page_url`'s template as one value) specifically so its own
 /// `{`/`}` — everywhere in ordinary JS — don't need doubling up as
@@ -19,7 +33,10 @@ const PREFIXES = {
   '@ddg': 'https://duckduckgo.com/?q=',
   '@duckduckgo': 'https://duckduckgo.com/?q='
 };
-const DEFAULT_ENGINE = 'https://www.google.com/search?q=';
+// `var`, not `const`: page_url() below reassigns this to whatever the
+// settings page's default-search-engine choice currently is, via a
+// tiny separate <script> tag placed right after this one.
+var DEFAULT_ENGINE = 'https://www.google.com/search?q=';
 function resolve(raw) {
   const trimmed = raw.trim();
   const m = trimmed.match(/^(@[a-zA-Z]+)\s+(.*)$/);
@@ -44,7 +61,7 @@ function go(raw) {
 /// intercepts and cancels, handing the raw text and resolved destination
 /// back to the compositor (app.rs's PENDING_OMNIBOX) to log and actually
 /// navigate to.
-pub fn page_url(theme: &Theme, typed_history: &[String]) -> String {
+pub fn page_url(theme: &Theme, typed_history: &[String], default_search_engine: &str) -> String {
     let mut chips = String::new();
     for entry in typed_history.iter().take(10) {
         chips.push_str(&format!(
@@ -60,7 +77,7 @@ pub fn page_url(theme: &Theme, typed_history: &[String]) -> String {
     }
 
     format!(
-        "data:text/html,{script}\
+        "data:text/html,{script}{engine_override}\
          <body style=\"margin:0;padding:64px 48px;background:{bg};color:{fg};\
          font-family:ui-monospace,monospace;font-size:15px\">\
          <form onsubmit=\"go(document.getElementById('q').value);return false\">\
@@ -73,6 +90,7 @@ pub fn page_url(theme: &Theme, typed_history: &[String]) -> String {
          <div style=\"margin-top:20px\">{chips}</div>\
          </body>",
         script = SCRIPT,
+        engine_override = default_engine_override(default_search_engine),
         bg = theme.help_bg,
         fg = theme.help_fg,
         card_bg = theme.help_card_bg,

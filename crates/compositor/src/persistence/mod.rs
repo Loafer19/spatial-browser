@@ -6,7 +6,8 @@
 // actual page visits, typed_history.rs is a flat list of typed omnibox
 // input — a deliberately different name so the two don't get confused —
 // downloads is a log of completed CEF downloads, workspaces is a set of
-// named canvas snapshots distinct from the live session below) grouped
+// named canvas snapshots distinct from the live session below,
+// settings.rs is the one user-editable preferences object) grouped
 // here because they share the same shape of problem, not because they
 // share data.
 //
@@ -19,6 +20,7 @@
 pub mod bookmarks;
 pub mod downloads;
 pub mod history;
+pub mod settings;
 pub mod typed_history;
 pub mod workspaces;
 
