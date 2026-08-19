@@ -9,7 +9,12 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+// `#[serde(default)]` at the container level: a field added here in the
+// future, after real settings.json files already exist on disk without
+// it, falls back to its own default instead of failing to parse the
+// whole file just because one key is missing.
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppSettings {
     pub ad_block_enabled: bool,
     /// A full search URL template with the query appended directly

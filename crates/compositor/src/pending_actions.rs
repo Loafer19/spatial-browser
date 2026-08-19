@@ -234,9 +234,9 @@ pub fn apply(
     // clipboard_bridge.rs — CEF's own clipboard integration doesn't
     // work at all in this windowless/OSR embedding, confirmed
     // empirically); and, skipped for ephemeral pages (F1 help,
-    // bookmarks/downloads/history/workspace lists, omnibox, switcher)
-    // since those aren't something the user navigated to themselves,
-    // the visit gets recorded into history.
+    // bookmarks/downloads/history/workspace/settings lists, omnibox,
+    // switcher) since those aren't something the user navigated to
+    // themselves, the visit gets recorded into history.
     let visits = PENDING_VISITS.with_borrow_mut(std::mem::take);
     for (browser_id, url) in visits {
         if let Some(page) = session

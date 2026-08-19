@@ -3,6 +3,17 @@
 // hotkeys.rs (which only dispatches canvas-level keyboard shortcuts) so
 // that file doesn't end up half HTML/CSS/JS generation, half input
 // handling.
+//
+// Every page's URL starts `data:text/html;charset=utf-8,` — the
+// `;charset=utf-8` isn't optional decoration: without it, a `data:` URL
+// with no charset falls back to Latin-1 for anything outside ASCII, so
+// any non-ASCII text (a bookmark title, a typed search query, anything
+// a user actually typed in Cyrillic or otherwise) rendered as mojibake
+// instead of the real characters. Confirmed empirically. The other
+// `data:` URL hazard already well-documented across these files — an
+// unescaped `#` starting a fragment and silently truncating the rest of
+// the document — is unrelated to this one; both need watching whenever
+// a new page template is added here.
 
 use crate::output::Theme;
 

@@ -97,7 +97,7 @@ pub fn page_url(theme: &Theme, entries: &[(i32, String)]) -> String {
     }
 
     format!(
-        "data:text/html,{script}\
+        "data:text/html;charset=utf-8,{script}\
          <style>.switch-row:hover,.switch-active{{background:{key_bg}!important}}\
          .switch-row:hover span,.switch-active span{{color:{key_fg}!important}}</style>\
          {body_open}\

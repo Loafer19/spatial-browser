@@ -13,6 +13,7 @@ pub const HELP_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+W", "Close page"),
             ("Ctrl+R", "Reload page"),
             ("Ctrl+V", "Paste from clipboard"),
+            ("Ctrl+Shift+C", "Copy page URL"),
             ("Alt+Left/Right", "Back / forward"),
             ("Ctrl+= / Ctrl+-", "Zoom in / out"),
             ("Ctrl+0", "Reset zoom"),
@@ -85,7 +86,7 @@ pub fn page_url(theme: &Theme) -> String {
     // starts a fragment, silently truncating everything after it from
     // the actual document — every Theme field here is an rgb() string.
     format!(
-        "data:text/html,{body_open}\
+        "data:text/html;charset=utf-8,{body_open}\
          <h1 style=\"margin:0 0 4px;color:{heading};font-size:20px\">\
          spatial-browser &mdash; shortcuts ({name})</h1>\
          <div style=\"display:flex;flex-direction:column;gap:8px\">{rows}</div></body>",

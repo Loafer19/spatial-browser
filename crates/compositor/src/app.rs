@@ -208,7 +208,7 @@ impl ApplicationHandler for App {
                 // Hex colors avoided deliberately: an unescaped `#` in a
                 // `data:` URL starts a fragment, silently truncating
                 // everything after it from the actual document.
-                "data:text/html,<body style=\"background:rgb(42,106,74);color:rgb(255,255,255);font-family:sans-serif;font-size:48px;display:flex;align-items:center;justify-content:center;height:100vh;margin:0\">Page 2</body>",
+                "data:text/html;charset=utf-8,<body style=\"background:rgb(42,106,74);color:rgb(255,255,255);font-family:sans-serif;font-size:48px;display:flex;align-items:center;justify-content:center;height:100vh;margin:0\">Page 2</body>",
             ];
             let pages = rects
                 .into_iter()

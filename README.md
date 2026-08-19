@@ -48,12 +48,20 @@ canvas instead of flat tabs, with its own bookmarks/history/downloads UI.
 
 Multi-page spatial canvas: pan/zoom, drag/resize, z-order focus
 cycling, auto-layout into a grid (Ctrl+G). Ctrl+T opens an omnibox
-(`@prefix` search shortcuts, typed-history); Ctrl+K is a filterable
-switcher over open pages. Bookmarks (Ctrl+D/B), downloads (Ctrl+J, to
-`~/Downloads`, desktop notification on completion), and real
-browsing history (Ctrl+H, day/site grouping) each have their own list
-page. A page opening a link in a new tab/window spawns a canvas page
-instead of a native popup window. F1 (or Ctrl+/) shows every shortcut.
+(`@g`/`@y`/`@ddg`/`@bing`/`@wiki` search shortcuts, typed-history);
+Ctrl+K is a filterable switcher over open pages. Bookmarks (Ctrl+D/B),
+downloads (Ctrl+J, to `~/Downloads`, desktop notification on
+completion), and real browsing history (Ctrl+H, day/site grouping)
+each have their own list page. A page opening a link in a new
+tab/window spawns a canvas page instead of a native popup window.
+Ctrl+Shift+C copies the focused page's URL — there's no address bar to
+select it from. F1 (or Ctrl+/) shows every shortcut.
+
+Ad/tracker request blocking (~55 known ad-serving/tracking domains,
+matched at the request level, not just navigation) is on by default.
+Settings (Ctrl+,): toggle it, pick a default search engine, add your
+own extra blocked hosts on top of the built-in list, or switch the UI
+theme directly instead of cycling it.
 
 Every list page (bookmarks/downloads/history/workspaces/switcher)
 shares the same row-highlight keyboard nav — ArrowUp/ArrowDown moves a
@@ -91,7 +99,8 @@ rather than fixed upstream:**
   Images lightbox) — a Chromium bug (`ReadAnythingSoftNavigationObserver`
   assuming a Tab exists, which a windowless/OSR embedding never has).
   Mitigated by `scripts/run.sh`, which auto-relaunches on crash and
-  restores the saved canvas.
+  restores the saved canvas — unlike Chrome's own per-tab process
+  isolation, this takes down the whole browser, not one tab.
 - CEF's own clipboard integration doesn't work at all in this
   windowless/OSR embedding (no real platform surface to claim OS
   clipboard ownership through — copied text never reached the system
@@ -99,10 +108,16 @@ rather than fixed upstream:**
   instead: a script injected into every page relays the 'copy' event's
   selection out to `wl-copy`; Ctrl+V is intercepted natively, reads
   `wl-paste` directly, and inserts via `execCommand('insertText', ...)`.
-
-Rendering via CEF's CPU OSR path, not the GPU shared-texture path yet
-(blocked on a hybrid-GPU cross-device import issue — see code comments
-in `cef-bridge/src/render.rs` for details).
+- Rendering via CEF's CPU OSR path, not the GPU shared-texture path yet
+  (blocked on a hybrid-GPU cross-device import issue — see code
+  comments in `cef-bridge/src/render.rs` for details).
+- No extensions (no plugin host at all yet), no sync across devices, no
+  password manager or form autofill, no DevTools panel in the UI.
+- No find-in-page (Ctrl+F) — built once, reverted as too buggy, not
+  currently supported. No full-text search across browsing history,
+  bookmark import/export, tab groups, reading list, or a built-in PDF
+  viewer either.
+- Linux x86_64 only.
 
 ## Build
 

@@ -102,6 +102,19 @@ pub fn handle(
             paste_into_focused(session);
             true
         }
+        // Plain Ctrl+C is deliberately left unhandled (falls through to
+        // the page itself) — it's already how in-page text selection
+        // gets copied, via clipboard_bridge's injected 'copy' listener.
+        // Shift disambiguates a *different* action on the same physical
+        // key, same convention as every other Shift-shared binding here.
+        PhysicalKey::Code(KeyCode::KeyC) => {
+            if modifiers.shift_key() {
+                copy_focused_url(session);
+                true
+            } else {
+                false
+            }
+        }
         // Page content zoom (CEF's own zoom_level), distinct from
         // Ctrl+Space's canvas-rect zoom below. Equal shares its physical
         // key with `+` on a US layout, matching every browser's Ctrl+=
@@ -261,6 +274,23 @@ fn paste_into_focused(session: &Session) {
             clipboard_bridge::js_literal(&text)
         );
         frame.execute_java_script(Some(&script.as_str().into()), Some(&"".into()), 0);
+    }
+}
+
+/// Ctrl+Shift+C: copies the focused (topmost) page's current URL to the
+/// system clipboard — there's no address bar to select it from at all
+/// (see the Settings page's title/URL label toggle for the other half
+/// of that gap), so this is the only way to grab it without going
+/// through the page's own UI. Same `wl-copy` mechanism as
+/// clipboard_bridge's in-page copy bridge, just triggered from the
+/// canvas instead of a page's own 'copy' event.
+fn copy_focused_url(session: &Session) {
+    let Some(page) = session.pages().last() else {
+        return;
+    };
+    let url = page.url();
+    if let Err(e) = std::process::Command::new("wl-copy").arg(&url).spawn() {
+        log::warn!("wl-copy failed (couldn't copy page URL): {e}");
     }
 }
 

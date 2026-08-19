@@ -62,7 +62,7 @@ pub(crate) fn page_url(theme: &Theme, downloads: &[DownloadRecord]) -> String {
     }
 
     format!(
-        "data:text/html,{nav_script}\
+        "data:text/html;charset=utf-8,{nav_script}\
          <style>.dl-row:hover,.dl-row.list-active{{background:{key_bg}!important}}\
          .dl-row:hover span,.dl-row.list-active span{{color:{key_fg}!important}}\
          {icon_hover}</style>\

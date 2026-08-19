@@ -137,7 +137,7 @@ pub(crate) fn page_url(theme: &Theme, history: &[HistoryEntry]) -> String {
     // unaffected: that `#` would only be a problem if it appeared in
     // the URL's actual text, not inside a JS string literal.
     format!(
-        "data:text/html,{script}{nav_script}\
+        "data:text/html;charset=utf-8,{script}{nav_script}\
          <style>\
          .hist-row:hover,.hist-row.list-active{{background:{key_bg}!important}}\
          .hist-row:hover span,.hist-row.list-active span{{color:{key_fg}!important}}\
