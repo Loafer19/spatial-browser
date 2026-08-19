@@ -37,6 +37,11 @@ pub(crate) fn page_url(theme: &Theme, bookmarks: &[Bookmark]) -> String {
             folders.push(folder);
         }
     }
+    // `Option<&str>`'s own Ord already does exactly what's wanted here:
+    // `None` sorts before every `Some`, so ungrouped bookmarks always
+    // render first, and the named folders after it sort alphabetically
+    // (comparing their `&str` contents) rather than by first appearance.
+    folders.sort();
 
     for folder in folders {
         if let Some(name) = folder {

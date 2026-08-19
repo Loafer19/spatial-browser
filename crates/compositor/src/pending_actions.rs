@@ -21,6 +21,7 @@ use crate::persistence::{
     workspaces::{self, Workspace, WorkspacePage},
 };
 use crate::session::Session;
+use crate::userscripts::{self, UserScript};
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 use cef_bridge::{
     BookmarkAction, DownloadPageAction, HistoryPageAction, SettingsPageAction, WorkspacePageAction,
@@ -51,6 +52,7 @@ pub fn apply(
     history: &mut Vec<HistoryEntry>,
     workspaces: &mut Vec<Workspace>,
     settings: &mut AppSettings,
+    userscripts: &[UserScript],
 ) {
     // Set by cef-bridge's OsrRequestHandler when a click or form submit
     // inside the bookmarks-list page (hotkeys::open_bookmarks) hits one
@@ -228,15 +230,17 @@ pub fn apply(
     }
 
     // Appended by cef-bridge's OsrLoadHandler for every completed
-    // top-level navigation. Two things happen for each: the copy-bridge
-    // script gets (re-)injected, since a full navigation wipes whatever
-    // a previous injection put in the page's DOM (see
+    // top-level navigation. Three things happen for each: the
+    // copy-bridge script gets (re-)injected, since a full navigation
+    // wipes whatever a previous injection put in the page's DOM (see
     // clipboard_bridge.rs — CEF's own clipboard integration doesn't
     // work at all in this windowless/OSR embedding, confirmed
-    // empirically); and, skipped for ephemeral pages (F1 help,
-    // bookmarks/downloads/history/workspace/settings lists, omnibox,
-    // switcher) since those aren't something the user navigated to
-    // themselves, the visit gets recorded into history.
+    // empirically); any userscript whose `@match` pattern fits this URL
+    // gets injected the same way (see userscripts.rs); and, skipped for
+    // ephemeral pages (F1 help, bookmarks/downloads/history/workspace/
+    // settings lists, omnibox, switcher) since those aren't something
+    // the user navigated to themselves, the visit gets recorded into
+    // history.
     let visits = PENDING_VISITS.with_borrow_mut(std::mem::take);
     for (browser_id, url) in visits {
         if let Some(page) = session
@@ -250,6 +254,11 @@ pub fn apply(
                     Some(&"".into()),
                     0,
                 );
+                if !page.ephemeral {
+                    for code in userscripts::matching(&url, userscripts) {
+                        frame.execute_java_script(Some(&code.into()), Some(&"".into()), 0);
+                    }
+                }
             }
             if !page.ephemeral {
                 history::record(history, &url, now_unix_secs());

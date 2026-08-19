@@ -24,6 +24,7 @@ use crate::persistence::{
     workspaces::{self, Workspace},
 };
 use crate::session::Session;
+use crate::userscripts;
 use crate::viewport::Viewport;
 use cef::{ImplBrowser, ImplBrowserHost};
 use cef_bridge::CURSOR;
@@ -70,6 +71,10 @@ pub struct App {
     // change — see `sync_blocklist_settings` below — since that's what
     // `on_before_resource_load` actually reads from, not this struct.
     settings: AppSettings,
+    // Loaded once at startup from ~/.config/spatial-browser/userscripts/
+    // — editing a script file needs a restart to take effect, no
+    // in-app editor or live-reload (see userscripts.rs's header).
+    userscripts: Vec<userscripts::UserScript>,
     mouse: MouseInput,
     keyboard: KeyboardInput,
     // Raw window-space physical cursor position — updated on every
@@ -135,6 +140,7 @@ impl Default for App {
             history: history::load(),
             workspaces: workspaces::load(),
             settings,
+            userscripts: userscripts::load(),
             mouse: MouseInput::default(),
             keyboard: KeyboardInput::default(),
             cursor_window: (0.0, 0.0),
@@ -466,6 +472,7 @@ impl ApplicationHandler for App {
                     &mut self.history,
                     &mut self.workspaces,
                     &mut self.settings,
+                    &self.userscripts,
                 );
 
                 if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {

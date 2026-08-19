@@ -22,6 +22,7 @@ mod pending_actions;
 mod persistence;
 mod session;
 mod single_instance;
+mod userscripts;
 mod viewport;
 
 use app::App;

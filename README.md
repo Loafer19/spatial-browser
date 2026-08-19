@@ -14,7 +14,14 @@ canvas instead of flat tabs, with its own bookmarks/history/downloads UI.
   loaded as ordinary CEF pages. Each one signals back to the compositor
   via a fake `whatever://...` URL, intercepted by `cef-bridge`'s
   `RequestHandler` (see `cef-bridge/src/navigation.rs`).
-- **Plugins:** planned, not started.
+- **Plugins:** real Chrome/WebExtension support isn't feasible on this
+  embedding — CEF's windowless/OSR (Alloy) bootstrap exposes zero
+  extension-loading API at all, confirmed by grepping the bound
+  functions. Instead, a Tampermonkey/Greasemonkey-style userscript
+  runner (`userscripts.rs`): drop a `.js` file with `// @match <url
+  pattern>` lines under `~/.config/spatial-browser/userscripts/`, it
+  gets injected into every matching page's load, same technique
+  `clipboard_bridge.rs`/`blocklist.rs` already use by hand.
 
 ## Layout
 
@@ -30,6 +37,8 @@ canvas instead of flat tabs, with its own bookmarks/history/downloads UI.
     routes raw window/input events) once it grew to hold both.
   - `clipboard_bridge.rs` — copy/paste (see Status: CEF's own clipboard
     doesn't work in this embedding at all).
+  - `userscripts.rs` — the Tampermonkey-style userscript runner (see
+    Architecture's Plugins entry).
   - `persistence/` — everything under `~/.config/spatial-browser/`,
     one JSON file per concern (session, bookmarks, downloads, history,
     typed-omnibox input, workspaces).
@@ -60,8 +69,14 @@ select it from. F1 (or Ctrl+/) shows every shortcut.
 Ad/tracker request blocking (~55 known ad-serving/tracking domains,
 matched at the request level, not just navigation) is on by default.
 Settings (Ctrl+,): toggle it, pick a default search engine, add your
-own extra blocked hosts on top of the built-in list, or switch the UI
-theme directly instead of cycling it.
+own extra blocked hosts on top of the built-in list, switch the UI
+theme directly instead of cycling it, or pick a target frame rate
+(60/90/120 — a monitor's own max refresh rate is still the real
+ceiling either way).
+
+`crates/import-chrome` is a standalone one-time CLI: reads Chrome's own
+Bookmarks file and merges the entries into this browser's
+`bookmarks.json`, preserving existing ones — no ongoing sync.
 
 Every list page (bookmarks/downloads/history/workspaces/switcher)
 shares the same row-highlight keyboard nav — ArrowUp/ArrowDown moves a

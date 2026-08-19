@@ -1,13 +1,18 @@
 // One-time migration: read Chrome's Bookmarks JSON and merge the entries
 // into spatial-browser's own bookmarks.json, preserving existing bookmarks.
 //
-// Chrome stores bookmarks as a tree of arbitrary depth. This tool flattens
-// that tree into the existing flat `folder: Option<String>` scheme by joining
-// ancestor folder names with `/`:
+// Chrome stores bookmarks as a tree of arbitrary depth, under three fixed
+// roots ("Bookmarks bar", "Other bookmarks", "Mobile bookmarks"/"synced").
+// This tool flattens that tree into the existing flat `folder: Option<String>`
+// scheme by joining ancestor folder names with `/`, *excluding* whichever of
+// the three roots a bookmark happens to live under — that's Chrome's own
+// top-level organization, not a folder the user actually created, and
+// including it put a literal "Bookmarks bar/" (or worse, "Bookmarks bar"
+// with nothing else) on every single imported bookmark:
 //
-//   Bookmarks bar / Work / Project  →  folder = "Bookmarks bar/Work/Project"
-//   Bookmarks bar / Work            →  folder = "Bookmarks bar/Work"
-//   (root level with no parents)    →  folder = None
+//   Bookmarks bar / Work / Project  →  folder = "Work/Project"
+//   Bookmarks bar / Work            →  folder = "Work"
+//   Bookmarks bar (no subfolder)    →  folder = None
 //
 // This means the existing bookmarks.json format and all compositor code that
 // reads it are unchanged — no schema migration, no UI changes needed.
@@ -93,10 +98,7 @@ fn collect(node: &ChromeNode, parent_path: &str, out: &mut Vec<Bookmark>) {
             }
         }
         "folder" => {
-            // Build the path component for this folder's children. The root
-            // nodes fed in from main() already carry meaningful display names
-            // ("Bookmarks bar", "Other bookmarks", "Mobile bookmarks"), so we
-            // always include them rather than skipping the first level.
+            // Build the path component for this folder's children.
             let child_path = if parent_path.is_empty() {
                 node.name.clone()
             } else {
@@ -137,21 +139,24 @@ fn main() -> Result<()> {
         .unwrap_or_else(default_output_path);
 
     // Read Chrome bookmarks.
-    let chrome_bytes =
-        std::fs::read(&chrome_path).with_context(|| format!("reading {}", chrome_path.display()))?;
+    let chrome_bytes = std::fs::read(&chrome_path)
+        .with_context(|| format!("reading {}", chrome_path.display()))?;
     let chrome: ChromeBookmarksFile = serde_json::from_slice(&chrome_bytes)
         .with_context(|| format!("parsing {}", chrome_path.display()))?;
 
-    // Collect all bookmarks from all three roots. The root nodes themselves
-    // are treated as folders, so their names ("Bookmarks bar", etc.) appear
-    // at the start of the path for their children.
+    // Collect all bookmarks from all three roots — starting each one's
+    // *children* at an empty path rather than calling `collect` on the root
+    // itself, so none of the three roots' own names ("Bookmarks bar", etc.)
+    // end up as part of any folder path (see this file's header comment).
     let mut imported: Vec<Bookmark> = Vec::new();
     for root in [
         &chrome.roots.bookmark_bar,
         &chrome.roots.other,
         &chrome.roots.synced,
     ] {
-        collect(root, "", &mut imported);
+        for child in &root.children {
+            collect(child, "", &mut imported);
+        }
     }
 
     eprintln!(
