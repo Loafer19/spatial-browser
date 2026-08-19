@@ -1,15 +1,18 @@
 // Custom-scheme interception: every generated list page (bookmarks,
-// omnibox, the page switcher, downloads, history) signals an action
-// back to the compositor by navigating to a fake `whatever://...` URL
-// rather than a real one — `OsrRequestHandler::on_before_browse`
-// cancels that navigation and parses it into one of the types below,
-// left in a thread_local for the compositor's redraw handler to act on
-// (same shape for all five: `RefCell<Option<(browser_id, Action)>>`,
-// read+cleared once per frame). Grouped into one file, unlike the
-// other handlers here (one file each), because these aren't separate
-// CEF interfaces — they're all `RequestHandler::on_before_browse`,
-// dispatching on a URL prefix — and the whole point of a shared file is
-// that dispatch living next to every action it dispatches to.
+// omnibox, the page switcher, downloads, history, workspaces) signals
+// an action back to the compositor by navigating to a fake
+// `whatever://...` URL rather than a real one —
+// `OsrRequestHandler::on_before_browse` cancels that navigation and
+// parses it into one of the types below, left in a thread_local for
+// the compositor's redraw handler to act on (same shape for six of
+// them: `RefCell<Option<(browser_id, Action)>>`, read+cleared once per
+// frame — `clipboard://copy` is the exception, acted on immediately
+// right here since it needs no canvas/Session state at all). Grouped
+// into one file, unlike the other handlers here (one file each),
+// because these aren't separate CEF interfaces — they're all
+// `RequestHandler::on_before_browse`, dispatching on a URL prefix —
+// and the whole point of a shared file is that dispatch living next to
+// every action it dispatches to.
 
 use cef::{self, rc::Rc, *};
 use std::cell::RefCell;
@@ -191,6 +194,46 @@ fn parse_history_action(url: &str) -> Option<HistoryPageAction> {
     None
 }
 
+/// What the workspace-list page (compositor::hotkeys) asked for,
+/// parsed from a `workspace://...` link/form.
+pub enum WorkspacePageAction {
+    /// Replaces every currently open page with the ones saved in this
+    /// workspace.
+    Load(usize),
+    /// New display name.
+    Rename(usize, String),
+    Delete(usize),
+    /// Snapshots the current canvas (pages/viewport/theme) as a new
+    /// workspace entry.
+    SaveNew,
+}
+
+thread_local! {
+    // Same shape/reasoning as PENDING_BOOKMARK, for the workspace-list page.
+    pub static PENDING_WORKSPACE_ACTION: RefCell<Option<(i32, WorkspacePageAction)>> =
+        const { RefCell::new(None) };
+}
+
+fn parse_workspace_action(url: &str) -> Option<WorkspacePageAction> {
+    let rest = url.strip_prefix("workspace://")?;
+    if let Some(index) = rest.strip_prefix("load/") {
+        return index.parse().ok().map(WorkspacePageAction::Load);
+    }
+    if let Some(after) = rest.strip_prefix("rename/") {
+        let (index, query) = after.split_once('?').unwrap_or((after, ""));
+        let index = index.parse().ok()?;
+        let name = query_param(query, "name").unwrap_or_default();
+        return Some(WorkspacePageAction::Rename(index, name));
+    }
+    if let Some(index) = rest.strip_prefix("delete/") {
+        return index.parse().ok().map(WorkspacePageAction::Delete);
+    }
+    if rest == "save" {
+        return Some(WorkspacePageAction::SaveNew);
+    }
+    None
+}
+
 /// Parses a `clipboard://copy?text=...` navigation into the copied
 /// text — sent by the copy-bridge script every page has injected into
 /// it (compositor::clipboard_bridge), since CEF's windowless/OSR
@@ -253,6 +296,10 @@ wrap_request_handler! {
             }
             if let Some(action) = parse_history_action(&url) {
                 PENDING_HISTORY_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
+                return true as _;
+            }
+            if let Some(action) = parse_workspace_action(&url) {
+                PENDING_WORKSPACE_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
                 return true as _;
             }
             if let Some(text) = parse_clipboard_copy(&url) {

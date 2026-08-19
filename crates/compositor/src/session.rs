@@ -50,6 +50,14 @@ impl Session {
         self.viewport
     }
 
+    /// Replaces the whole viewport outright (pan+zoom together) — for
+    /// loading a saved workspace snapshot, as opposed to
+    /// `pan_viewport_to`/`zoom_viewport_at`'s incremental adjustments.
+    pub fn set_viewport(&mut self, viewport: Viewport) {
+        self.viewport = viewport;
+        self.mark_dirty();
+    }
+
     /// A rect for a newly spawned page with no better anchor (a fresh
     /// omnibox/bookmark-open/popup-with-no-known-opener page): cascaded
     /// a bit further each time so it doesn't land exactly on the last
@@ -109,19 +117,26 @@ impl Session {
     }
 
     /// Pops the topmost page and tells CEF to close it, if any. Its rect
-    /// and current URL are kept for `pop_closed` (Ctrl+Shift+T) first.
+    /// and current URL are kept for `pop_closed` (Ctrl+Shift+T) first —
+    /// unless it's an ephemeral utility page (bookmarks/history/
+    /// workspace list, etc.): those are generated `data:` blobs, not
+    /// something a user would ever want "reopened" via undo (this is the
+    /// same class of bug bookmark_focused already guards against for
+    /// Ctrl+D).
     pub fn close_topmost(&mut self) {
         let Some(page) = self.pages.pop() else {
             return;
         };
-        if let Some(url) = page
-            .browser
-            .main_frame()
-            .map(|frame| cef::CefString::from(&frame.url()).to_string())
-        {
-            self.closed.push((page.rect, url));
-            if self.closed.len() > MAX_CLOSED {
-                self.closed.remove(0);
+        if !page.ephemeral {
+            if let Some(url) = page
+                .browser
+                .main_frame()
+                .map(|frame| cef::CefString::from(&frame.url()).to_string())
+            {
+                self.closed.push((page.rect, url));
+                if self.closed.len() > MAX_CLOSED {
+                    self.closed.remove(0);
+                }
             }
         }
         if let Some(host) = page.browser.host() {

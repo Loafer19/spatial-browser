@@ -21,11 +21,16 @@ canvas instead of flat tabs, with its own bookmarks/history/downloads UI.
   - `hotkeys.rs` — canvas-level shortcuts, grouped Pages / Lists /
     Canvas / Other.
   - `pages/` — generated `data:` HTML for each list/prompt page.
+  - `pending_actions.rs` — drains the `PENDING_*` queues cef-bridge's
+    CEF callbacks fill (bookmark/downloads/history/workspace list
+    clicks, omnibox/switcher submissions, popups, completed
+    downloads/visits) once a frame; split out of `app.rs` (which only
+    routes raw window/input events) once it grew to hold both.
   - `clipboard_bridge.rs` — copy/paste (see Status: CEF's own clipboard
     doesn't work in this embedding at all).
   - `persistence/` — everything under `~/.config/spatial-browser/`,
     one JSON file per concern (session, bookmarks, downloads, history,
-    typed-omnibox input).
+    typed-omnibox input, workspaces).
   - `session.rs`, `viewport.rs`, `browser.rs`, `input/`, `output/` —
     canvas state, world/screen mapping, CEF page spawning, input
     forwarding, wgpu pipeline.
@@ -47,6 +52,13 @@ switcher over open pages. Bookmarks (Ctrl+D/B), downloads (Ctrl+J, to
 browsing history (Ctrl+H, day/site grouping) each have their own list
 page. A page opening a link in a new tab/window spawns a canvas page
 instead of a native popup window.
+
+Workspaces (Ctrl+Shift+W): named save points for the whole canvas —
+save snapshots every open page's URL/rect plus the current
+viewport/theme as a new entry; load closes everything currently open
+and reopens exactly what was saved (a "load a save file" model, not a
+live auto-synced workspace). Renameable inline, deletable, persisted
+to `workspaces.json`.
 
 All pages share one persistent CEF profile (`~/.config/spatial-browser/
 cef_data`) — cookies/logins carry over between tabs of the same site

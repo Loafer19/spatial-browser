@@ -10,26 +10,22 @@
 // session.rs, persisted via persistence/mod.rs.
 
 use crate::browser::{self, Page};
-use crate::clipboard_bridge;
 use crate::hotkeys;
 use crate::input::{KeyboardInput, MouseInput};
 use crate::output::{FrameOutcome, GpuState, PageDraw, Rect, THEMES};
-use crate::pages;
+use crate::pending_actions;
 use crate::persistence::{
     self,
     bookmarks::{self, Bookmark},
     downloads::{self, DownloadRecord},
     history::{self, HistoryEntry},
     typed_history,
+    workspaces::{self, Workspace},
 };
 use crate::session::Session;
 use crate::viewport::Viewport;
-use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
-use cef_bridge::{
-    BookmarkAction, DownloadPageAction, HistoryPageAction, CURSOR, PENDING_BOOKMARK,
-    PENDING_DOWNLOADS, PENDING_DOWNLOAD_ACTION, PENDING_HISTORY_ACTION, PENDING_OMNIBOX,
-    PENDING_POPUPS, PENDING_SWITCH, PENDING_VISITS,
-};
+use cef::{ImplBrowser, ImplBrowserHost};
+use cef_bridge::CURSOR;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::{
@@ -61,6 +57,11 @@ pub struct App {
     // Loaded once at startup from history.json, saved immediately on
     // every completed page visit (see PENDING_VISITS handling below).
     history: Vec<HistoryEntry>,
+    // Loaded once at startup from workspaces.json, saved immediately on
+    // every save/rename/delete (see PENDING_WORKSPACE_ACTION handling
+    // below) — rare, deliberate actions, no need for the canvas
+    // session's debounce.
+    workspaces: Vec<Workspace>,
     mouse: MouseInput,
     keyboard: KeyboardInput,
     // Raw window-space physical cursor position — updated on every
@@ -111,6 +112,7 @@ impl Default for App {
             typed_history: typed_history::load(),
             downloads: downloads::load(),
             history: history::load(),
+            workspaces: workspaces::load(),
             mouse: MouseInput::default(),
             keyboard: KeyboardInput::default(),
             cursor_window: (0.0, 0.0),
@@ -151,90 +153,6 @@ fn resize_hit_test(
 /// Topmost page (last in z-order) whose rect contains the point, if any.
 fn hit_test(pages: &[Page], x: f32, y: f32) -> Option<usize> {
     pages.iter().rposition(|p| p.rect.contains(x, y))
-}
-
-/// Replaces the bookmarks-list page identified by `browser_id` (CEF's
-/// own per-browser id) with a fresh one at the same rect, if it's still
-/// open — used after a delete/rename so the list reflects the change
-/// without the user having to close and reopen it themselves. Closes and
-/// respawns rather than `load_url` in place: a navigation issued right
-/// after CEF just canceled one on that same frame isn't reliable. A free
-/// function, not an App method: `self.state` is already mutably borrowed
-/// as `state` for most of `window_event`, so this only takes the
-/// specific fields it needs.
-fn refresh_bookmarks_page(
-    session: &mut Session,
-    gpu: &GpuState,
-    bookmarks: &[Bookmark],
-    browser_id: i32,
-) {
-    let Some(index) = session
-        .pages()
-        .iter()
-        .position(|p| p.browser.identifier() == browser_id)
-    else {
-        return;
-    };
-    let Some(rect) = session.close_at(index) else {
-        return;
-    };
-    let url = pages::bookmarks_list::page_url(&session.theme(), bookmarks);
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
-}
-
-/// Same as `refresh_bookmarks_page`, for the downloads-list page after
-/// a remove.
-fn refresh_downloads_page(
-    session: &mut Session,
-    gpu: &GpuState,
-    downloads: &[DownloadRecord],
-    browser_id: i32,
-) {
-    let Some(index) = session
-        .pages()
-        .iter()
-        .position(|p| p.browser.identifier() == browser_id)
-    else {
-        return;
-    };
-    let Some(rect) = session.close_at(index) else {
-        return;
-    };
-    let url = pages::downloads_list::page_url(&session.theme(), downloads);
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
-}
-
-/// Same as `refresh_bookmarks_page`, for the history-list page after a
-/// remove/clear.
-fn refresh_history_page(
-    session: &mut Session,
-    gpu: &GpuState,
-    history: &[HistoryEntry],
-    browser_id: i32,
-) {
-    let Some(index) = session
-        .pages()
-        .iter()
-        .position(|p| p.browser.identifier() == browser_id)
-    else {
-        return;
-    };
-    let Some(rect) = session.close_at(index) else {
-        return;
-    };
-    let url = pages::history_list::page_url(&session.theme(), history);
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
-}
-
-/// Seconds since the Unix epoch, UTC — used to stamp a new history
-/// entry (see PENDING_VISITS handling below). `UNIX_EPOCH` is always in
-/// the past on any correctly set clock, so the `unwrap` only panics on
-/// a system clock set before 1970.
-fn now_unix_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
 }
 
 impl ApplicationHandler for App {
@@ -498,6 +416,7 @@ impl ApplicationHandler for App {
                     &self.typed_history,
                     &self.downloads,
                     &self.history,
+                    &self.workspaces,
                 ) {
                     return;
                 }
@@ -515,307 +434,15 @@ impl ApplicationHandler for App {
                     }
                 }
 
-                // Set by cef-bridge's OsrRequestHandler when a click or
-                // form submit inside the bookmarks-list page
-                // (hotkeys::open_bookmarks) hits one of its
-                // `bookmark://...` links — that navigation was already
-                // canceled there; act on it here instead. `browser_id`
-                // identifies exactly which bookmarks-list page asked, so
-                // delete/rename can reload that same page in place
-                // rather than guessing which open page (if any) it was.
-                if let Some((browser_id, action)) =
-                    PENDING_BOOKMARK.with_borrow_mut(|pending| pending.take())
-                {
-                    match action {
-                        BookmarkAction::Open(index) => {
-                            if let Some(bookmark) = self.bookmarks.get(index) {
-                                let size = state.window.inner_size();
-                                let rect = self
-                                    .session
-                                    .cascade_rect((size.width as f32, size.height as f32));
-                                self.session.add_page(browser::spawn(
-                                    state,
-                                    &state.window,
-                                    &bookmark.url,
-                                    rect,
-                                    false,
-                                ));
-                            }
-                        }
-                        BookmarkAction::Delete(index) => {
-                            if index < self.bookmarks.len() {
-                                self.bookmarks.remove(index);
-                                bookmarks::save(&self.bookmarks);
-                            }
-                            refresh_bookmarks_page(
-                                &mut self.session,
-                                state,
-                                &self.bookmarks,
-                                browser_id,
-                            );
-                        }
-                        BookmarkAction::Rename(index, title, folder) => {
-                            if let Some(bookmark) = self.bookmarks.get_mut(index) {
-                                bookmark.title = (!title.is_empty()).then_some(title);
-                                bookmark.folder = (!folder.is_empty()).then_some(folder);
-                            }
-                            bookmarks::save(&self.bookmarks);
-                            refresh_bookmarks_page(
-                                &mut self.session,
-                                state,
-                                &self.bookmarks,
-                                browser_id,
-                            );
-                        }
-                    }
-                }
-
-                // Set by cef-bridge's OsrRequestHandler when the omnibox
-                // page (hotkeys::open_new / omnibox_page_url) submits an
-                // `omnibox://go?q=...&url=...` — that navigation was
-                // already canceled there. Log the raw typed text, then
-                // replace the omnibox page with a real one at the
-                // resolved destination (close+respawn rather than
-                // `load_url` in place, same reliability reason as
-                // refresh_bookmarks_page).
-                if let Some((browser_id, submit)) =
-                    PENDING_OMNIBOX.with_borrow_mut(|pending| pending.take())
-                {
-                    typed_history::record(&mut self.typed_history, &submit.raw);
-                    if let Some(index) = self
-                        .session
-                        .pages()
-                        .iter()
-                        .position(|p| p.browser.identifier() == browser_id)
-                    {
-                        if let Some(rect) = self.session.close_at(index) {
-                            self.session.add_page(browser::spawn(
-                                state,
-                                &state.window,
-                                &submit.url,
-                                rect,
-                                false,
-                            ));
-                        }
-                    }
-                }
-
-                // Set by cef-bridge's OsrRequestHandler when a row click
-                // or Enter inside the switcher page (hotkeys::
-                // open_switcher) hits a `switcher://go/{id}` link — that
-                // navigation was already canceled there. Bring the
-                // target page to front and pan it to screen center (kept
-                // at the current zoom level), then close the switcher
-                // page — a permanent close, not through the closed-page
-                // undo stack (pop_closed): this isn't a user-initiated
-                // close of *their* content.
-                if let Some((switcher_id, target_id)) =
-                    PENDING_SWITCH.with_borrow_mut(|pending| pending.take())
-                {
-                    if let Some(target_index) = self
-                        .session
-                        .pages()
-                        .iter()
-                        .position(|p| p.browser.identifier() == target_id)
-                    {
-                        self.session.bring_to_front(target_index);
-                        let rect = self
-                            .session
-                            .pages()
-                            .last()
-                            .expect("just brought a page to front")
-                            .rect;
-                        let viewport = self.session.viewport();
-                        let size = state.window.inner_size();
-                        let screen_center = (size.width as f32 / 2.0, size.height as f32 / 2.0);
-                        let world_center = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
-                        self.session.pan_viewport_to((
-                            world_center.0 - screen_center.0 / viewport.zoom,
-                            world_center.1 - screen_center.1 / viewport.zoom,
-                        ));
-                    }
-                    if let Some(switcher_index) = self
-                        .session
-                        .pages()
-                        .iter()
-                        .position(|p| p.browser.identifier() == switcher_id)
-                    {
-                        self.session.close_at(switcher_index);
-                    }
-                }
-
-                // Appended by cef-bridge's OsrDownloadHandler the first
-                // time a download reports complete. Record each into
-                // downloads.json and fire a desktop notification —
-                // there's no in-canvas download UI (progress bar,
-                // toast): a system notification is visible regardless of
-                // window focus/workspace, and needs no native GPU text
-                // rendering the way an in-canvas toast would.
-                let completed = PENDING_DOWNLOADS.with_borrow_mut(std::mem::take);
-                for download in completed {
-                    let filename = std::path::Path::new(&download.path)
-                        .file_name()
-                        .and_then(|f| f.to_str())
-                        .unwrap_or(&download.path)
-                        .to_string();
-                    downloads::record(
-                        &mut self.downloads,
-                        DownloadRecord {
-                            url: download.url,
-                            path: download.path,
-                        },
-                    );
-                    if let Err(e) = std::process::Command::new("notify-send")
-                        .arg("Download complete")
-                        .arg(&filename)
-                        .spawn()
-                    {
-                        log::warn!("notify-send failed (download {filename:?} still saved): {e}");
-                    }
-                }
-
-                // Set by cef-bridge's OsrRequestHandler when a click
-                // inside the downloads-list page (hotkeys::
-                // open_downloads) hits a `download://...` link — that
-                // navigation was already canceled there.
-                if let Some((browser_id, action)) =
-                    PENDING_DOWNLOAD_ACTION.with_borrow_mut(|pending| pending.take())
-                {
-                    match action {
-                        DownloadPageAction::Open(index) => {
-                            if let Some(download) = self.downloads.get(index) {
-                                if let Err(e) = std::process::Command::new("xdg-open")
-                                    .arg(&download.path)
-                                    .spawn()
-                                {
-                                    log::warn!("xdg-open failed for {:?}: {e}", download.path);
-                                }
-                            }
-                        }
-                        DownloadPageAction::Remove(index) => {
-                            if index < self.downloads.len() {
-                                self.downloads.remove(index);
-                                downloads::save(&self.downloads);
-                            }
-                            refresh_downloads_page(
-                                &mut self.session,
-                                state,
-                                &self.downloads,
-                                browser_id,
-                            );
-                        }
-                    }
-                }
-
-                // Appended by cef-bridge's OsrLifeSpanHandler when a page
-                // tries to open a link in a new tab/window
-                // (target="_blank", window.open, middle-click) — canceled
-                // there so CEF doesn't spawn its own native popup window
-                // outside the canvas. Spawn a regular Page instead,
-                // cascaded from the opener's rect if it's still open.
-                let popups = PENDING_POPUPS.with_borrow_mut(std::mem::take);
-                for (opener_id, url) in popups {
-                    let opener_rect = self
-                        .session
-                        .pages()
-                        .iter()
-                        .find(|p| p.browser.identifier() == opener_id)
-                        .map(|p| p.rect);
-                    let size = state.window.inner_size();
-                    let rect = match opener_rect {
-                        Some(r) => Rect {
-                            x: r.x + 40.0,
-                            y: r.y + 40.0,
-                            w: r.w,
-                            h: r.h,
-                        },
-                        None => self
-                            .session
-                            .cascade_rect((size.width as f32, size.height as f32)),
-                    };
-                    self.session
-                        .add_page(browser::spawn(state, &state.window, &url, rect, false));
-                }
-
-                // Appended by cef-bridge's OsrLoadHandler for every
-                // completed top-level navigation. Two things happen for
-                // each: the copy-bridge script gets (re-)injected, since
-                // a full navigation wipes whatever a previous injection
-                // put in the page's DOM (see clipboard_bridge.rs — CEF's
-                // own clipboard integration doesn't work at all in this
-                // windowless/OSR embedding, confirmed empirically); and,
-                // skipped for ephemeral pages (F1 help,
-                // bookmarks/downloads/history lists, omnibox, switcher)
-                // since those aren't something the user navigated to
-                // themselves, the visit gets recorded into history.
-                let visits = PENDING_VISITS.with_borrow_mut(std::mem::take);
-                for (browser_id, url) in visits {
-                    if let Some(page) = self
-                        .session
-                        .pages()
-                        .iter()
-                        .find(|p| p.browser.identifier() == browser_id)
-                    {
-                        if let Some(frame) = page.browser.main_frame() {
-                            frame.execute_java_script(
-                                Some(&clipboard_bridge::COPY_BRIDGE_SCRIPT.into()),
-                                Some(&"".into()),
-                                0,
-                            );
-                        }
-                        if !page.ephemeral {
-                            history::record(&mut self.history, &url, now_unix_secs());
-                        }
-                    }
-                }
-
-                // Set by cef-bridge's OsrRequestHandler when a click
-                // inside the history-list page (hotkeys::open_history)
-                // hits a `history://...` link — that navigation was
-                // already canceled there.
-                if let Some((browser_id, action)) =
-                    PENDING_HISTORY_ACTION.with_borrow_mut(|pending| pending.take())
-                {
-                    match action {
-                        HistoryPageAction::Open(index) => {
-                            if let Some(entry) = self.history.get(index) {
-                                let size = state.window.inner_size();
-                                let rect = self
-                                    .session
-                                    .cascade_rect((size.width as f32, size.height as f32));
-                                self.session.add_page(browser::spawn(
-                                    state,
-                                    &state.window,
-                                    &entry.url,
-                                    rect,
-                                    false,
-                                ));
-                            }
-                        }
-                        HistoryPageAction::Remove(index) => {
-                            if index < self.history.len() {
-                                self.history.remove(index);
-                                history::save(&self.history);
-                            }
-                            refresh_history_page(
-                                &mut self.session,
-                                state,
-                                &self.history,
-                                browser_id,
-                            );
-                        }
-                        HistoryPageAction::Clear => {
-                            self.history.clear();
-                            history::save(&self.history);
-                            refresh_history_page(
-                                &mut self.session,
-                                state,
-                                &self.history,
-                                browser_id,
-                            );
-                        }
-                    }
-                }
+                pending_actions::apply(
+                    &mut self.session,
+                    state,
+                    &mut self.bookmarks,
+                    &mut self.typed_history,
+                    &mut self.downloads,
+                    &mut self.history,
+                    &mut self.workspaces,
+                );
 
                 if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {
                     self.cef_cursor = icon;

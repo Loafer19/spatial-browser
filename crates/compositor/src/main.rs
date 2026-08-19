@@ -18,6 +18,7 @@ mod hotkeys;
 mod input;
 mod output;
 mod pages;
+mod pending_actions;
 mod persistence;
 mod session;
 mod single_instance;
