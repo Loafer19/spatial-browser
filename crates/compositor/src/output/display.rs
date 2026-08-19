@@ -6,6 +6,7 @@
 use super::theme::Theme;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Instant;
 use winit::window::Window;
 
 #[repr(C)]
@@ -67,11 +68,13 @@ impl Rect {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct PageStyleUniform {
-    // xy = page size in pixels, z = corner radius, w = focus border width
+    // xy = page size in pixels, z = corner radius, w unused
     size_radius: [f32; 4],
-    border_color: [f32; 4],
-    // x = 1.0 if focused, 0.0 otherwise; yzw unused
-    focused: [f32; 4],
+    focus_border_color: [f32; 4],
+    unfocused_border_color: [f32; 4],
+    // x = 1.0 if focused else 0.0, y = focus border width,
+    // z = unfocused border width, w = unfocused dim factor
+    flags: [f32; 4],
 }
 
 /// One page's on-GPU quad geometry and chrome style (rounded corners,
@@ -105,8 +108,9 @@ impl PageQuad {
             // page, so the initial border color here doesn't matter.
             contents: bytemuck::cast_slice(&[PageStyleUniform {
                 size_radius: [0.0; 4],
-                border_color: [0.0; 4],
-                focused: [0.0; 4],
+                focus_border_color: [0.0; 4],
+                unfocused_border_color: [0.0; 4],
+                flags: [0.0; 4],
             }]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -132,6 +136,7 @@ impl PageQuad {
         rect: Rect,
         viewport: (f32, f32),
         focused: bool,
+        is_loading: bool,
         theme: &Theme,
     ) {
         let (vw, vh) = viewport;
@@ -168,10 +173,16 @@ impl PageQuad {
                     rect.w,
                     rect.h,
                     theme.corner_radius,
-                    theme.focus_border_width,
+                    if is_loading { 1.0 } else { 0.0 },
                 ],
-                border_color: theme.focus_border_color,
-                focused: [if focused { 1.0 } else { 0.0 }; 4],
+                focus_border_color: theme.focus_border_color,
+                unfocused_border_color: theme.unfocused_border_color,
+                flags: [
+                    if focused { 1.0 } else { 0.0 },
+                    theme.focus_border_width,
+                    theme.unfocused_border_width,
+                    theme.unfocused_dim,
+                ],
             }]),
         );
     }
@@ -196,6 +207,23 @@ pub struct GpuState {
     pipeline: wgpu::RenderPipeline,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pub style_bind_group_layout: wgpu::BindGroupLayout,
+    // Stand-in for group 0 (texture+sampler) on a page with no CEF frame
+    // yet — the pipeline layout requires *something* bound there even
+    // though the loading-placeholder fragment path (shader.wgsl) never
+    // samples it.
+    placeholder_bind_group: wgpu::BindGroup,
+    // Elapsed-seconds uniform shared by every page this frame, purely to
+    // drive the loading-placeholder pulse — its own bind group rather
+    // than duplicated per-page style data.
+    frame_globals_buffer: wgpu::Buffer,
+    frame_globals_bind_group: wgpu::BindGroup,
+    start: Instant,
+    // The dot-grid background (background.wgsl): its own pipeline since
+    // it's a fullscreen triangle with no vertex buffer and a different
+    // uniform shape, not a variant of the page-quad pipeline.
+    background_pipeline: wgpu::RenderPipeline,
+    background_buffer: wgpu::Buffer,
+    background_bind_group: wgpu::BindGroup,
 }
 
 impl GpuState {
@@ -305,6 +333,71 @@ impl GpuState {
                 }],
             });
 
+        // Group 2 for the page-quad pipeline: elapsed time, shared by
+        // every page, used only to animate the loading-placeholder pulse.
+        let frame_globals_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Frame Globals Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let frame_globals_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Frame Globals Buffer"),
+            size: std::mem::size_of::<[f32; 4]>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let frame_globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Frame Globals Bind Group"),
+            layout: &frame_globals_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: frame_globals_buffer.as_entire_binding(),
+            }],
+        });
+
+        // A 1x1 opaque texture bound in place of a loading page's (still
+        // absent) real one — see `placeholder_bind_group`'s field comment.
+        let placeholder_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Placeholder Texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let placeholder_view =
+            placeholder_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let placeholder_sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
+        let placeholder_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Placeholder Bind Group"),
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&placeholder_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&placeholder_sampler),
+                },
+            ],
+        });
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Page Quad Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
@@ -315,6 +408,7 @@ impl GpuState {
             bind_group_layouts: &[
                 Some(&texture_bind_group_layout),
                 Some(&style_bind_group_layout),
+                Some(&frame_globals_bind_group_layout),
             ],
             immediate_size: 0,
         });
@@ -362,6 +456,83 @@ impl GpuState {
             cache: None,
         });
 
+        let background_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Background Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let background_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Background Globals Buffer"),
+            size: std::mem::size_of::<[[f32; 4]; 3]>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let background_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Background Bind Group"),
+            layout: &background_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: background_buffer.as_entire_binding(),
+            }],
+        });
+
+        let background_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Background Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("background.wgsl").into()),
+        });
+        let background_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Background Pipeline Layout"),
+                bind_group_layouts: &[Some(&background_bind_group_layout)],
+                immediate_size: 0,
+            });
+        let background_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Background Pipeline"),
+            layout: Some(&background_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &background_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &background_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview_mask: None,
+            cache: None,
+        });
+
         Self {
             surface,
             device,
@@ -370,6 +541,13 @@ impl GpuState {
             window,
             pipeline,
             texture_bind_group_layout,
+            placeholder_bind_group,
+            frame_globals_buffer,
+            frame_globals_bind_group,
+            start: Instant::now(),
+            background_pipeline,
+            background_buffer,
+            background_bind_group,
             style_bind_group_layout,
         }
     }
@@ -383,8 +561,18 @@ impl GpuState {
         self.surface.configure(&self.device, &self.config);
     }
 
-    /// Draws `pages` in the given order (back-to-front — last is topmost).
-    pub fn render(&mut self, pages: &[PageDraw<'_>], theme: &Theme) -> FrameOutcome {
+    /// Draws `pages` in the given order (back-to-front — last is topmost),
+    /// over the dot-grid background. `viewport_offset`/`viewport_zoom` are
+    /// the canvas pan/zoom (session::Session::viewport) — needed here
+    /// only so the background grid can be drawn in world space; page
+    /// rects arrive in `pages` already screen-space (see PageDraw).
+    pub fn render(
+        &mut self,
+        pages: &[PageDraw<'_>],
+        theme: &Theme,
+        viewport_offset: (f32, f32),
+        viewport_zoom: f32,
+    ) -> FrameOutcome {
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) => t,
             wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -397,11 +585,37 @@ impl GpuState {
             wgpu::CurrentSurfaceTexture::Validation => return FrameOutcome::Fatal,
         };
 
-        let viewport = (self.config.width as f32, self.config.height as f32);
+        let screen_size = (self.config.width as f32, self.config.height as f32);
         for page in pages {
-            page.quad
-                .update(&self.queue, page.rect, viewport, page.focused, theme);
+            page.quad.update(
+                &self.queue,
+                page.rect,
+                screen_size,
+                page.focused,
+                page.texture.is_none(),
+                theme,
+            );
         }
+
+        self.queue.write_buffer(
+            &self.frame_globals_buffer,
+            0,
+            bytemuck::cast_slice(&[[self.start.elapsed().as_secs_f32(), 0.0, 0.0, 0.0]]),
+        );
+        self.queue.write_buffer(
+            &self.background_buffer,
+            0,
+            bytemuck::cast_slice(&[
+                [viewport_offset.0, viewport_offset.1, viewport_zoom, 0.0],
+                theme.background_dot_color,
+                [
+                    theme.background_grid_spacing,
+                    theme.background_dot_radius,
+                    0.0,
+                    0.0,
+                ],
+            ]),
+        );
 
         let view = surface_texture
             .texture
@@ -429,11 +643,14 @@ impl GpuState {
                 multiview_mask: None,
             });
 
+            pass.set_pipeline(&self.background_pipeline);
+            pass.set_bind_group(0, &self.background_bind_group, &[]);
+            pass.draw(0..3, 0..1);
+
             pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(2, &self.frame_globals_bind_group, &[]);
             for page in pages {
-                let Some(bind_group) = page.texture else {
-                    continue;
-                };
+                let bind_group = page.texture.unwrap_or(&self.placeholder_bind_group);
                 pass.set_bind_group(0, bind_group, &[]);
                 pass.set_bind_group(1, &page.quad.style_bind_group, &[]);
                 pass.set_vertex_buffer(0, page.quad.vertex_buffer.slice(..));

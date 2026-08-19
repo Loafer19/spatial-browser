@@ -145,6 +145,13 @@ pub fn handle(
             open_switcher(session, gpu);
             true
         }
+        // Alias for F1 — Ctrl+/ is the "show shortcuts" convention in
+        // Linear/Slack/Notion/GitHub, and doesn't need the function-key
+        // row (behind an Fn layer on a lot of laptops).
+        PhysicalKey::Code(KeyCode::Slash) => {
+            open_help(session, gpu);
+            true
+        }
 
         // --- Canvas ---
         PhysicalKey::Code(KeyCode::KeyG) => {

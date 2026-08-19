@@ -46,7 +46,10 @@ pub const HELP_GROUPS: &[(&str, &[(&str, &str)])] = &[
     ),
     (
         "Other",
-        &[("Ctrl+Shift+Space", "Cycle UI theme"), ("F1", "This page")],
+        &[
+            ("Ctrl+Shift+Space", "Cycle UI theme"),
+            ("F1 / Ctrl+/", "This page"),
+        ],
     ),
 ];
 
@@ -81,13 +84,11 @@ pub fn page_url(theme: &Theme) -> String {
     // starts a fragment, silently truncating everything after it from
     // the actual document — every Theme field here is an rgb() string.
     format!(
-        "data:text/html,<body style=\"margin:0;padding:32px;background:{bg};color:{fg};\
-         font-family:ui-monospace,monospace;font-size:15px\">\
+        "data:text/html,{body_open}\
          <h1 style=\"margin:0 0 4px;color:{heading};font-size:20px\">\
          spatial-browser &mdash; shortcuts ({name})</h1>\
          <div style=\"display:flex;flex-direction:column;gap:8px\">{rows}</div></body>",
-        bg = theme.help_bg,
-        fg = theme.help_fg,
+        body_open = super::body_open(theme, ""),
         heading = theme.help_heading,
         name = theme.name,
     )

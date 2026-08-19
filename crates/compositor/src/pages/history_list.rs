@@ -15,7 +15,7 @@
 // here gets handled, and cef-bridge's OsrLoadHandler for how a visit
 // gets recorded in the first place.
 
-use super::html_escape;
+use super::{html_escape, LIST_NAV_SCRIPT, TRASH_SVG_PATH};
 use crate::output::Theme;
 use crate::persistence::bookmarks::host_of;
 use crate::persistence::history::HistoryEntry;
@@ -86,48 +86,45 @@ function applyGrouping(mode) {
 pub(crate) fn page_url(theme: &Theme, history: &[HistoryEntry]) -> String {
     let mut rows = String::new();
     if history.is_empty() {
-        rows.push_str(&format!(
-            "<p style=\"color:{fg};opacity:0.7\">No history yet.</p>",
-            fg = theme.help_fg,
-        ));
+        rows.push_str(&super::empty_state(theme, "No history yet."));
     }
 
     for (index, entry) in history.iter().enumerate() {
         let host = host_of(&entry.url);
-        let letter = host.chars().next().unwrap_or('?').to_uppercase();
+        let letter = host
+            .chars()
+            .next()
+            .unwrap_or('?')
+            .to_uppercase()
+            .to_string();
         rows.push_str(&format!(
-            "<div class=\"hist-row\" data-timestamp=\"{timestamp}\" data-host=\"{host_attr}\" \
-             onclick=\"location='history://open/{index}'\" \
+            "<div class=\"hist-row list-row\" data-timestamp=\"{timestamp}\" data-host=\"{host_attr}\" \
+             data-open=\"history://open/{index}\" onclick=\"location='history://open/{index}'\" \
              style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
              cursor:pointer;background:{card_bg};border-radius:8px;\
              border:1px solid {card_border}\">\
-             <span style=\"position:relative;width:20px;height:20px;flex-shrink:0\">\
-             <span style=\"position:absolute;inset:0;border-radius:4px;background:{key_bg};\
-             color:{key_fg};display:flex;align-items:center;justify-content:center;\
-             font-size:11px;font-weight:700\">{letter}</span></span>\
+             {favicon}\
              <span style=\"flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;\
              white-space:nowrap;color:{fg}\">{url_html}</span>\
              <span class=\"hist-date\" style=\"flex-shrink:0;color:{fg};opacity:0.6;\
              font-size:12px;white-space:nowrap\"></span>\
              <span class=\"hist-time\" style=\"flex-shrink:0;color:{fg};opacity:0.6;\
              font-size:12px;white-space:nowrap\"></span>\
-             <a href=\"history://remove/{index}\" onclick=\"event.stopPropagation()\" \
-             title=\"Remove from list\" class=\"bm-icon-btn\" style=\"flex-shrink:0;\
-             margin-left:4px;display:flex;align-items:center;justify-content:center;\
-             width:26px;height:26px;border-radius:6px;background:{bg};color:{fg};\
-             opacity:0.7;text-decoration:none\">\
-             <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"currentColor\">\
-             <path d=\"M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z\"/>\
-             </svg></a></div>",
+             {remove_button}</div>",
             card_bg = theme.help_card_bg,
             card_border = theme.help_card_border,
-            key_bg = theme.help_key_bg,
-            key_fg = theme.help_key_fg,
-            bg = theme.help_bg,
+            favicon = super::favicon_tile(host, &letter, theme),
             fg = theme.help_fg,
             timestamp = entry.visited_at,
             host_attr = html_escape(host),
             url_html = html_escape(&entry.url),
+            remove_button = super::icon_link_button(
+                &format!("history://remove/{index}"),
+                "Remove from list",
+                TRASH_SVG_PATH,
+                "onclick=\"event.stopPropagation()\"",
+                theme,
+            ),
         ));
     }
 
@@ -140,12 +137,11 @@ pub(crate) fn page_url(theme: &Theme, history: &[HistoryEntry]) -> String {
     // unaffected: that `#` would only be a problem if it appeared in
     // the URL's actual text, not inside a JS string literal.
     format!(
-        "data:text/html,{script}\
+        "data:text/html,{script}{nav_script}\
          <style>\
-         .hist-row:hover{{background:{key_bg}!important}}\
-         .hist-row:hover span{{color:{key_fg}!important}}\
-         .bm-icon-btn:hover{{background:{key_bg}!important;color:{key_fg}!important;\
-         opacity:1!important}}\
+         .hist-row:hover,.hist-row.list-active{{background:{key_bg}!important}}\
+         .hist-row:hover span,.hist-row.list-active span{{color:{key_fg}!important}}\
+         {icon_hover}\
          .hist-header{{margin:16px 0 0;font-size:13px;text-transform:uppercase;\
          letter-spacing:0.05em;opacity:0.8;color:{heading}}}\
          .hist-header:first-child{{margin-top:0}}\
@@ -156,8 +152,7 @@ pub(crate) fn page_url(theme: &Theme, history: &[HistoryEntry]) -> String {
          .group-toggle button.active{{background:{key_bg};color:{key_fg};opacity:1;\
          border-color:{key_bg}}}\
          </style>\
-         <body onload=\"initTimestamps()\" style=\"margin:0;padding:32px;background:{bg};\
-         color:{fg};font-family:ui-monospace,monospace;font-size:15px\">\
+         {body_open}\
          <div style=\"display:flex;align-items:baseline;justify-content:space-between;\
          margin:0 0 16px\">\
          <h1 style=\"margin:0;color:{heading};font-size:20px\">History</h1>\
@@ -171,9 +166,11 @@ pub(crate) fn page_url(theme: &Theme, history: &[HistoryEntry]) -> String {
          <div id=\"rows\" class=\"rows-container\" \
          style=\"display:flex;flex-direction:column;gap:8px\">{rows}</div></body>",
         script = SCRIPT,
+        nav_script = LIST_NAV_SCRIPT,
+        icon_hover = super::icon_button_hover_css(theme),
+        body_open = super::body_open(theme, "onload=\"initTimestamps()\""),
         key_bg = theme.help_key_bg,
         key_fg = theme.help_key_fg,
-        bg = theme.help_bg,
         fg = theme.help_fg,
         heading = theme.help_heading,
         card_bg = theme.help_card_bg,

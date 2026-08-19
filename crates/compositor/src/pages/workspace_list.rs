@@ -4,9 +4,13 @@
 // cef-bridge's OsrRequestHandler / app.rs's PENDING_WORKSPACE_ACTION
 // for how clicks on this page's `workspace://...` links get handled.
 
-use super::html_escape;
+use super::{html_escape, CHECKMARK_SVG_PATH, LIST_NAV_SCRIPT, TRASH_SVG_PATH};
 use crate::output::Theme;
 use crate::persistence::workspaces::Workspace;
+
+// Play-triangle SVG path for this page's own "Load" button — the one
+// icon-button shape none of the other list pages need.
+const LOAD_SVG_PATH: &str = "M8 5v14l11-7z";
 
 /// Builds the workspace-list page's `data:` URL. `pub(crate)` so app.rs
 /// can rebuild this page in place after a save/rename/delete (same
@@ -17,24 +21,17 @@ use crate::persistence::workspaces::Workspace;
 pub(crate) fn page_url(theme: &Theme, workspaces: &[Workspace]) -> String {
     let mut rows = String::new();
     if workspaces.is_empty() {
-        rows.push_str(&format!(
-            "<p style=\"color:{fg};opacity:0.7\">No saved workspaces yet.</p>",
-            fg = theme.help_fg,
-        ));
+        rows.push_str(&super::empty_state(theme, "No saved workspaces yet."));
     }
 
     for (index, workspace) in workspaces.iter().enumerate() {
         let page_count = workspace.pages.len();
         let noun = if page_count == 1 { "page" } else { "pages" };
         rows.push_str(&format!(
-            "<div style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
+            "<div class=\"list-row\" data-open=\"workspace://load/{index}\" \
+             style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
              background:{card_bg};border-radius:8px;border:1px solid {card_border}\">\
-             <a href=\"workspace://load/{index}\" title=\"Load\" class=\"bm-icon-btn\" \
-             style=\"flex-shrink:0;display:flex;align-items:center;justify-content:center;\
-             width:26px;height:26px;border-radius:6px;background:{bg};color:{fg};\
-             opacity:0.7;text-decoration:none\">\
-             <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"currentColor\">\
-             <path d=\"M8 5v14l11-7z\"/></svg></a>\
+             {load_button}\
              <form method=\"get\" action=\"workspace://rename/{index}\" \
              style=\"display:flex;align-items:center;gap:6px;flex:1;min-width:0;margin:0\">\
              <span onclick=\"this.style.display='none';\
@@ -46,37 +43,42 @@ pub(crate) fn page_url(theme: &Theme, workspaces: &[Workspace]) -> String {
              style=\"display:none;flex:1;min-width:0;background:{bg};color:{fg};\
              border:1px solid {card_border};border-radius:4px;padding:2px 6px;\
              font:inherit;font-size:13px\">\
-             <button type=\"submit\" title=\"Save\" class=\"bm-icon-btn\" style=\"flex-shrink:0;\
-             display:flex;align-items:center;justify-content:center;width:26px;height:26px;\
-             border-radius:6px;background:{bg};color:{fg};opacity:0.7;border:none;\
-             cursor:pointer;font:inherit\">\
-             <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"currentColor\">\
-             <path d=\"M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z\"/></svg></button>\
+             {save_button}\
              </form>\
              <span style=\"flex-shrink:0;color:{fg};opacity:0.6;font-size:12px;\
              white-space:nowrap\">{page_count} {noun}</span>\
-             <a href=\"workspace://delete/{index}\" title=\"Delete\" class=\"bm-icon-btn\" \
-             style=\"flex-shrink:0;margin-left:4px;display:flex;align-items:center;\
-             justify-content:center;width:26px;height:26px;border-radius:6px;\
-             background:{bg};color:{fg};opacity:0.7;text-decoration:none\">\
-             <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"currentColor\">\
-             <path d=\"M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z\"/>\
-             </svg></a>\
+             {delete_button}\
              </div>",
             card_bg = theme.help_card_bg,
             card_border = theme.help_card_border,
+            load_button = super::icon_link_button(
+                &format!("workspace://load/{index}"),
+                "Load",
+                LOAD_SVG_PATH,
+                "",
+                theme,
+            ),
             fg = theme.help_fg,
             bg = theme.help_bg,
             name = html_escape(&workspace.name),
             name_attr = html_escape(&workspace.name),
+            save_button = super::icon_submit_button("Save", CHECKMARK_SVG_PATH, theme),
+            delete_button = super::icon_link_button(
+                &format!("workspace://delete/{index}"),
+                "Delete",
+                TRASH_SVG_PATH,
+                "",
+                theme,
+            ),
         ));
     }
 
     format!(
-        "data:text/html,<style>.bm-icon-btn:hover{{background:{key_bg}!important;\
-         color:{key_fg}!important;opacity:1!important}}</style>\
-         <body style=\"margin:0;padding:32px;background:{bg};color:{fg};\
-         font-family:ui-monospace,monospace;font-size:15px\">\
+        "data:text/html,{nav_script}\
+         <style>{icon_hover}\
+         .list-row:hover,.list-row.list-active{{background:{key_bg}!important}}\
+         .list-row:hover span,.list-row.list-active span{{color:{key_fg}!important}}</style>\
+         {body_open}\
          <div style=\"display:flex;align-items:baseline;justify-content:space-between;\
          margin:0 0 20px\">\
          <h1 style=\"margin:0;color:{heading};font-size:20px\">Workspaces</h1>\
@@ -84,9 +86,11 @@ pub(crate) fn page_url(theme: &Theme, workspaces: &[Workspace]) -> String {
          + Save current</a>\
          </div>\
          <div style=\"display:flex;flex-direction:column;gap:8px\">{rows}</div></body>",
+        nav_script = LIST_NAV_SCRIPT,
+        icon_hover = super::icon_button_hover_css(theme),
+        body_open = super::body_open(theme, ""),
         key_bg = theme.help_key_bg,
         key_fg = theme.help_key_fg,
-        bg = theme.help_bg,
         fg = theme.help_fg,
         heading = theme.help_heading,
     )

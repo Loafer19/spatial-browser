@@ -470,7 +470,7 @@ impl ApplicationHandler for App {
                     .collect();
 
                 let theme = self.session.theme();
-                match state.render(&draws, &theme) {
+                match state.render(&draws, &theme, viewport.offset, viewport.zoom) {
                     FrameOutcome::Rendered | FrameOutcome::Skip => {}
                     FrameOutcome::Reconfigure => {
                         let size = state.window.inner_size();
