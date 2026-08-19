@@ -3,4 +3,5 @@ resolver = "2"
 members = [
     "crates/compositor",
     "crates/cef-bridge",
+    "crates/import-chrome",
 ]
