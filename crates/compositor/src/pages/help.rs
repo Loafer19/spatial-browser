@@ -12,6 +12,7 @@ pub const HELP_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+Shift+T", "Reopen closed page"),
             ("Ctrl+W", "Close page"),
             ("Ctrl+R", "Reload page"),
+            ("Ctrl+V", "Paste from clipboard"),
             ("Alt+Left/Right", "Back / forward"),
             ("Ctrl+= / Ctrl+-", "Zoom in / out"),
             ("Ctrl+0", "Reset zoom"),

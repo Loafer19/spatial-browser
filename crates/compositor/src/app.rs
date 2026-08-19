@@ -10,6 +10,7 @@
 // session.rs, persisted via persistence/mod.rs.
 
 use crate::browser::{self, Page};
+use crate::clipboard_bridge;
 use crate::hotkeys;
 use crate::input::{KeyboardInput, MouseInput};
 use crate::output::{FrameOutcome, GpuState, PageDraw, Rect, THEMES};
@@ -23,7 +24,7 @@ use crate::persistence::{
 };
 use crate::session::Session;
 use crate::viewport::Viewport;
-use cef::{ImplBrowser, ImplBrowserHost};
+use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 use cef_bridge::{
     BookmarkAction, DownloadPageAction, HistoryPageAction, CURSOR, PENDING_BOOKMARK,
     PENDING_DOWNLOADS, PENDING_DOWNLOAD_ACTION, PENDING_HISTORY_ACTION, PENDING_OMNIBOX,
@@ -737,22 +738,34 @@ impl ApplicationHandler for App {
                 }
 
                 // Appended by cef-bridge's OsrLoadHandler for every
-                // completed top-level navigation. Skipped for ephemeral
-                // pages (F1 help, bookmarks/downloads/history lists,
-                // omnibox, switcher) — those aren't something the user
-                // navigated to themselves, and would otherwise flood
-                // history with generated UI.
+                // completed top-level navigation. Two things happen for
+                // each: the copy-bridge script gets (re-)injected, since
+                // a full navigation wipes whatever a previous injection
+                // put in the page's DOM (see clipboard_bridge.rs — CEF's
+                // own clipboard integration doesn't work at all in this
+                // windowless/OSR embedding, confirmed empirically); and,
+                // skipped for ephemeral pages (F1 help,
+                // bookmarks/downloads/history lists, omnibox, switcher)
+                // since those aren't something the user navigated to
+                // themselves, the visit gets recorded into history.
                 let visits = PENDING_VISITS.with_borrow_mut(std::mem::take);
                 for (browser_id, url) in visits {
-                    let is_ephemeral = self
+                    if let Some(page) = self
                         .session
                         .pages()
                         .iter()
                         .find(|p| p.browser.identifier() == browser_id)
-                        .map(|p| p.ephemeral)
-                        .unwrap_or(true);
-                    if !is_ephemeral {
-                        history::record(&mut self.history, &url, now_unix_secs());
+                    {
+                        if let Some(frame) = page.browser.main_frame() {
+                            frame.execute_java_script(
+                                Some(&clipboard_bridge::COPY_BRIDGE_SCRIPT.into()),
+                                Some(&"".into()),
+                                0,
+                            );
+                        }
+                        if !page.ephemeral {
+                            history::record(&mut self.history, &url, now_unix_secs());
+                        }
                     }
                 }
 

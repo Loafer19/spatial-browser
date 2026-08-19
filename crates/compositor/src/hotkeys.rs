@@ -13,6 +13,7 @@
 // only "what does each shortcut do".
 
 use crate::browser;
+use crate::clipboard_bridge;
 use crate::output::GpuState;
 use crate::pages;
 use crate::persistence::bookmarks::{self, Bookmark};
@@ -84,6 +85,10 @@ pub fn handle(
         }
         PhysicalKey::Code(KeyCode::KeyR) => {
             reload_focused(session);
+            true
+        }
+        PhysicalKey::Code(KeyCode::KeyV) => {
+            paste_into_focused(session);
             true
         }
         // Page content zoom (CEF's own zoom_level), distinct from
@@ -189,6 +194,40 @@ fn reopen_closed(session: &mut Session, gpu: &GpuState) {
 fn reload_focused(session: &Session) {
     if let Some(page) = session.pages().last() {
         page.browser.reload();
+    }
+}
+
+/// Reads the system clipboard directly (via `wl-paste`) and inserts it
+/// at the cursor/selection of whatever's focused inside the topmost
+/// page, bypassing CEF's own (non-functional in this windowless/OSR
+/// embedding — see clipboard_bridge.rs) paste handling entirely rather
+/// than forwarding Ctrl+V to it at all. `execCommand('insertText', ...)`
+/// — not setting `.value` directly — because it fires the same events a
+/// real paste would and works in both plain inputs/textareas and
+/// contenteditable elements.
+fn paste_into_focused(session: &Session) {
+    let Some(page) = session.pages().last() else {
+        return;
+    };
+    let Ok(output) = std::process::Command::new("wl-paste")
+        .arg("--no-newline")
+        .output()
+    else {
+        return;
+    };
+    if !output.status.success() {
+        return; // e.g. clipboard empty — wl-paste exits non-zero
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    if text.is_empty() {
+        return;
+    }
+    if let Some(frame) = page.browser.main_frame() {
+        let script = format!(
+            "document.execCommand('insertText', false, {});",
+            clipboard_bridge::js_literal(&text)
+        );
+        frame.execute_java_script(Some(&script.as_str().into()), Some(&"".into()), 0);
     }
 }
 

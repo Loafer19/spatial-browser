@@ -191,6 +191,28 @@ fn parse_history_action(url: &str) -> Option<HistoryPageAction> {
     None
 }
 
+/// Parses a `clipboard://copy?text=...` navigation into the copied
+/// text — sent by the copy-bridge script every page has injected into
+/// it (compositor::clipboard_bridge), since CEF's windowless/OSR
+/// Chromium has no real platform surface to write the actual OS
+/// clipboard through itself (confirmed empirically: copied text inside
+/// a page never reached `wl-paste`). Unlike every other action in this
+/// file, this one is acted on immediately, right here — writing to the
+/// clipboard needs no canvas/Session state at all, so there's no
+/// PENDING_* thread_local or compositor round-trip for it.
+fn parse_clipboard_copy(url: &str) -> Option<String> {
+    let query = url.strip_prefix("clipboard://copy?")?;
+    query_param(query, "text")
+}
+
+/// Hands `text` to `wl-copy`, which daemonizes itself to keep serving
+/// paste requests — spawned and left running, not waited on.
+fn write_to_clipboard(text: &str) {
+    if let Err(e) = std::process::Command::new("wl-copy").arg(text).spawn() {
+        log::warn!("wl-copy failed (system clipboard copy unavailable): {e}");
+    }
+}
+
 #[derive(Clone)]
 pub struct OsrRequestHandler {}
 
@@ -231,6 +253,10 @@ wrap_request_handler! {
             }
             if let Some(action) = parse_history_action(&url) {
                 PENDING_HISTORY_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
+                return true as _;
+            }
+            if let Some(text) = parse_clipboard_copy(&url) {
+                write_to_clipboard(&text);
                 return true as _;
             }
             false as _

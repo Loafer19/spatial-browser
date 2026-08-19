@@ -13,6 +13,7 @@
 
 mod app;
 mod browser;
+mod clipboard_bridge;
 mod hotkeys;
 mod input;
 mod output;

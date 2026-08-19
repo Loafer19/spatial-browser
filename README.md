@@ -1,174 +1,96 @@
 # spatial-browser
 
-Custom browser shell: own UI, own history/bookmarks, plugin API, and a
-spatial canvas for arranging pages instead of flat tabs.
+Personal browser shell: pages arranged as pannable/zoomable tiles on a
+canvas instead of flat tabs, with its own bookmarks/history/downloads UI.
 
 ## Architecture
 
 - **Web engine:** CEF (Chromium Embedded Framework), off-screen rendering.
-  Design target is the shared-GPU-texture path (`on_accelerated_paint`,
-  zero CPU copy per frame); currently running the CPU path (`on_paint`,
-  one `write_texture` copy per frame) — see Status.
-- **Compositor:** `wgpu`, draws pages as textured quads on a pannable/
-  zoomable canvas. Instanced rendering keeps FPS high with many pages open.
-- **Chrome UI** (new-page prompt, bookmarks/downloads/history lists,
-  page switcher, help): no address bar — currently server-rendered
-  `data:` HTML pages (built with plain Rust `format!`, see `pages/`),
-  loaded as ordinary CEF pages rather than a native overlay. Each one
-  signals back to the compositor by navigating to a fake
-  `whatever://...` URL (`bookmark://`, `omnibox://`, `switcher://`,
-  `download://`, `history://`), intercepted and canceled by
-  `cef-bridge`'s `RequestHandler` — see `cef-bridge/src/navigation.rs`.
-  An `egui` immediate-mode overlay in the same GPU context is the plan
-  if/when the UI needs real interactivity beyond what an HTML form +
-  custom-scheme link can do.
-- **Plugins:** planned, not started — native plugin host (JS bundle
-  loaded into a hidden CEF browser instance) talking to the native side
-  over CEF IPC. Chrome extension compatibility (content scripts,
-  `chrome.storage`, etc.) would be a secondary, best-effort layer — no
-  chrome.* API covers spatial layout, so that stays a native-only
-  surface.
-- **Memory:** renderer processes for pages outside the visible viewport
-  get suspended/discarded; last frame is kept as a GPU-side thumbnail
-  texture until the page scrolls back into view.
+- **Compositor:** `wgpu`, draws pages as textured quads on the canvas.
+- **Chrome UI** (new-page prompt, bookmarks/downloads/history lists, page
+  switcher, help): no address bar — server-rendered `data:` HTML pages,
+  loaded as ordinary CEF pages. Each one signals back to the compositor
+  via a fake `whatever://...` URL, intercepted by `cef-bridge`'s
+  `RequestHandler` (see `cef-bridge/src/navigation.rs`).
+- **Plugins:** planned, not started.
 
 ## Layout
 
-- `crates/compositor` — window, wgpu surface, canvas renderer, CEF process
-  bootstrap and event loop.
-  - `main.rs` — CEF multi-process bootstrap, winit event loop.
-  - `app.rs` — `ApplicationHandler`: input routing, drag/resize/pan/zoom,
-    the redraw loop (polls pending bookmark/omnibox actions, persists,
-    renders).
-  - `session.rs` — canvas state (pages, viewport, theme, closed-page
-    undo stack), each mutation marking itself dirty for persistence.
-  - `viewport.rs` — world-space <-> screen-space pan/zoom mapping.
-  - `browser.rs` — `Page`: spawns a CEF OSR browser into a rect,
-    owns its GPU texture.
-  - `hotkeys.rs` — canvas-level shortcuts, grouped into Pages / Lists /
-    Canvas / Other (matches the F1 page's own grouping) — auto-layout,
-    the page switcher, bookmarks/downloads/history, zoom, theme,
-    back/forward — as opposed to input forwarded to the focused page.
-  - `pages/` — generated `data:` HTML: the omnibox/new-page prompt,
-    bookmarks/downloads/history lists, the Ctrl+K page switcher, F1 help.
-  - `persistence/` — everything under `~/.config/spatial-browser/`:
-    the canvas session, bookmarks, downloads, browsing history, and
-    typed-omnibox input (`typed_history.rs` — deliberately not named
-    `history.rs`, which is real visited-page history), each its own
-    JSON file.
-  - `input/`, `output/` — mouse/keyboard forwarding to CEF; wgpu surface,
-    pipeline, themes.
-  - `single_instance.rs` — refuses a second launch, focuses the running one.
+- `crates/compositor` — window, wgpu surface, canvas renderer, CEF
+  process bootstrap and event loop.
+  - `hotkeys.rs` — canvas-level shortcuts, grouped Pages / Lists /
+    Canvas / Other.
+  - `pages/` — generated `data:` HTML for each list/prompt page.
+  - `clipboard_bridge.rs` — copy/paste (see Status: CEF's own clipboard
+    doesn't work in this embedding at all).
+  - `persistence/` — everything under `~/.config/spatial-browser/`,
+    one JSON file per concern (session, bookmarks, downloads, history,
+    typed-omnibox input).
+  - `session.rs`, `viewport.rs`, `browser.rs`, `input/`, `output/` —
+    canvas state, world/screen mapping, CEF page spawning, input
+    forwarding, wgpu pipeline.
 - `crates/cef-bridge` — one file per CEF client-handler interface
-  (`app`/`render`/`display`/`download`/`life_span`/`load`/
-  `request_context`), plus `navigation` (the five custom-scheme
-  interceptions above, all one `RequestHandler`) and `client` (ties
-  every handler into the `cef::Client` CEF hands each spawned browser).
+  (`app`/`render`/`display`/`download`/`life_span`/`load`), plus
+  `navigation` (the custom-scheme interceptions above, plus the
+  clipboard-copy one) and `client` (ties them all together). No
+  request-context handler: every page passes `None` for its request
+  context, sharing CEF's one persistent global profile instead of each
+  getting a fresh, isolated, in-memory-only one.
 
 ## Status
 
-Working multi-page spatial canvas: pan/zoom (Ctrl+scroll, middle-drag or
-Shift+drag), per-page drag (Alt+drag) and resize, z-order focus cycling
-(Ctrl+Tab), zoom-to-canvas (Ctrl+Space), auto-layout into a grid
-(Ctrl+G). Ctrl+T opens an omnibox page (`@prefix` shortcuts, e.g.
-`@g`/`@y`, plus persisted typed-history) instead of a fixed new-tab URL;
-Ctrl+Shift+T reopens the last closed page. Ctrl+K is a filterable
-switcher over open pages — by search, not position: a page's spot in
-z-order changes on every click, so there's no stable "page 3" the way a
-browser tab bar has one. A page trying to open a link in a new
-tab/window (`target="_blank"`, `window.open()`, middle-click) spawns a
-regular canvas page instead of a native popup window outside the
-canvas — see cef-bridge's `life_span.rs`.
+Multi-page spatial canvas: pan/zoom, drag/resize, z-order focus
+cycling, auto-layout into a grid (Ctrl+G). Ctrl+T opens an omnibox
+(`@prefix` search shortcuts, typed-history); Ctrl+K is a filterable
+switcher over open pages. Bookmarks (Ctrl+D/B), downloads (Ctrl+J, to
+`~/Downloads`, desktop notification on completion), and real
+browsing history (Ctrl+H, day/site grouping) each have their own list
+page. A page opening a link in a new tab/window spawns a canvas page
+instead of a native popup window.
 
-Bookmarks (Ctrl+D / Ctrl+B) support favicons, inline rename, folders,
-and delete. Downloads (Ctrl+J) land under `~/Downloads` with
-collision-safe naming, no save-as dialog, a desktop notification on
-completion, and a list to reopen or forget one. History (Ctrl+H) is
-real visited-page tracking (distinct from the omnibox's typed-input
-history), with a client-side toggle to regroup by day or by site and
-local-time display computed in JS rather than Rust — see
-`pages/history_list.rs`. F1 shows the full shortcut list, grouped the
-same way as `hotkeys.rs`. Canvas layout, bookmarks, downloads, history,
-and typed-omnibox input each persist to their own JSON file under
-`~/.config/spatial-browser/` (debounced for the canvas, immediate for
-the rest).
+All pages share one persistent CEF profile (`~/.config/spatial-browser/
+cef_data`) — cookies/logins carry over between tabs of the same site
+and across restarts, unlike the per-page, in-memory-only contexts this
+used to create.
 
-**Known limitation (unresolved):** CEF hard-crashes on SPA-style
-client-side navigation (YouTube, Google Images lightbox) —
-`TabInterface::GetFromContents` returns null inside
-`ReadAnythingSoftNavigationObserver::OnSoftNavigation`, a Chromium-side
-assumption that a Tab exists which doesn't hold for windowless/OSR
-embeddings, and the crash happens in browser-process code reacting to a
-renderer's IPC message — not a renderer crash — so there's no per-tab
-process isolation to fall back on: one page hitting this takes down
-every open page. Several command-line flags were tried (`cef-bridge`'s
-`on_before_command_line_processing`, still in place as harmless
-best-effort hardening) and confirmed to reach the process via
-`chrome://version`, but none stop the crash. No newer `cef`/Chromium
-version is available upstream to retry against. Mitigated rather than
-fixed: `scripts/run.sh` auto-relaunches the bundled binary on
-crash/non-zero exit (with a cooldown+giveup for repeated fast
-failures), restoring the saved canvas — a crash costs at most the last
-unsaved second of layout, not the session.
+**Known limitations, both confirmed empirically and worked around
+rather than fixed upstream:**
+- CEF hard-crashes on SPA-style client-side navigation (YouTube, Google
+  Images lightbox) — a Chromium bug (`ReadAnythingSoftNavigationObserver`
+  assuming a Tab exists, which a windowless/OSR embedding never has).
+  Mitigated by `scripts/run.sh`, which auto-relaunches on crash and
+  restores the saved canvas.
+- CEF's own clipboard integration doesn't work at all in this
+  windowless/OSR embedding (no real platform surface to claim OS
+  clipboard ownership through — copied text never reached the system
+  clipboard). Copy/paste are reimplemented in `clipboard_bridge.rs`
+  instead: a script injected into every page relays the 'copy' event's
+  selection out to `wl-copy`; Ctrl+V is intercepted natively, reads
+  `wl-paste` directly, and inserts via `execCommand('insertText', ...)`.
 
-Rendering via CEF's CPU OSR path (`on_paint` → `wgpu::Queue::write_texture`),
-not the GPU shared-texture path yet.
-
-**Why not the shared-texture path:** on this dev machine (hybrid
-NVIDIA + AMD laptop graphics), CEF's GPU process renders on whichever GPU
-is display-driving (the AMD iGPU here), while wgpu's `HighPerformance`
-adapter pick can land on the discrete GPU — the DMA-BUF CEF exports then
-fails to import cross-device (`vkAllocateMemory` →
-`ERROR_OUT_OF_DEVICE_MEMORY`). Chromium also sanitizes environment
-variables passed to its child processes, so there's no reliable way from
-the launching process to force both onto the same physical GPU. Revisit
-by either pinning both to the same adapter via system-level GPU-offload
-config, or by explicitly selecting a specific `wgpu::Adapter` (enumerate
-+ match by name) instead of trusting `PowerPreference`.
-
-Both OSR paths are wired up in `cef-bridge` behind
-`WindowInfo::shared_texture_enabled` in `compositor/src/main.rs:resumed`
-— flipping that bool (plus the `accelerated_osr` feature) is the whole
-switch once the GPU-selection problem above is solved.
+Rendering via CEF's CPU OSR path, not the GPU shared-texture path yet
+(blocked on a hybrid-GPU cross-device import issue — see code comments
+in `cef-bridge/src/render.rs` for details).
 
 ## Build
 
-Machine-specific one-time setup:
-
 ```sh
-# Cache the CEF binary distribution (also happens automatically on first
-# build, just slower — this pre-warms it):
-cargo run -p export-cef-dir -- --force ~/.local/share/cef
-# (needs the cef-rs workspace checked out separately; see
-# https://github.com/tauri-apps/cef-rs)
-
-# bundle-cef-app, used by scripts/bundle.sh:
+# One-time: bundle-cef-app, used by scripts/bundle.sh
 cargo install cef --version 151.4.0+151.3.17 --locked \
   --root ~/.local/share/cargo-cef-tools
 ```
 
-`CEF_PATH` and the linker `rpath` are set in `.cargo/config.toml` — plain
-`cargo build`/`cargo check` work with no manual env vars. Update
-`CEF_PATH` there if `export-cef-dir`'s output directory differs.
-
 ```sh
-cargo build                    # compiles, doesn't need CEF running
+cargo build                    # compiles; auto-downloads CEF on first run
 ./scripts/bundle.sh compositor # bundles + the CEF subprocess helper
-target/bundle/compositor       # only the bundled binary runs (CEF's
-                                # multi-process model needs the helper)
-./scripts/run.sh compositor    # same, but auto-relaunches on crash —
-                                # see Status's known-limitation note
+./scripts/run.sh compositor    # runs, auto-relaunching on crash
 ```
 
 ## Releases
 
 A pushed version tag (`git tag v0.2.0 && git push --tags`) triggers
-`.github/workflows/release.yml`: builds, bundles, and attaches a
-`spatial-browser-linux-x86_64.tar.gz` to a GitHub Release
-(auto-downloading and caching the CEF binary distribution — no
-`export-cef-dir` step needed in CI, same auto-fetch a fresh local build
-does). Linux x86_64 only: this targets one desktop's CEF setup, not a
-general cross-platform distribution.
+`.github/workflows/release.yml`: builds, bundles, and attaches a Linux
+x86_64 tarball to a GitHub Release.
 
 ## License
 
