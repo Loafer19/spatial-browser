@@ -66,8 +66,9 @@ tab/window spawns a canvas page instead of a native popup window.
 Ctrl+Shift+C copies the focused page's URL — there's no address bar to
 select it from. F1 (or Ctrl+/) shows every shortcut.
 
-Ad/tracker request blocking (~55 known ad-serving/tracking domains,
-matched at the request level, not just navigation) is on by default.
+Ad/tracker request blocking (Peter Lowe's ad-server list, ~3500 known
+ad-serving/tracking domains, matched at the request level, not just
+navigation) is on by default.
 Settings (Ctrl+,): toggle it, pick a default search engine, add your
 own extra blocked hosts on top of the built-in list, switch the UI
 theme directly instead of cycling it, or pick a target frame rate

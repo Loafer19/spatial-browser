@@ -4,19 +4,34 @@
 // matches. Deliberately not a full filter-rule engine (EasyList/
 // uBlock-style syntax, cosmetic hiding of the empty space an ad would
 // have occupied) — that's a project of its own. A domain blocklist
-// blocks noticeably less, but costs near nothing to maintain: adding a
-// domain is one line, and it needs no rule-syntax parser at all.
+// blocks noticeably less, but costs near nothing to maintain.
 //
-// The compiled-in list below is deliberately not user-editable (that's
-// what compositor::persistence::settings::AppSettings::
-// custom_blocked_hosts is for, applied on top of this one via
-// `set_enabled`/`set_custom_hosts` below) — it's the "just works, don't
-// think about it" baseline; the settings page's editable list is for
-// whatever that baseline misses.
+// blocked_domains.txt is Peter Lowe's ad-server list
+// (https://pgl.yoyo.org/adservers/, `hostformat=nohtml`) — ~3500
+// domains, focused specifically on ads/trackers rather than the
+// broader malware/gambling/etc. categories a general "unified hosts"
+// list would pull in. Two exclusions from the upstream list: piano.io
+// and cxense.com, both Piano's metered-paywall infrastructure on many
+// news sites (confirmed showing up in a live test against CNN) —
+// blocking those risks breaking paid-article access, not just making a
+// page less tracked. Compiled in via `include_str!`, not downloaded at
+// runtime: no network dependency, works offline, and a page load can't
+// race an in-progress fetch. Re-running the same fetch+filter and
+// replacing this file is how to pick up upstream's updates; there's no
+// automation for that here, deliberately — it changes rarely enough
+// that a manual refresh is simpler than maintaining a fetcher.
+//
+// The compiled-in list is deliberately not user-editable (that's what
+// compositor::persistence::settings::AppSettings::custom_blocked_hosts
+// is for, applied on top of this one via `set_enabled`/
+// `set_custom_hosts` below) — it's the "just works, don't think about
+// it" baseline; the settings page's editable list is for whatever that
+// baseline misses.
 
 use cef::{self, rc::Rc, *};
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 // Real shared statics, not `thread_local!`: CEF calls
 // `ImplRequestHandler::resource_request_handler` and
@@ -48,81 +63,23 @@ pub fn set_custom_hosts(hosts: Vec<String>) {
     }
 }
 
-/// Well-known ad-serving/tracking domains, matched by suffix (`host ==
-/// domain` or `host` ends with `.{domain}`) — covers most of what a
-/// site actually loads ads/trackers *through*, without trying to be
-/// exhaustive. Extend by appending a line.
-const BLOCKED_DOMAINS: &[&str] = &[
-    // Google's ad stack
-    "doubleclick.net",
-    "2mdn.net",
-    "googlesyndication.com",
-    "googleadservices.com",
-    "googletagmanager.com",
-    "googletagservices.com",
-    "google-analytics.com",
-    "adservice.google.com",
-    // Other major ad networks / exchanges
-    "amazon-adsystem.com",
-    "adnxs.com",
-    "adsrvr.org",
-    "criteo.com",
-    "criteo.net",
-    "taboola.com",
-    "outbrain.com",
-    "scorecardresearch.com",
-    "quantserve.com",
-    "quantcount.com",
-    "moatads.com",
-    "adform.net",
-    "rubiconproject.com",
-    "pubmatic.com",
-    "openx.net",
-    "casalemedia.com",
-    "indexexchange.com",
-    "media.net",
-    "adroll.com",
-    "serving-sys.com",
-    "smartadserver.com",
-    "yieldmo.com",
-    "sharethrough.com",
-    "triplelift.com",
-    "sovrn.com",
-    "gumgum.com",
-    "teads.tv",
-    "mgid.com",
-    "revcontent.com",
-    // Social widgets' tracking pixels
-    "connect.facebook.net",
-    "bat.bing.com",
-    "ads-twitter.com",
-    // Session-replay / behavior analytics
-    "hotjar.com",
-    "fullstory.com",
-    "mouseflow.com",
-    // Confirmed live against a real ad-heavy site (CNN) — every one of
-    // these fired a real ad/tracker request that the list above missed.
-    // Deliberately not adding tinypass.com/piano.io/cxense.com even
-    // though they showed up in the same test: those are Piano's
-    // metered-paywall infrastructure on many news sites, not just ads —
-    // blocking them risks breaking paid-article access, not just making
-    // a page less tracked.
-    "permutive.app",
-    "permutive.com",
-    "chartbeat.com",
-    "chartbeat.net",
-    "imrworldwide.com",
-    "demdex.net",
-    "zetaglobal.net",
-    "indexww.com",
-    "adsafeprotected.com",
-    "rezync.com",
-    "ad-delivery.net",
-    "stickyadstv.com",
-    "boomtrain.com",
-    "bounceexchange.com",
-    "btloader.com",
-];
+/// The raw list, one domain per line (see this file's header comment
+/// for provenance) — parsed once into `BLOCKED_DOMAINS` below, not
+/// re-split on every request.
+const BLOCKED_DOMAINS_TXT: &str = include_str!("blocked_domains.txt");
+
+/// A set, not the plain list: `is_blocked` below checks each of a
+/// host's own progressively-shorter suffixes against this (`a.b.com`,
+/// `b.com`, `com`) for an O(labels-in-the-host) lookup, equivalent to
+/// "host == domain or ends with `.`+domain for any of ~3500 domains"
+/// without actually scanning all ~3500 of them per request.
+static BLOCKED_DOMAINS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    BLOCKED_DOMAINS_TXT
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect()
+});
 
 /// Same host-extraction logic as `compositor::persistence::bookmarks::
 /// host_of` (duplicated rather than shared: cef-bridge doesn't, and
@@ -140,21 +97,31 @@ fn matches_domain(host: &str, domain: &str) -> bool {
     host == domain || host.ends_with(&format!(".{domain}"))
 }
 
+/// `host` itself, then with its leftmost label stripped repeatedly
+/// (`a.b.example.com` → `b.example.com` → `example.com` → `com`) — the
+/// suffixes that "does any domain in the (large) blocklist match host,
+/// exactly or as a parent domain" reduces to checking membership of,
+/// one `HashSet` lookup each, rather than testing host against every
+/// entry in the set.
+fn suffixes(host: &str) -> impl Iterator<Item = &str> {
+    std::iter::successors(Some(host), |s| s.split_once('.').map(|(_, rest)| rest))
+}
+
 fn is_blocked(host: &str) -> bool {
     if !ENABLED.load(Ordering::Relaxed) {
         return false;
     }
-    if BLOCKED_DOMAINS
-        .iter()
-        .any(|domain| matches_domain(host, domain))
-    {
+    if suffixes(host).any(|suffix| BLOCKED_DOMAINS.contains(suffix)) {
         return true;
     }
     // A poisoned lock (a panic while holding it, on either thread) is
     // treated as "no custom hosts" rather than propagating the panic
     // into CEF's IO thread — losing the custom list until the next
     // `set_custom_hosts` is a much smaller problem than taking the
-    // whole browser process down.
+    // whole browser process down. The custom list is small (user-added
+    // one at a time via Settings), so a plain per-domain suffix check
+    // here is fine — no need for the same set-of-suffixes trick as the
+    // ~3500-entry compiled-in list above.
     CUSTOM_HOSTS
         .lock()
         .map(|hosts| hosts.iter().any(|domain| matches_domain(host, domain)))
