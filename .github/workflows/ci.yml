@@ -1,0 +1,51 @@
+name: CI
+
+# Runs the same build + cache steps as release.yml, but on every push to
+# master instead of a version tag. Purely to seed a default-branch-scoped
+# cache: GitHub Actions caches are only visible to the ref that created
+# them, plus (as a fallback) whatever's scoped to the repo's default
+# branch — never to *other* tags. Since release.yml only ever runs on a
+# tag push, every release was building an isolated, one-off cache that no
+# future release could ever reach, silently accumulating duplicate cache
+# entries release after release. This workflow gives release.yml
+# something on the default branch to fall back to.
+on:
+  push:
+    branches:
+      - master
+
+env:
+  # Keep in sync with release.yml's CEF_VERSION and the `cef = { version
+  # = "..." }` line in crates/*/Cargo.toml.
+  CEF_VERSION: 151.4.0+151.3.17
+  CEF_PATH: ${{ github.workspace }}/.cef-cache
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache CEF distribution
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CEF_PATH }}
+          key: cef-${{ env.CEF_VERSION }}-${{ runner.os }}
+
+      - name: Cache bundle-cef-app
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/cargo-cef-tools
+          key: cargo-cef-tools-${{ env.CEF_VERSION }}-${{ runner.os }}
+
+      - name: Install bundle-cef-app
+        run: |
+          cargo install cef --version "${CEF_VERSION}" --locked \
+            --root ~/.local/share/cargo-cef-tools
+
+      - name: Bundle
+        run: ./scripts/bundle.sh compositor
