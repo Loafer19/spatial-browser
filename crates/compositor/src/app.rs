@@ -130,6 +130,7 @@ impl Default for App {
     fn default() -> Self {
         let settings = settings::load();
         pending_actions::sync_blocklist_settings(&settings);
+        cef_bridge::set_clean_urls_enabled(settings.clean_urls_enabled);
         browser::set_target_frame_rate(settings.target_fps);
         Self {
             state: None,

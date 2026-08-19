@@ -17,11 +17,20 @@ use std::path::PathBuf;
 #[serde(default)]
 pub struct AppSettings {
     pub ad_block_enabled: bool,
+    /// Strips utm_*/fbclid/gclid/etc. tracking params from a link
+    /// before it loads — see cef-bridge::clean_urls.
+    pub clean_urls_enabled: bool,
     /// A full search URL template with the query appended directly
     /// (e.g. `https://www.google.com/search?q=`) — the same shape
     /// omnibox.rs's `@prefix` engines already use, so applying it is
     /// just using this instead of that map's hardcoded default.
     pub default_search_engine: String,
+    /// Index into `reader_mode::READER_THEMES` — the colors Ctrl+Shift+R
+    /// (reader mode) rewrites a page's content with. Independent of the
+    /// UI chrome's own `Theme`/`THEMES`: reading comfort (light/sepia/
+    /// dark article background) is a different concern than the
+    /// canvas/list-page chrome color scheme.
+    pub reader_theme: usize,
     pub custom_blocked_hosts: Vec<String>,
     /// CEF's `windowless_frame_rate` for every page, and the main
     /// event loop's own pacing (main.rs) — one of 60/90/120, picked
@@ -36,7 +45,9 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             ad_block_enabled: true,
+            clean_urls_enabled: true,
             default_search_engine: "https://www.google.com/search?q=".to_string(),
+            reader_theme: 0,
             custom_blocked_hosts: Vec::new(),
             target_fps: 60,
         }

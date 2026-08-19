@@ -382,6 +382,12 @@ pub fn apply(
                 sync_blocklist_settings(settings);
                 refresh_settings_page(session, gpu, settings, browser_id);
             }
+            SettingsPageAction::ToggleCleanUrls => {
+                settings.clean_urls_enabled = !settings.clean_urls_enabled;
+                settings::save(settings);
+                cef_bridge::set_clean_urls_enabled(settings.clean_urls_enabled);
+                refresh_settings_page(session, gpu, settings, browser_id);
+            }
             SettingsPageAction::SetSearchEngine(engine) => {
                 settings.default_search_engine = engine;
                 settings::save(settings);
@@ -390,6 +396,13 @@ pub fn apply(
             SettingsPageAction::SetTheme(index) => {
                 if let Some(theme) = THEMES.get(index) {
                     session.set_theme(*theme);
+                }
+                refresh_settings_page(session, gpu, settings, browser_id);
+            }
+            SettingsPageAction::SetReaderTheme(index) => {
+                if index < crate::reader_mode::READER_THEMES.len() {
+                    settings.reader_theme = index;
+                    settings::save(settings);
                 }
                 refresh_settings_page(session, gpu, settings, browser_id);
             }

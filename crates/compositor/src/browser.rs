@@ -55,6 +55,14 @@ pub struct Page {
     // bookmark:// indices inside it that no longer match the current
     // bookmarks list.
     pub ephemeral: bool,
+    // Set by hotkeys::toggle_reader_mode (Ctrl+Shift+R) when this page's
+    // DOM has been replaced in-place with an extracted-article view —
+    // toggling it back off reloads the page (the reliable way to fully
+    // restore the original DOM/scripts) rather than trying to reverse
+    // the in-page rewrite, so this only needs to remember *whether* to
+    // reload, not what to restore. A `Cell`, like `size`/`texture`
+    // above, since hotkeys only ever sees `&Session`/`&Page`.
+    pub reader_mode: std::cell::Cell<bool>,
 }
 
 impl Page {
@@ -134,5 +142,6 @@ pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect, ephemeral: 
         texture: handles.texture,
         zoomed_from: None,
         ephemeral,
+        reader_mode: std::cell::Cell::new(false),
     }
 }

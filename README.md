@@ -68,12 +68,15 @@ select it from. F1 (or Ctrl+/) shows every shortcut.
 
 Ad/tracker request blocking (Peter Lowe's ad-server list, ~3500 known
 ad-serving/tracking domains, matched at the request level, not just
-navigation) is on by default.
-Settings (Ctrl+,): toggle it, pick a default search engine, add your
-own extra blocked hosts on top of the built-in list, switch the UI
-theme directly instead of cycling it, or pick a target frame rate
-(60/90/120 — a monitor's own max refresh rate is still the real
-ceiling either way).
+navigation) and tracking-parameter stripping from links (`utm_*`,
+`fbclid`, `gclid`, ...) are both on by default. Ctrl+Shift+R toggles
+reader mode: an extracted, single-column article view of the focused
+page's main content, in one of a few reading themes; toggling it back
+off reloads the page. Settings (Ctrl+,): toggle either of the above, pick
+a default search engine, a reading theme, add your own extra blocked hosts on top
+of the built-in list, switch the UI theme directly instead of cycling
+it, or pick a target frame rate (60/90/120 — a monitor's own max
+refresh rate is still the real ceiling either way).
 
 `crates/import-chrome` is a standalone one-time CLI: reads Chrome's own
 Bookmarks file and merges the entries into this browser's

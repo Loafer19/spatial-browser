@@ -15,6 +15,7 @@
 // every action it dispatches to.
 
 use crate::blocklist::{OsrResourceRequestHandler, ResourceRequestHandlerBuilder};
+use crate::clean_urls;
 use cef::{self, rc::Rc, *};
 use std::cell::RefCell;
 
@@ -239,10 +240,14 @@ fn parse_workspace_action(url: &str) -> Option<WorkspacePageAction> {
 /// a `settings://...` link/form.
 pub enum SettingsPageAction {
     ToggleAdBlock,
+    ToggleCleanUrls,
     /// A full search URL template (e.g. `https://www.bing.com/search?q=`)
     /// — one of the settings page's own fixed choices, not free text.
     SetSearchEngine(String),
     SetTheme(usize),
+    /// Index into compositor::reader_mode::READER_THEMES — which of
+    /// reader mode's Light/Sepia/Dark colors Ctrl+Shift+R uses.
+    SetReaderTheme(usize),
     AddBlockedHost(String),
     RemoveBlockedHost(usize),
     /// One of the settings page's own fixed choices (60/90/120), not
@@ -261,12 +266,18 @@ fn parse_settings_action(url: &str) -> Option<SettingsPageAction> {
     if rest == "toggle-adblock" {
         return Some(SettingsPageAction::ToggleAdBlock);
     }
+    if rest == "toggle-clean-urls" {
+        return Some(SettingsPageAction::ToggleCleanUrls);
+    }
     if let Some(query) = rest.strip_prefix("search-engine?") {
         let engine = query_param(query, "engine")?;
         return Some(SettingsPageAction::SetSearchEngine(engine));
     }
     if let Some(index) = rest.strip_prefix("theme/") {
         return index.parse().ok().map(SettingsPageAction::SetTheme);
+    }
+    if let Some(index) = rest.strip_prefix("reader-theme/") {
+        return index.parse().ok().map(SettingsPageAction::SetReaderTheme);
     }
     if let Some(query) = rest.strip_prefix("add-host?") {
         let host = query_param(query, "host")?;
@@ -318,7 +329,7 @@ wrap_request_handler! {
         fn on_before_browse(
             &self,
             browser: Option<&mut Browser>,
-            _frame: Option<&mut Frame>,
+            frame: Option<&mut Frame>,
             request: Option<&mut Request>,
             _user_gesture: ::std::os::raw::c_int,
             _is_redirect: ::std::os::raw::c_int,
@@ -328,6 +339,18 @@ wrap_request_handler! {
             };
             let url = cef::CefString::from(&request.url()).to_string();
             let id = browser.identifier();
+            // Only ever rewrites real navigations, never this file's own
+            // fake `whatever://...` action-signaling URLs — those never
+            // carry tracking params anyway, but the scheme check keeps
+            // this from even looking.
+            if url.starts_with("http://") || url.starts_with("https://") {
+                if let Some(cleaned) = clean_urls::clean(&url) {
+                    if let Some(frame) = frame {
+                        frame.load_url(Some(&cleaned.as_str().into()));
+                    }
+                    return true as _; // cancel — the load_url above replaces it
+                }
+            }
             if let Some(action) = parse_bookmark_action(&url) {
                 PENDING_BOOKMARK.with_borrow_mut(|pending| *pending = Some((id, action)));
                 return true as _; // cancel navigation — the compositor acts on it instead

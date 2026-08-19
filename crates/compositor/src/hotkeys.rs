@@ -21,6 +21,7 @@ use crate::persistence::downloads::DownloadRecord;
 use crate::persistence::history::HistoryEntry;
 use crate::persistence::settings::AppSettings;
 use crate::persistence::workspaces::Workspace;
+use crate::reader_mode;
 use crate::session::Session;
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 use winit::event::ElementState;
@@ -94,8 +95,15 @@ pub fn handle(
             }
             true
         }
+        // Ctrl+Shift+R (reader mode) shares this physical key with plain
+        // Ctrl+R (reload) — same Shift-disambiguates-a-second-action
+        // convention as KeyC/KeyW/Digit0/Space in this match.
         PhysicalKey::Code(KeyCode::KeyR) => {
-            reload_focused(session);
+            if modifiers.shift_key() {
+                toggle_reader_mode(session, settings);
+            } else {
+                reload_focused(session);
+            }
             true
         }
         PhysicalKey::Code(KeyCode::KeyV) => {
@@ -291,6 +299,32 @@ fn copy_focused_url(session: &Session) {
     let url = page.url();
     if let Err(e) = std::process::Command::new("wl-copy").arg(&url).spawn() {
         log::warn!("wl-copy failed (couldn't copy page URL): {e}");
+    }
+}
+
+/// Ctrl+Shift+R: toggles the focused (topmost) page's reader mode —
+/// see reader_mode.rs for the extraction script and browser::Page's
+/// `reader_mode` field for why toggling off just reloads instead of
+/// reversing the rewrite in place.
+fn toggle_reader_mode(session: &Session, settings: &AppSettings) {
+    let Some(page) = session.pages().last() else {
+        return;
+    };
+    if page.reader_mode.get() {
+        page.browser.reload();
+        page.reader_mode.set(false);
+        return;
+    }
+    let theme = reader_mode::READER_THEMES
+        .get(settings.reader_theme)
+        .unwrap_or(&reader_mode::READER_THEMES[0]);
+    if let Some(frame) = page.browser.main_frame() {
+        frame.execute_java_script(
+            Some(&reader_mode::extract_script(theme).as_str().into()),
+            Some(&"".into()),
+            0,
+        );
+        page.reader_mode.set(true);
     }
 }
 

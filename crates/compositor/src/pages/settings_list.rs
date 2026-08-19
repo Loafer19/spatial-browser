@@ -12,6 +12,7 @@
 use super::{html_escape, CHECKMARK_SVG_PATH, LIST_NAV_SCRIPT, TRASH_SVG_PATH};
 use crate::output::{Theme, THEMES};
 use crate::persistence::settings::AppSettings;
+use crate::reader_mode::READER_THEMES;
 
 /// The default-search-engine choices offered — a fixed, known-good set
 /// rather than a free-text URL template: no chance of saving a broken
@@ -54,6 +55,11 @@ pub(crate) fn page_url(theme: &Theme, settings: &AppSettings) -> String {
     } else {
         "Off"
     };
+    let clean_urls_state = if settings.clean_urls_enabled {
+        "On"
+    } else {
+        "Off"
+    };
     let mut rows = format!(
         "<h2 style=\"margin:0 0 8px;font-size:13px;text-transform:uppercase;\
          letter-spacing:0.05em;color:{heading};opacity:0.8\">Ad &amp; tracker blocking</h2>\
@@ -64,6 +70,14 @@ pub(crate) fn page_url(theme: &Theme, settings: &AppSettings) -> String {
          border:1px solid {card_border}\">\
          <span style=\"flex:1;color:{fg}\">Block known ad/tracker requests</span>\
          <span style=\"flex-shrink:0;color:{fg};opacity:0.7\">{adblock_state}</span>\
+         </div>\
+         <div class=\"list-row\" data-open=\"settings://toggle-clean-urls\" \
+         onclick=\"location='settings://toggle-clean-urls'\" \
+         style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
+         cursor:pointer;background:{card_bg};border-radius:8px;\
+         border:1px solid {card_border}\">\
+         <span style=\"flex:1;color:{fg}\">Strip tracking parameters from links</span>\
+         <span style=\"flex-shrink:0;color:{fg};opacity:0.7\">{clean_urls_state}</span>\
          </div>",
         heading = theme.help_heading,
         card_bg = theme.help_card_bg,
@@ -103,6 +117,28 @@ pub(crate) fn page_url(theme: &Theme, settings: &AppSettings) -> String {
         rows.push_str(&format!(
             "<div class=\"list-row\" data-open=\"settings://theme/{index}\" \
              onclick=\"location='settings://theme/{index}'\" \
+             style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
+             cursor:pointer;background:{card_bg};border-radius:8px;\
+             border:1px solid {card_border}\">\
+             <span style=\"flex:1;color:{fg}\">{name}</span>{checkmark}</div>",
+            card_bg = theme.help_card_bg,
+            card_border = theme.help_card_border,
+            fg = theme.help_fg,
+            name = candidate.name,
+            checkmark = checkmark(theme, is_current),
+        ));
+    }
+
+    rows.push_str(&format!(
+        "<h2 style=\"margin:16px 0 8px;font-size:13px;text-transform:uppercase;\
+         letter-spacing:0.05em;color:{heading};opacity:0.8\">Reading mode (Ctrl+Shift+R)</h2>",
+        heading = theme.help_heading,
+    ));
+    for (index, candidate) in READER_THEMES.iter().enumerate() {
+        let is_current = settings.reader_theme == index;
+        rows.push_str(&format!(
+            "<div class=\"list-row\" data-open=\"settings://reader-theme/{index}\" \
+             onclick=\"location='settings://reader-theme/{index}'\" \
              style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
              cursor:pointer;background:{card_bg};border-radius:8px;\
              border:1px solid {card_border}\">\

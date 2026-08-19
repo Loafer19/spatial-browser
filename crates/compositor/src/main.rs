@@ -20,6 +20,7 @@ mod output;
 mod pages;
 mod pending_actions;
 mod persistence;
+mod reader_mode;
 mod session;
 mod single_instance;
 mod userscripts;
