@@ -27,11 +27,10 @@ fn default_engine_override(default_engine: &str) -> String {
 const SCRIPT: &str = r#"<script>
 const PREFIXES = {
   '@g': 'https://www.google.com/search?q=',
-  '@google': 'https://www.google.com/search?q=',
   '@y': 'https://www.youtube.com/results?search_query=',
-  '@youtube': 'https://www.youtube.com/results?search_query=',
   '@ddg': 'https://duckduckgo.com/?q=',
-  '@duckduckgo': 'https://duckduckgo.com/?q='
+  '@bing': 'https://www.bing.com/search?q=',
+  '@wiki': 'https://en.wikipedia.org/w/index.php?search='
 };
 // `var`, not `const`: page_url() below reassigns this to whatever the
 // settings page's default-search-engine choice currently is, via a
@@ -39,8 +38,11 @@ const PREFIXES = {
 var DEFAULT_ENGINE = 'https://www.google.com/search?q=';
 function resolve(raw) {
   const trimmed = raw.trim();
+  // Prefix lookup is case-insensitive (`@G rust` works same as `@g
+  // rust`) — PREFIXES' own keys are already all-lowercase, so only the
+  // matched prefix needs lowercasing before the lookup.
   const m = trimmed.match(/^(@[a-zA-Z]+)\s+(.*)$/);
-  if (m && PREFIXES[m[1]]) return PREFIXES[m[1]] + encodeURIComponent(m[2]);
+  if (m && PREFIXES[m[1].toLowerCase()]) return PREFIXES[m[1].toLowerCase()] + encodeURIComponent(m[2]);
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)) return trimmed;
   if (/^[^\s]+\.[^\s]+$/.test(trimmed)) return 'https://' + trimmed;
   return DEFAULT_ENGINE + encodeURIComponent(trimmed);
@@ -54,13 +56,14 @@ function go(raw) {
 
 /// Builds the omnibox (new-page) page's `data:` URL: a single input for
 /// a URL or search query, `@prefix` shortcuts for specific search
-/// engines (`@g`/`@google`, `@y`/`@youtube`, `@ddg`/`@duckduckgo` — bare
-/// text with no prefix falls back to Google), and recent-input chips
-/// below it. All resolution happens in `SCRIPT`; submitting navigates to
-/// `omnibox://go?q=...&url=...`, which cef-bridge's `on_before_browse`
-/// intercepts and cancels, handing the raw text and resolved destination
-/// back to the compositor (app.rs's PENDING_OMNIBOX) to log and actually
-/// navigate to.
+/// engines (`@g`, `@y`, `@ddg`, `@bing`, `@wiki` — one short form each,
+/// no aliases — bare text with no prefix falls back to
+/// `default_search_engine`, the settings page's choice), and
+/// recent-input chips below it. All resolution happens in `SCRIPT`;
+/// submitting navigates to `omnibox://go?q=...&url=...`, which
+/// cef-bridge's `on_before_browse` intercepts and cancels, handing the
+/// raw text and resolved destination back to the compositor (app.rs's
+/// PENDING_OMNIBOX) to log and actually navigate to.
 pub fn page_url(theme: &Theme, typed_history: &[String], default_search_engine: &str) -> String {
     let mut chips = String::new();
     for entry in typed_history.iter().take(10) {
@@ -82,7 +85,7 @@ pub fn page_url(theme: &Theme, typed_history: &[String], default_search_engine: 
          font-family:ui-monospace,monospace;font-size:15px\">\
          <form onsubmit=\"go(document.getElementById('q').value);return false\">\
          <input id=\"q\" autofocus \
-         placeholder=\"Search or type a URL &mdash; try @y, @ddg, @google...\" \
+         placeholder=\"Search or type a URL &mdash; try @y, @ddg, @wiki, @bing...\" \
          style=\"width:100%;box-sizing:border-box;background:{card_bg};color:{fg};\
          border:1px solid {card_border};border-radius:8px;padding:14px 16px;\
          font:inherit;font-size:18px\">\
