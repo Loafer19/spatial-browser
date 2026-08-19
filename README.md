@@ -96,7 +96,12 @@ cargo install cef --version 151.4.0+151.3.17 --locked \
 cargo build                    # compiles; auto-downloads CEF on first run
 ./scripts/bundle.sh compositor # bundles + the CEF subprocess helper
 ./scripts/run.sh compositor    # runs, auto-relaunching on crash
+./scripts/install.sh           # adds an app-launcher entry (Super/wofi/rofi/...)
 ```
+
+`install.sh` regenerates `~/.local/share/applications/spatial-browser.desktop`
+pointing at wherever the repo currently lives — safe to re-run after moving
+the checkout.
 
 ## Releases
 
