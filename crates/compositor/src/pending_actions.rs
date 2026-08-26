@@ -242,20 +242,18 @@ pub fn apply(
             .find(|p| p.browser.identifier() == browser_id)
         {
             if let Some(frame) = page.browser.main_frame() {
-                // Userstyles can target spatial-ui (ephemeral) pages;
-                // userscripts still skip those.
+                // Both styles and scripts honor `@match spatial-ui` for
+                // ephemeral chrome pages (bookmarks, settings, …).
                 for js in userstyles::matching_inject_js(&url, page.ephemeral, userstyles) {
                     frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
                 }
-                if !page.ephemeral {
-                    for code in userscripts::matching_code(&url, userscripts, RunAt::DocumentStart)
-                    {
-                        frame.execute_java_script(
-                            Some(&code.as_str().into()),
-                            Some(&"".into()),
-                            0,
-                        );
-                    }
+                for code in userscripts::matching_code(
+                    &url,
+                    page.ephemeral,
+                    userscripts,
+                    RunAt::DocumentStart,
+                ) {
+                    frame.execute_java_script(Some(&code.as_str().into()), Some(&"".into()), 0);
                 }
             }
         }
@@ -267,12 +265,9 @@ pub fn apply(
     // wipes whatever a previous injection put in the page's DOM (see
     // clipboard_bridge.rs — CEF's own clipboard integration doesn't
     // work at all in this windowless/OSR embedding, confirmed
-    // empirically); any document-end/idle userscript whose `@match`
-    // pattern fits this URL gets injected the same way (see
-    // userscripts.rs); and, skipped for ephemeral pages (F1 help,
-    // bookmarks/downloads/history/workspace/settings lists, omnibox,
-    // switcher) since those aren't something the user navigated to
-    // themselves, the visit gets recorded into history.
+    // empirically); any document-end/idle userscript / userstyle whose
+    // `@match` fits (including `spatial-ui` for ephemeral chrome) gets
+    // injected; history is still skipped for ephemeral pages.
     let visits = PENDING_VISITS.with_borrow_mut(std::mem::take);
     for (browser_id, url) in visits {
         if let Some(page) = session
@@ -291,15 +286,15 @@ pub fn apply(
                 for js in userstyles::matching_inject_js(&url, page.ephemeral, userstyles) {
                     frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
                 }
-                if !page.ephemeral {
-                    for run_at in [RunAt::DocumentEnd, RunAt::DocumentIdle] {
-                        for code in userscripts::matching_code(&url, userscripts, run_at) {
-                            frame.execute_java_script(
-                                Some(&code.as_str().into()),
-                                Some(&"".into()),
-                                0,
-                            );
-                        }
+                for run_at in [RunAt::DocumentEnd, RunAt::DocumentIdle] {
+                    for code in
+                        userscripts::matching_code(&url, page.ephemeral, userscripts, run_at)
+                    {
+                        frame.execute_java_script(
+                            Some(&code.as_str().into()),
+                            Some(&"".into()),
+                            0,
+                        );
                     }
                 }
             }

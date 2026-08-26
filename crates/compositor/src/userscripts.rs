@@ -15,7 +15,9 @@
 //   // @run-at document-end
 //
 // `@match` / `@exclude` are plain wildcard globs against the full URL
-// (`*` = anything). `@run-at` is `document-start`, `document-end`
+// (`*` = anything), plus the special tokens `spatial-ui` / `spatial:*`
+// for built-in ephemeral chrome pages (bookmarks, settings, …) — same
+// as userstyles. `@run-at` is `document-start`, `document-end`
 // (default), or `document-idle`. A script with no `@match` is skipped.
 // Disabled filenames are tracked in `userscripts_state.json` next to
 // the scripts dir — toggling in the Ctrl+Shift+U list flips that, not
@@ -187,9 +189,20 @@ fn parse_file(path: &Path, disabled: &HashSet<String>) -> Option<UserScript> {
     })
 }
 
+fn is_spatial_ui_token(pattern: &str) -> bool {
+    matches!(
+        pattern,
+        "spatial-ui" | "spatial:*" | "spatial://*" | "spatial://ui"
+    )
+}
+
 /// Wildcard glob (`*` = anything) against the full URL, with the
-/// `*.example.com` apex-domain special case (see header).
-fn matches_pattern(pattern: &str, url: &str) -> bool {
+/// `*.example.com` apex-domain special case (see header), plus
+/// `spatial-ui` / `spatial:*` for ephemeral built-in pages.
+fn matches_pattern(pattern: &str, url: &str, ephemeral: bool) -> bool {
+    if is_spatial_ui_token(pattern) {
+        return ephemeral;
+    }
     if glob_match(pattern, url) {
         return true;
     }
@@ -226,21 +239,21 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     true
 }
 
-fn url_matches_script(url: &str, script: &UserScript) -> bool {
+fn url_matches_script(url: &str, ephemeral: bool, script: &UserScript) -> bool {
     if !script.enabled {
         return false;
     }
     if !script
         .matches
         .iter()
-        .any(|pattern| matches_pattern(pattern, url))
+        .any(|pattern| matches_pattern(pattern, url, ephemeral))
     {
         return false;
     }
     !script
         .excludes
         .iter()
-        .any(|pattern| matches_pattern(pattern, url))
+        .any(|pattern| matches_pattern(pattern, url, ephemeral))
 }
 
 /// GM_* prelude prepended so GreasyFork-style scripts have a minimal API.
@@ -264,15 +277,17 @@ const GM_PRELUDE: &str = r#"(function(){
 })();"#;
 
 /// Code to inject for `url` at the given run-at timing, each entry
-/// already wrapped with the GM prelude.
-pub fn matching_code<'a>(
+/// already wrapped with the GM prelude. `ephemeral` enables `@match
+/// spatial-ui` (built-in chrome pages).
+pub fn matching_code(
     url: &str,
-    scripts: &'a [UserScript],
+    ephemeral: bool,
+    scripts: &[UserScript],
     run_at: RunAt,
 ) -> Vec<String> {
     scripts
         .iter()
-        .filter(|s| s.run_at == run_at && url_matches_script(url, s))
+        .filter(|s| s.run_at == run_at && url_matches_script(url, ephemeral, s))
         .map(|s| {
             if run_at == RunAt::DocumentIdle {
                 format!(

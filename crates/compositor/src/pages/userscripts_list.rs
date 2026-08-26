@@ -11,7 +11,8 @@ pub(crate) fn page_url(theme: &Theme, scripts: &[UserScript], styles: &[UserStyl
     if scripts.is_empty() {
         script_rows.push_str(
             "<p style=\"opacity:0.7;margin:8px 0\">No scripts yet. Drop a <code>.js</code> with \
-             <code>// @match</code> into the userscripts folder, then Reload.</p>",
+             <code>// @match</code> (use <code>spatial-ui</code> for built-in lists) into \
+             the userscripts folder, then Reload.</p>",
         );
     }
     for script in scripts {
@@ -103,8 +104,8 @@ pub(crate) fn page_url(theme: &Theme, scripts: &[UserScript], styles: &[UserStyl
         "data:text/html;charset=utf-8,{body_open}\
          <h1 style=\"margin:0 0 4px;color:{heading};font-size:20px\">Scripts &amp; styles</h1>\
          <p style=\"margin:0 0 12px;opacity:0.7;font-size:13px\">\
-         Scripts: <code>// @match</code> · Styles: <code>/* @match */</code> \
-         (incl. <code>spatial-ui</code> for built-in pages)</p>\
+         Both honor <code>spatial-ui</code> for built-in pages · \
+         Scripts: <code>// @match</code> · Styles: <code>/* @match */</code></p>\
          {actions}\
          <h2 style=\"margin:8px 0;font-size:13px;text-transform:uppercase;\
          letter-spacing:0.05em;color:{heading};opacity:0.8\">Userscripts</h2>\

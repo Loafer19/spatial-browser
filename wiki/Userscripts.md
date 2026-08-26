@@ -29,11 +29,17 @@ Open **Ctrl+Shift+U** for the combined list (Reload re-reads both folders).
 | Tag | Meaning |
 |-----|---------|
 | `@name` | Display name (default: filename) |
-| `@match` | Wildcard glob on the full URL (required) |
-| `@exclude` | Same globs; any hit skips the script |
+| `@match` | URL glob **or** `spatial-ui` / `spatial:*` for built-in chrome pages |
+| `@exclude` | Same language; any hit skips the script |
 | `@run-at` | `document-start`, `document-end` (default), `document-idle` |
 
-Userscripts are **not** injected into built-in UI pages (bookmarks, settings, …).
+```js
+// @name   Tweak settings list
+// @match  spatial-ui
+// @run-at document-end
+
+document.body.style.letterSpacing = '0.02em';
+```
 
 ### GM_* prelude
 
@@ -77,15 +83,13 @@ article { max-width: 40rem; margin: 0 auto; }
 
 Omnibox, bookmarks, history, downloads, workspaces, settings, help, switcher, and this scripts list are ephemeral `data:` HTML pages. Their real URLs are huge, so site globs never match them.
 
-Use:
+For **both** scripts and styles use:
 
-```css
-/* @match spatial-ui */
+```
+@match spatial-ui
 ```
 
-That token matches **any** built-in UI page. Styles **do** run on those pages (unlike userscripts).
-
-You can also `@match data:*` if you really want a raw `data:` glob; `spatial-ui` is the supported shortcut.
+(`spatial:*` is an alias.) That matches **any** built-in UI page. You can also `@match data:*` for a raw `data:` glob; `spatial-ui` is the supported shortcut.
 
 ---
 
