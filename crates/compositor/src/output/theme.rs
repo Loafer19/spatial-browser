@@ -39,6 +39,21 @@ pub struct Theme {
     pub help_card_border: &'static str,
     pub help_key_bg: &'static str,
     pub help_key_fg: &'static str,
+    // Error / destructive text in generated UI pages (rgb only — no `#`
+    // in data: URLs).
+    pub help_danger: &'static str,
+}
+
+impl Theme {
+    /// CSS `border-radius` matching canvas page-tile rounding.
+    pub fn css_radius(&self) -> String {
+        format!("{}px", self.corner_radius.max(0.0))
+    }
+
+    /// Slightly tighter radius for buttons / inputs inside cards.
+    pub fn css_radius_inner(&self) -> String {
+        format!("{}px", (self.corner_radius * 0.75).max(0.0))
+    }
 }
 
 // This machine's actual active Omarchy theme (Tokyo Night), colors read
@@ -68,6 +83,7 @@ pub const TOKYO_NIGHT: Theme = Theme {
     help_card_border: "rgb(65,72,104)",
     help_key_bg: "rgb(122,162,247)",
     help_key_fg: "rgb(19,20,28)",
+    help_danger: "rgb(247,118,142)",
 };
 
 // Terminal look: near-black background, sharp corners (a character grid
@@ -97,6 +113,7 @@ pub const ANSI_TERMINAL: Theme = Theme {
     help_card_border: "rgb(255,153,51)",
     help_key_bg: "rgb(255,153,51)",
     help_key_fg: "rgb(0,0,0)",
+    help_danger: "rgb(255,85,85)",
 };
 
 pub const ALL: &[Theme] = &[TOKYO_NIGHT, ANSI_TERMINAL];

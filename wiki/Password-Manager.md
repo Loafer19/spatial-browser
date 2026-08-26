@@ -16,7 +16,7 @@ Unlock lasts for the **browser process** (until exit).
 
 - File: `~/.config/spatial-browser/vault.enc`
 - Argon2id + AES-256-GCM
-- Entries: origin, username, password, optional email / name / address fields
+- Entries: origin, username, password, optional email / address fields
 - `never_save`: origins that suppress save prompts
 
 ## Autofill
@@ -25,7 +25,7 @@ Injected bridge (with clipboard bridge) on normal pages:
 
 - Detects password forms
 - Queries Rust via `password://…` (fake navigations, canceled)
-- Fills username/password and common profile fields when present
+- Fills username/password and email when present
 
 Built-in `spatial-ui` pages are **not** autofilled.
 

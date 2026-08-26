@@ -26,10 +26,6 @@ pub struct VaultEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub given_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub family_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address_line1: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub city: Option<String>,
