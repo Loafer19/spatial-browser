@@ -16,12 +16,12 @@ canvas instead of flat tabs, with its own bookmarks/history/downloads UI.
   `RequestHandler` (see `cef-bridge/src/navigation.rs`).
 - **Plugins:** real Chrome/WebExtension support isn't feasible on this
   embedding — CEF's windowless/OSR (Alloy) bootstrap exposes zero
-  extension-loading API at all, confirmed by grepping the bound
-  functions. Instead, a Tampermonkey/Greasemonkey-style userscript
-  runner (`userscripts.rs`): drop a `.js` file with `// @match <url
-  pattern>` lines under `~/.config/spatial-browser/userscripts/`, it
-  gets injected into every matching page's load, same technique
-  `clipboard_bridge.rs`/`blocklist.rs` already use by hand.
+  extension-loading API at all. Instead, a Tampermonkey-style
+  userscript runner (`userscripts.rs`): drop a `.js` with `// @match`,
+  optional `// @exclude` / `// @run-at` / `// @name` under
+  `~/.config/spatial-browser/userscripts/`. Ctrl+Shift+U opens the
+  list (toggle/reload/open folder). Injects a small GM_* prelude
+  (`GM_addStyle`, `GM_getValue`, `GM_setValue`).
 
 ## Layout
 
@@ -56,7 +56,9 @@ canvas instead of flat tabs, with its own bookmarks/history/downloads UI.
 ## Status
 
 Multi-page spatial canvas: pan/zoom, drag/resize, z-order focus
-cycling, auto-layout into a grid (Ctrl+G). Ctrl+T opens an omnibox
+cycling, auto-layout into a grid (Ctrl+G). Touchscreens: one-finger
+drag on empty canvas pans; two-finger pinch/drag zooms and pans; one
+finger on a page forwards CEF touch events. Ctrl+T opens an omnibox
 (`@g`/`@y`/`@ddg`/`@bing`/`@wiki` search shortcuts, typed-history);
 Ctrl+K is a filterable switcher over open pages. Bookmarks (Ctrl+D/B),
 downloads (Ctrl+J, to `~/Downloads`, desktop notification on
@@ -127,9 +129,11 @@ rather than fixed upstream:**
   instead: a script injected into every page relays the 'copy' event's
   selection out to `wl-copy`; Ctrl+V is intercepted natively, reads
   `wl-paste` directly, and inserts via `execCommand('insertText', ...)`.
-- Rendering via CEF's CPU OSR path, not the GPU shared-texture path yet
-  (blocked on a hybrid-GPU cross-device import issue — see code
-  comments in `cef-bridge/src/render.rs` for details).
+- GPU shared-texture OSR is on by default (`accelerated_osr`): wgpu
+  prefers the LowPower/iGPU adapter so DMA-BUF import matches CEF's GPU
+  process on hybrid laptops. Override with `SPATIAL_BROWSER_OSR=cpu` or
+  `SPATIAL_BROWSER_GPU=high` (dGPU; auto-falls back to CPU OSR unless you
+  also set `SPATIAL_BROWSER_OSR=gpu`).
 - No extensions (no plugin host at all yet), no sync across devices, no
   password manager or form autofill, no DevTools panel in the UI.
 - No find-in-page (Ctrl+F) — built once, reverted as too buggy, not
@@ -141,9 +145,12 @@ rather than fixed upstream:**
 ## Build
 
 ```sh
-# One-time: bundle-cef-app, used by scripts/bundle.sh
-cargo install cef --version 151.4.0+151.3.17 --locked \
+# One-time: bundle-cef-app + matching CEF binaries, used by scripts/bundle.sh
+cargo install cef --version 151.8.0+151.3.24 --locked \
   --root ~/.local/share/cargo-cef-tools
+cargo install export-cef-dir --version 151.8.0+151.3.24 --locked \
+  --root ~/.local/share/cargo-cef-tools
+~/.local/share/cargo-cef-tools/bin/export-cef-dir --force ~/.local/share/cef
 ```
 
 ```sh

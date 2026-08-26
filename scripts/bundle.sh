@@ -2,7 +2,7 @@
 # Bundle a package into target/bundle, including the CEF subprocess
 # helper. `cargo build`/`cargo run` pick up CEF_PATH from
 # .cargo/config.toml automatically, but `bundle-cef-app` is a separately
-# installed tool (cargo install cef --version 151.4.0+151.3.17 --locked
+# installed tool (cargo install cef --version 151.8.0+151.3.24 --locked
 # --root ~/.local/share/cargo-cef-tools) invoked directly as a shell
 # command, so it doesn't see that file — it needs CEF_PATH in its own
 # process environment. TMPDIR is also needed: cargo install's temp build

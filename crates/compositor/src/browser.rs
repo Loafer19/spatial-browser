@@ -97,19 +97,24 @@ impl Page {
 pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect, ephemeral: bool) -> Page {
     let rect = rect.clamp_size(MAX_PAGE_DIMENSION);
     // Shared-texture (GPU) OSR needs the CEF GPU process's DMA-BUF export
-    // and our wgpu Vulkan import to land on the same physical GPU. On a
-    // hybrid-graphics laptop, Chromium's GPU process defaults to the
-    // display-driving iGPU while wgpu's HighPerformance pick can land on
-    // the discrete GPU; Chromium also strips most env vars from its
-    // child processes, so there's no reliable way to force both onto
-    // the same device from here. CPU OSR (on_paint, plain memcpy) has no
-    // such cross-device requirement, so that's what's wired up for now.
+    // and our wgpu Vulkan import on the same physical GPU. Default wgpu
+    // preference is LowPower (iGPU) to match Chromium's typical choice on
+    // hybrid laptops — see output::osr_shared_texture_enabled /
+    // gpu_power_preference. Override with SPATIAL_BROWSER_OSR=cpu to force
+    // the CPU on_paint path, or SPATIAL_BROWSER_GPU=high (+ usually OSR=cpu)
+    // for the discrete GPU.
+    let shared_texture = crate::output::osr_shared_texture_enabled();
     let window_info = cef::WindowInfo {
         windowless_rendering_enabled: true as _,
-        shared_texture_enabled: false as _,
+        shared_texture_enabled: shared_texture as _,
         external_begin_frame_enabled: true as _,
         ..Default::default()
     };
+    if shared_texture {
+        log::info!("CEF OSR: shared GPU texture enabled");
+    } else {
+        log::info!("CEF OSR: CPU paint path");
+    }
 
     let device_scale_factor = window.scale_factor();
     let (render_handler, handles) = OsrRenderHandler::new(

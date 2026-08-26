@@ -243,15 +243,27 @@ impl GpuState {
             .create_surface(window.clone())
             .expect("create wgpu surface");
 
+        // Prefer LowPower by default so wgpu lands on the same GPU CEF's
+        // GPU process typically uses (the display-driving iGPU). On
+        // hybrid laptops HighPerformance picks the discrete GPU while
+        // Chromium stays on the iGPU — DMA-BUF shared-texture import then
+        // fails across devices. Override with SPATIAL_BROWSER_GPU=high
+        // (and usually SPATIAL_BROWSER_OSR=cpu; see osr_shared_texture_enabled).
+        let power_preference = gpu_power_preference();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
+                power_preference,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
                 ..Default::default()
             })
             .await
             .expect("no suitable GPU adapter");
+        log::info!(
+            "wgpu adapter: {} ({:?})",
+            adapter.get_info().name,
+            adapter.get_info().device_type
+        );
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -669,4 +681,58 @@ pub enum FrameOutcome {
     Skip,
     Reconfigure,
     Fatal,
+}
+
+/// wgpu power preference for CEF shared-texture compatibility.
+///
+/// Default is `LowPower` so hybrid laptops pick the iGPU Chromium's GPU
+/// process also tends to use. `SPATIAL_BROWSER_GPU=high` / `discrete`
+/// forces `HighPerformance` (usually the dGPU) — pair with
+/// `SPATIAL_BROWSER_OSR=cpu` unless both processes are forced onto that
+/// same device some other way.
+fn gpu_power_preference() -> wgpu::PowerPreference {
+    match std::env::var("SPATIAL_BROWSER_GPU").ok().as_deref() {
+        Some("high" | "discrete" | "dgpu") => wgpu::PowerPreference::HighPerformance,
+        Some("low" | "integrated" | "igpu") => wgpu::PowerPreference::LowPower,
+        Some(other) => {
+            log::warn!("unknown SPATIAL_BROWSER_GPU={other:?}, using low (iGPU-friendly)");
+            wgpu::PowerPreference::LowPower
+        }
+        None => wgpu::PowerPreference::LowPower,
+    }
+}
+
+/// Whether new CEF browsers should request GPU shared-texture OSR.
+///
+/// On when the `accelerated_osr` feature is compiled in, unless
+/// `SPATIAL_BROWSER_OSR=cpu` forces the CPU `on_paint` path. Also auto-
+/// disables when the user asked for the discrete GPU via
+/// `SPATIAL_BROWSER_GPU=high` without also setting `SPATIAL_BROWSER_OSR=gpu`,
+/// because cross-device DMA-BUF import is what made shared texture unusable
+/// on hybrid laptops in the first place.
+pub fn osr_shared_texture_enabled() -> bool {
+    #[cfg(not(feature = "accelerated_osr"))]
+    {
+        return false;
+    }
+    #[cfg(feature = "accelerated_osr")]
+    {
+        match std::env::var("SPATIAL_BROWSER_OSR").ok().as_deref() {
+            Some("cpu" | "software") => false,
+            Some("gpu" | "shared" | "accelerated") => true,
+            Some(other) => {
+                log::warn!("unknown SPATIAL_BROWSER_OSR={other:?}, using feature default");
+                !discrete_gpu_without_forced_osr()
+            }
+            None => !discrete_gpu_without_forced_osr(),
+        }
+    }
+}
+
+#[cfg(feature = "accelerated_osr")]
+fn discrete_gpu_without_forced_osr() -> bool {
+    matches!(
+        std::env::var("SPATIAL_BROWSER_GPU").ok().as_deref(),
+        Some("high" | "discrete" | "dgpu")
+    )
 }

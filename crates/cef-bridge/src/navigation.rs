@@ -295,6 +295,37 @@ fn parse_settings_action(url: &str) -> Option<SettingsPageAction> {
     None
 }
 
+/// What the userscripts list page asked for, parsed from a
+/// `userscripts://...` link.
+pub enum UserscriptsPageAction {
+    Reload,
+    OpenDir,
+    /// Basename of the `.js` file to flip enabled/disabled.
+    Toggle(String),
+}
+
+thread_local! {
+    pub static PENDING_USERSCRIPT_ACTION: RefCell<Option<(i32, UserscriptsPageAction)>> =
+        const { RefCell::new(None) };
+}
+
+fn parse_userscripts_action(url: &str) -> Option<UserscriptsPageAction> {
+    let rest = url.strip_prefix("userscripts://")?;
+    if rest == "reload" {
+        return Some(UserscriptsPageAction::Reload);
+    }
+    if rest == "open-dir" {
+        return Some(UserscriptsPageAction::OpenDir);
+    }
+    if let Some(name) = rest.strip_prefix("toggle/") {
+        let name = percent_decode(name);
+        if !name.is_empty() {
+            return Some(UserscriptsPageAction::Toggle(name));
+        }
+    }
+    None
+}
+
 /// Parses a `clipboard://copy?text=...` navigation into the copied
 /// text — sent by the copy-bridge script every page has injected into
 /// it (compositor::clipboard_bridge), since CEF's windowless/OSR
@@ -375,8 +406,12 @@ wrap_request_handler! {
                 PENDING_WORKSPACE_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
                 return true as _;
             }
-            if let Some(action) = parse_settings_action(&url) {
+                    if let Some(action) = parse_settings_action(&url) {
                 PENDING_SETTINGS_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
+                return true as _;
+            }
+            if let Some(action) = parse_userscripts_action(&url) {
+                PENDING_USERSCRIPT_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
                 return true as _;
             }
             if let Some(text) = parse_clipboard_copy(&url) {

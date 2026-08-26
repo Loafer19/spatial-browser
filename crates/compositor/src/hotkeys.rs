@@ -23,6 +23,7 @@ use crate::persistence::settings::AppSettings;
 use crate::persistence::workspaces::Workspace;
 use crate::reader_mode;
 use crate::session::Session;
+use crate::userscripts::{self, UserScript};
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 use winit::event::ElementState;
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
@@ -41,6 +42,7 @@ pub fn handle(
     history: &[HistoryEntry],
     workspaces: &[Workspace],
     settings: &AppSettings,
+    userscripts: &mut Vec<UserScript>,
 ) -> bool {
     if event.state != ElementState::Pressed {
         return false;
@@ -179,6 +181,14 @@ pub fn handle(
         // VSCode, Slack).
         PhysicalKey::Code(KeyCode::Comma) => {
             open_settings(session, gpu, settings);
+            true
+        }
+        // Ctrl+Shift+U — userscripts list (and reload when already open
+        // via the page's own Reload button; opening always re-reads
+        // disk so a just-dropped file shows up without restart).
+        PhysicalKey::Code(KeyCode::KeyU) if modifiers.shift_key() => {
+            userscripts::reload(userscripts);
+            open_userscripts(session, gpu, userscripts);
             true
         }
 
@@ -429,6 +439,16 @@ fn open_settings(session: &mut Session, gpu: &GpuState, settings: &AppSettings) 
     let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
     let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
     let url = pages::settings_list::page_url(&session.theme(), settings);
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
+/// Opens the Ctrl+Shift+U userscripts list.
+fn open_userscripts(session: &mut Session, gpu: &GpuState, scripts: &[UserScript]) {
+    let size = gpu.window.inner_size();
+    let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
+    let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
+    let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
+    let url = pages::userscripts_list::page_url(&session.theme(), scripts);
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 

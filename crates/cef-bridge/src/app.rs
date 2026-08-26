@@ -42,27 +42,28 @@ wrap_app! {
             command_line.append_switch(Some(&"use-mock-keychain".into()));
             // Chromium's soft-navigation tracking (used for SPA Web
             // Vitals) calls PageLoadTracker::OnSoftNavigation, which
-            // notifies every registered observer including
-            // ReadAnythingSoftNavigationObserver — that observer assumes
-            // every WebContents has a real browser Tab, which a
-            // windowless/OSR embedding never has, and null-derefs
-            // (TabInterface::GetFromContents) on any SPA-style client
-            // navigation (confirmed: YouTube, Google Images' lightbox).
-            // Disabling just ReadAnything didn't help — the observer is
-            // apparently registered unconditionally regardless of that
-            // flag. Disabling SoftNavigationHeuristics via
-            // --disable-features (a //base feature) didn't help either,
-            // even though chrome://version confirms the switch reaches
-            // the process — soft-navigation instrumentation is Blink
-            // runtime code, gated through the separate
-            // --disable-blink-features namespace, not --disable-features.
+            // notifies ReadAnythingSoftNavigationObserver. That observer
+            // calls tabs::TabInterface::GetFromContents(), which
+            // dereferences internally before its own `if (!tab) return;`
+            // guard can run — null-derefs on any WebContents that isn't a
+            // real browser tab, i.e. every WebContents in a windowless/
+            // Alloy-style embedding, on any SPA-style client navigation
+            // (confirmed: YouTube, Google Images' lightbox). Upstream:
+            // https://github.com/chromiumembedded/cef/issues/4234 (fixed
+            // for M152; cef-rs has no 152 track yet — we're on 151.8.0).
+            //
+            // The observer is gated solely on
+            // features::IsImmersiveReadAnythingEnabled(), so disabling
+            // that feature skips OnSoftNavigation's body entirely before
+            // it reaches the crashing call. (Two earlier attempts here —
+            // disable-features=ReadAnything,SoftNavigationHeuristics and
+            // disable-blink-features=SoftNavigationHeuristics,
+            // SoftNavigationDetection — targeted the wrong feature names
+            // and didn't help.) Reading Mode is browser-chrome UI a
+            // windowless app can't surface anyway, so this costs nothing.
             command_line.append_switch_with_value(
                 Some(&"disable-features".into()),
-                Some(&"ReadAnything,SoftNavigationHeuristics".into()),
-            );
-            command_line.append_switch_with_value(
-                Some(&"disable-blink-features".into()),
-                Some(&"SoftNavigationHeuristics,SoftNavigationDetection".into()),
+                Some(&"ImmersiveReadAnything".into()),
             );
         }
 

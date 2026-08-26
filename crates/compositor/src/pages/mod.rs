@@ -24,6 +24,7 @@ pub mod history_list;
 pub mod omnibox;
 pub mod settings_list;
 pub mod switcher;
+pub mod userscripts_list;
 pub mod workspace_list;
 
 pub(crate) fn html_escape(s: &str) -> String {

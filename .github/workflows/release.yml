@@ -19,7 +19,7 @@ env:
   # crates/*/Cargo.toml. Not read dynamically from Cargo.lock: this
   # changes rarely enough that a hardcoded value + this comment is
   # simpler than a parsing step.
-  CEF_VERSION: 151.4.0+151.3.17
+  CEF_VERSION: 151.8.0+151.3.24
   CEF_PATH: ${{ github.workspace }}/.cef-cache
 
 jobs:

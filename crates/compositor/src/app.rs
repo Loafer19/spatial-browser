@@ -11,7 +11,10 @@
 
 use crate::browser::{self, Page};
 use crate::hotkeys;
-use crate::input::{KeyboardInput, MouseInput};
+use crate::input::{
+    send_touch_to_host, KeyboardInput, MouseInput, TouchCmd, TouchHit, TouchInput,
+};
+use crate::viewport::Viewport;
 use crate::output::{FrameOutcome, GpuState, PageDraw, Rect, THEMES};
 use crate::pending_actions;
 use crate::persistence::{
@@ -25,7 +28,6 @@ use crate::persistence::{
 };
 use crate::session::Session;
 use crate::userscripts;
-use crate::viewport::Viewport;
 use cef::{ImplBrowser, ImplBrowserHost};
 use cef_bridge::CURSOR;
 use std::sync::Arc;
@@ -71,11 +73,12 @@ pub struct App {
     // change — see `sync_blocklist_settings` below — since that's what
     // `on_before_resource_load` actually reads from, not this struct.
     settings: AppSettings,
-    // Loaded once at startup from ~/.config/spatial-browser/userscripts/
-    // — editing a script file needs a restart to take effect, no
-    // in-app editor or live-reload (see userscripts.rs's header).
+    // Loaded at startup from ~/.config/spatial-browser/userscripts/;
+    // Ctrl+Shift+U / the list page's Reload re-reads from disk without
+    // restarting (see userscripts.rs).
     userscripts: Vec<userscripts::UserScript>,
     mouse: MouseInput,
+    touch: TouchInput,
     keyboard: KeyboardInput,
     // Raw window-space physical cursor position — updated on every
     // CursorMoved, consulted by MouseInput/MouseWheel events (which don't
@@ -143,6 +146,7 @@ impl Default for App {
             settings,
             userscripts: userscripts::load(),
             mouse: MouseInput::default(),
+            touch: TouchInput::default(),
             keyboard: KeyboardInput::default(),
             cursor_window: (0.0, 0.0),
             modifiers: ModifiersState::default(),
@@ -417,6 +421,64 @@ impl ApplicationHandler for App {
                     self.mouse.wheel(delta, host.as_ref());
                 }
             }
+            WindowEvent::Touch(touch) => {
+                let scale = state.window.scale_factor() as f32;
+                let window_pos = (touch.location.x as f32, touch.location.y as f32);
+                // Keep cursor_window in sync so pinch-from-trackpad /
+                // subsequent mouse wheel zoom still has a sensible pivot
+                // after a touch interaction.
+                self.cursor_window = window_pos;
+                let viewport = self.session.viewport();
+                let world = viewport.screen_to_world(window_pos);
+                let hit = hit_test(self.session.pages(), world.0, world.1).map(|i| {
+                    let page = &self.session.pages()[i];
+                    TouchHit {
+                        browser_id: page.browser.identifier(),
+                        local: (
+                            (world.0 - page.rect.x) / scale,
+                            (world.1 - page.rect.y) / scale,
+                        ),
+                    }
+                });
+                let cmds = self.touch.handle(&touch, hit, viewport.offset, viewport.zoom);
+                for cmd in cmds {
+                    match cmd {
+                        TouchCmd::Send {
+                            browser_id,
+                            id,
+                            local,
+                            type_,
+                            pressure,
+                        } => {
+                            if let Some(page) = self
+                                .session
+                                .pages()
+                                .iter()
+                                .find(|p| p.browser.identifier() == browser_id)
+                            {
+                                if let Some(host) = page.browser.host() {
+                                    send_touch_to_host(&host, id, local, type_, pressure);
+                                }
+                            }
+                        }
+                        TouchCmd::PanViewport { offset } => {
+                            self.session.pan_viewport_to(offset);
+                        }
+                        TouchCmd::SetViewport { offset, zoom } => {
+                            self.session.set_viewport(Viewport { offset, zoom });
+                        }
+                    }
+                }
+            }
+            // macOS/iOS trackpad pinch — no-op on Linux (winit never
+            // emits it there); kept so a future macOS build gets canvas
+            // zoom without another input path.
+            WindowEvent::PinchGesture { delta, .. } => {
+                if delta.is_finite() {
+                    let factor = (1.0 + delta as f32).clamp(0.5, 2.0);
+                    self.session.zoom_viewport_at(self.cursor_window, factor);
+                }
+            }
             WindowEvent::CursorLeft { .. } => {
                 let cursor_world = self.session.viewport().screen_to_world(self.cursor_window);
                 if let Some(i) = hit_test(self.session.pages(), cursor_world.0, cursor_world.1) {
@@ -447,6 +509,7 @@ impl ApplicationHandler for App {
                     &self.history,
                     &self.workspaces,
                     &self.settings,
+                    &mut self.userscripts,
                 ) {
                     return;
                 }
@@ -473,7 +536,7 @@ impl ApplicationHandler for App {
                     &mut self.history,
                     &mut self.workspaces,
                     &mut self.settings,
-                    &self.userscripts,
+                    &mut self.userscripts,
                 );
 
                 if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {

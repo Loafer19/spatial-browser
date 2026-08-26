@@ -21,13 +21,14 @@ use crate::persistence::{
     workspaces::{self, Workspace, WorkspacePage},
 };
 use crate::session::Session;
-use crate::userscripts::{self, UserScript};
+use crate::userscripts::{self, RunAt, UserScript};
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 use cef_bridge::{
-    BookmarkAction, DownloadPageAction, HistoryPageAction, SettingsPageAction, WorkspacePageAction,
-    PENDING_BOOKMARK, PENDING_DOWNLOADS, PENDING_DOWNLOAD_ACTION, PENDING_HISTORY_ACTION,
-    PENDING_OMNIBOX, PENDING_POPUPS, PENDING_SETTINGS_ACTION, PENDING_SWITCH, PENDING_VISITS,
-    PENDING_WORKSPACE_ACTION,
+    BookmarkAction, DownloadPageAction, HistoryPageAction, SettingsPageAction,
+    UserscriptsPageAction, WorkspacePageAction, PENDING_BOOKMARK, PENDING_DOWNLOADS,
+    PENDING_DOWNLOAD_ACTION, PENDING_HISTORY_ACTION, PENDING_LOAD_START, PENDING_OMNIBOX,
+    PENDING_POPUPS, PENDING_SETTINGS_ACTION, PENDING_SWITCH, PENDING_USERSCRIPT_ACTION,
+    PENDING_VISITS, PENDING_WORKSPACE_ACTION,
 };
 
 /// Pushes the current ad-block toggle/custom-hosts into cef-bridge's
@@ -52,7 +53,7 @@ pub fn apply(
     history: &mut Vec<HistoryEntry>,
     workspaces: &mut Vec<Workspace>,
     settings: &mut AppSettings,
-    userscripts: &[UserScript],
+    userscripts: &mut Vec<UserScript>,
 ) {
     // Set by cef-bridge's OsrRequestHandler when a click or form submit
     // inside the bookmarks-list page (hotkeys::open_bookmarks) hits one
@@ -229,18 +230,38 @@ pub fn apply(
         session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, false));
     }
 
+    // document-start userscripts — fired from OsrLoadHandler::on_load_start
+    // so they run before the page's own scripts when CEF allows it.
+    let load_starts = PENDING_LOAD_START.with_borrow_mut(std::mem::take);
+    for (browser_id, url) in load_starts {
+        if let Some(page) = session
+            .pages()
+            .iter()
+            .find(|p| p.browser.identifier() == browser_id)
+        {
+            if page.ephemeral {
+                continue;
+            }
+            if let Some(frame) = page.browser.main_frame() {
+                for code in userscripts::matching_code(&url, userscripts, RunAt::DocumentStart) {
+                    frame.execute_java_script(Some(&code.as_str().into()), Some(&"".into()), 0);
+                }
+            }
+        }
+    }
+
     // Appended by cef-bridge's OsrLoadHandler for every completed
     // top-level navigation. Three things happen for each: the
     // copy-bridge script gets (re-)injected, since a full navigation
     // wipes whatever a previous injection put in the page's DOM (see
     // clipboard_bridge.rs — CEF's own clipboard integration doesn't
     // work at all in this windowless/OSR embedding, confirmed
-    // empirically); any userscript whose `@match` pattern fits this URL
-    // gets injected the same way (see userscripts.rs); and, skipped for
-    // ephemeral pages (F1 help, bookmarks/downloads/history/workspace/
-    // settings lists, omnibox, switcher) since those aren't something
-    // the user navigated to themselves, the visit gets recorded into
-    // history.
+    // empirically); any document-end/idle userscript whose `@match`
+    // pattern fits this URL gets injected the same way (see
+    // userscripts.rs); and, skipped for ephemeral pages (F1 help,
+    // bookmarks/downloads/history/workspace/settings lists, omnibox,
+    // switcher) since those aren't something the user navigated to
+    // themselves, the visit gets recorded into history.
     let visits = PENDING_VISITS.with_borrow_mut(std::mem::take);
     for (browser_id, url) in visits {
         if let Some(page) = session
@@ -255,8 +276,14 @@ pub fn apply(
                     0,
                 );
                 if !page.ephemeral {
-                    for code in userscripts::matching(&url, userscripts) {
-                        frame.execute_java_script(Some(&code.into()), Some(&"".into()), 0);
+                    for run_at in [RunAt::DocumentEnd, RunAt::DocumentIdle] {
+                        for code in userscripts::matching_code(&url, userscripts, run_at) {
+                            frame.execute_java_script(
+                                Some(&code.as_str().into()),
+                                Some(&"".into()),
+                                0,
+                            );
+                        }
                     }
                 }
             }
@@ -264,6 +291,23 @@ pub fn apply(
                 history::record(history, &url, now_unix_secs());
             }
         }
+    }
+
+    if let Some((browser_id, action)) =
+        PENDING_USERSCRIPT_ACTION.with_borrow_mut(|pending| pending.take())
+    {
+        match action {
+            UserscriptsPageAction::Reload => {
+                userscripts::reload(userscripts);
+            }
+            UserscriptsPageAction::OpenDir => {
+                userscripts::open_dir();
+            }
+            UserscriptsPageAction::Toggle(name) => {
+                userscripts::toggle_enabled(userscripts, &name);
+            }
+        }
+        refresh_userscripts_page(session, gpu, userscripts, browser_id);
     }
 
     // Set by cef-bridge's OsrRequestHandler when a click inside the
@@ -560,6 +604,26 @@ fn refresh_settings_page(
         return;
     };
     let url = pages::settings_list::page_url(&session.theme(), settings);
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
+fn refresh_userscripts_page(
+    session: &mut Session,
+    gpu: &GpuState,
+    scripts: &[UserScript],
+    browser_id: i32,
+) {
+    let Some(index) = session
+        .pages()
+        .iter()
+        .position(|p| p.browser.identifier() == browser_id)
+    else {
+        return;
+    };
+    let Some(rect) = session.close_at(index) else {
+        return;
+    };
+    let url = pages::userscripts_list::page_url(&session.theme(), scripts);
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
