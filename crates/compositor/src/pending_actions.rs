@@ -8,12 +8,14 @@
 // different concerns that happen to both need to run once a frame, and
 // together they'd made that file the largest in the crate by far.
 
+use crate::app::{ContextMenuState, PendingSaveOffer};
 use crate::autofill_bridge;
 use crate::browser;
 use crate::clipboard_bridge;
 use crate::hotkeys;
 use crate::output::{GpuState, Rect, THEMES};
 use crate::pages;
+use crate::pages::context_menu::MenuContext;
 use crate::persistence::{
     bookmarks::{self, Bookmark},
     downloads::{self, DownloadRecord},
@@ -28,11 +30,12 @@ use crate::userscripts::{self, RunAt, UserScript};
 use crate::userstyles::{self, UserStyle};
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 use cef_bridge::{
-    BookmarkAction, DownloadPageAction, HistoryPageAction, PasswordAction, SettingsPageAction,
-    UserscriptsPageAction, WorkspacePageAction, PENDING_BOOKMARK, PENDING_DOWNLOADS,
-    PENDING_DOWNLOAD_ACTION, PENDING_HISTORY_ACTION, PENDING_LOAD_START, PENDING_OMNIBOX,
-    PENDING_PASSWORD_ACTION, PENDING_POPUPS, PENDING_SETTINGS_ACTION, PENDING_SWITCH,
-    PENDING_USERSCRIPT_ACTION, PENDING_VISITS, PENDING_WORKSPACE_ACTION,
+    BookmarkAction, ContextAction, DownloadPageAction, HistoryPageAction, PasswordAction,
+    SettingsPageAction, UserscriptsPageAction, WorkspacePageAction, PENDING_BOOKMARK,
+    PENDING_CONTEXT_ACTION, PENDING_DOWNLOADS, PENDING_DOWNLOAD_ACTION, PENDING_HISTORY_ACTION,
+    PENDING_LOAD_START, PENDING_OMNIBOX, PENDING_PASSWORD_ACTION, PENDING_POPUPS,
+    PENDING_SETTINGS_ACTION, PENDING_SWITCH, PENDING_USERSCRIPT_ACTION, PENDING_VISITS,
+    PENDING_WORKSPACE_ACTION,
 };
 
 /// Pushes the current ad-block toggle/custom-hosts into cef-bridge's
@@ -61,6 +64,9 @@ pub fn apply(
     userstyles: &mut Vec<UserStyle>,
     vault: &mut Option<VaultSession>,
     generated_password: &mut Option<String>,
+    pending_save_offer: &mut Option<PendingSaveOffer>,
+    context_menu: &mut Option<ContextMenuState>,
+    pending_context_hit: &mut Option<(i32, (f32, f32))>,
 ) {
     // Set by cef-bridge's OsrRequestHandler when a click or form submit
     // inside the bookmarks-list page (hotkeys::open_bookmarks) hits one
@@ -287,11 +293,34 @@ pub fn apply(
                     0,
                 );
                 if !page.ephemeral {
+                    let bridge = autofill_bridge::script(&session.theme());
                     frame.execute_java_script(
-                        Some(&autofill_bridge::AUTOFILL_BRIDGE_SCRIPT.into()),
+                        Some(&bridge.as_str().into()),
                         Some(&"".into()),
                         0,
                     );
+                    // Re-show save banner after login navigations wipe the DOM.
+                    if let Some(offer) = pending_save_offer.as_ref() {
+                        let page_origin = vault::normalize_origin(&url);
+                        if page_origin == vault::normalize_origin(&offer.origin) {
+                            let payload = format!(
+                                "{{origin:{},username:{},password:{},id:{}}}",
+                                serde_json::to_string(&offer.origin).unwrap_or_default(),
+                                serde_json::to_string(&offer.username).unwrap_or_default(),
+                                serde_json::to_string(&offer.password).unwrap_or_default(),
+                                serde_json::to_string(&offer.id).unwrap_or_default(),
+                            );
+                            let js = format!(
+                                "window.__spatialAutofillShowSave && window.__spatialAutofillShowSave({payload});"
+                            );
+                            frame.execute_java_script(
+                                Some(&js.as_str().into()),
+                                Some(&"".into()),
+                                0,
+                            );
+                            *pending_save_offer = None;
+                        }
+                    }
                 }
                 // Styles again on load-end (covers navigations that
                 // skipped start, and re-applies after full document swap).
@@ -348,10 +377,29 @@ pub fn apply(
             gpu,
             vault,
             generated_password,
+            pending_save_offer,
             browser_id,
             action,
         );
     }
+
+    if let Some((browser_id, action)) =
+        PENDING_CONTEXT_ACTION.with_borrow_mut(|pending| pending.take())
+    {
+        handle_context_action(
+            session,
+            gpu,
+            vault,
+            context_menu,
+            pending_context_hit,
+            workspaces,
+            typed_history,
+            settings,
+            browser_id,
+            action,
+        );
+    }
+    // typed_history is &mut above — fine for open_new which only reads.
 
     // Set by cef-bridge's OsrRequestHandler when a click inside the
     // history-list page (hotkeys::open_history) hits a `history://...`
@@ -538,11 +586,249 @@ pub fn apply(
 /// and respawns rather than `load_url` in place: a navigation issued
 /// right after CEF just canceled one on that same frame isn't
 /// reliable.
+pub(crate) fn dismiss_context_menu(
+    session: &mut Session,
+    context_menu: &mut Option<ContextMenuState>,
+) {
+    let Some(cm) = context_menu.take() else {
+        return;
+    };
+    if let Some(index) = session
+        .pages()
+        .iter()
+        .position(|p| p.browser.identifier() == cm.menu_browser_id)
+    {
+        let _ = session.close_at(index);
+    }
+}
+
+pub(crate) fn open_context_menu(
+    session: &mut Session,
+    gpu: &GpuState,
+    context_menu: &mut Option<ContextMenuState>,
+    screen_pos: (f32, f32),
+    ctx: MenuContext,
+) {
+    dismiss_context_menu(session, context_menu);
+    let url = pages::context_menu::page_url(&session.theme(), &ctx);
+    let (css_w, css_h) = pages::context_menu::menu_css_size(&ctx);
+    // CEF logical size = world_rect / scale_factor (see browser::Page::set_rect).
+    // Want logical == css_* at current zoom → world = css * scale / zoom.
+    let scale = gpu.window.scale_factor() as f32;
+    let zoom = session.viewport().zoom.max(0.05);
+    let viewport = session.viewport();
+    let world = viewport.screen_to_world(screen_pos);
+    let rect = Rect {
+        x: world.0,
+        y: world.1,
+        w: css_w * scale / zoom,
+        h: css_h * scale / zoom,
+    };
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+    let menu_id = session.pages().last().map(|p| p.browser.identifier());
+    if let Some(menu_browser_id) = menu_id {
+        *context_menu = Some(ContextMenuState {
+            menu_browser_id,
+            target_browser_id: ctx.target_browser_id,
+            screen_pos,
+        });
+    }
+}
+
+fn handle_context_action(
+    session: &mut Session,
+    gpu: &GpuState,
+    vault: &mut Option<VaultSession>,
+    context_menu: &mut Option<ContextMenuState>,
+    pending_context_hit: &mut Option<(i32, (f32, f32))>,
+    workspaces: &mut Vec<Workspace>,
+    typed_history: &[String],
+    settings: &AppSettings,
+    browser_id: i32,
+    action: ContextAction,
+) {
+    match action {
+        ContextAction::Hit {
+            link,
+            image,
+            password_field,
+            page_url,
+        } => {
+            let (target_id, screen_pos) = match pending_context_hit.take() {
+                Some(v) => v,
+                None => (browser_id, (40.0, 40.0)),
+            };
+            open_context_menu(
+                session,
+                gpu,
+                context_menu,
+                screen_pos,
+                MenuContext {
+                    on_canvas: false,
+                    page_url: Some(page_url),
+                    link,
+                    image,
+                    password_field,
+                    target_browser_id: Some(target_id),
+                },
+            );
+        }
+        ContextAction::OpenLink(url) => {
+            dismiss_context_menu(session, context_menu);
+            let size = gpu.window.inner_size();
+            let rect = session.cascade_rect((size.width as f32, size.height as f32));
+            session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, false));
+        }
+        ContextAction::Copy(text) => {
+            dismiss_context_menu(session, context_menu);
+            let _ = std::process::Command::new("wl-copy").arg(&text).spawn();
+        }
+        ContextAction::SaveImage(url) => {
+            let target = context_menu
+                .as_ref()
+                .and_then(|c| c.target_browser_id)
+                .unwrap_or(browser_id);
+            dismiss_context_menu(session, context_menu);
+            if let Some(page) = session
+                .pages()
+                .iter()
+                .find(|p| p.browser.identifier() == target)
+            {
+                if let Some(frame) = page.browser.main_frame() {
+                    let js = format!(
+                        "(function(u){{var a=document.createElement('a');a.href=u;a.download='';\
+                         a.rel='noopener';document.documentElement.appendChild(a);a.click();a.remove();}})({});",
+                        serde_json::to_string(&url).unwrap_or_default()
+                    );
+                    frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
+                }
+            }
+        }
+        ContextAction::GenPassword => {
+            dismiss_context_menu(session, context_menu);
+            let pw = vault::generate_password(20, true);
+            let _ = std::process::Command::new("wl-copy").arg(&pw).spawn();
+        }
+        ContextAction::FillPassword => {
+            let target = context_menu
+                .as_ref()
+                .and_then(|c| c.target_browser_id);
+            dismiss_context_menu(session, context_menu);
+            if vault.is_none() {
+                hotkeys::open_passwords(session, gpu, None);
+                return;
+            }
+            if let Some(tid) = target {
+                if let Some(page) = session.pages().iter().find(|p| p.browser.identifier() == tid)
+                {
+                    let origin = vault::normalize_origin(&page.url());
+                    if let Some(v) = vault.as_ref() {
+                        let matches = v.entries_for_origin(&origin);
+                        if let Some(frame) = page.browser.main_frame() {
+                            match matches.len() {
+                                0 => {}
+                                1 => {
+                                    let js = fill_entry_js(matches[0]);
+                                    frame.execute_java_script(
+                                        Some(&js.as_str().into()),
+                                        Some(&"".into()),
+                                        0,
+                                    );
+                                }
+                                _ => {
+                                    let items: Vec<String> = matches
+                                        .iter()
+                                        .map(|e| {
+                                            format!(
+                                                "{{id:{},username:{}}}",
+                                                serde_json::to_string(&e.id).unwrap_or_default(),
+                                                serde_json::to_string(&e.username)
+                                                    .unwrap_or_default()
+                                            )
+                                        })
+                                        .collect();
+                                    let js = format!(
+                                        "window.__spatialAutofillShowPicker && window.__spatialAutofillShowPicker([{}]);",
+                                        items.join(",")
+                                    );
+                                    frame.execute_java_script(
+                                        Some(&js.as_str().into()),
+                                        Some(&"".into()),
+                                        0,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                hotkeys::open_passwords(session, gpu, vault.as_ref());
+            }
+        }
+        ContextAction::ClosePage => {
+            let target = context_menu
+                .as_ref()
+                .and_then(|c| c.target_browser_id);
+            dismiss_context_menu(session, context_menu);
+            if let Some(tid) = target {
+                if let Some(index) = session
+                    .pages()
+                    .iter()
+                    .position(|p| p.browser.identifier() == tid)
+                {
+                    let _ = session.close_at(index);
+                }
+            }
+        }
+        ContextAction::NewPage => {
+            dismiss_context_menu(session, context_menu);
+            hotkeys::open_new(session, gpu, typed_history, settings);
+        }
+        ContextAction::SaveWorkspace => {
+            dismiss_context_menu(session, context_menu);
+            let pages: Vec<WorkspacePage> = session
+                .pages()
+                .iter()
+                .filter(|p| !p.ephemeral)
+                .map(|p| WorkspacePage {
+                    url: p.url(),
+                    rect: p.rect,
+                })
+                .collect();
+            workspaces.push(Workspace {
+                name: format!("Workspace {}", workspaces.len() + 1),
+                viewport: session.viewport(),
+                theme: session.theme().name.to_string(),
+                pages,
+            });
+            workspaces::save(workspaces);
+        }
+        ContextAction::Reader => {
+            let target = context_menu.as_ref().and_then(|c| c.target_browser_id);
+            dismiss_context_menu(session, context_menu);
+            if let Some(tid) = target {
+                if let Some(index) = session
+                    .pages()
+                    .iter()
+                    .position(|p| p.browser.identifier() == tid)
+                {
+                    session.bring_to_front(index);
+                }
+            }
+            hotkeys::toggle_reader_mode(session, settings);
+        }
+        ContextAction::Dismiss => {
+            dismiss_context_menu(session, context_menu);
+        }
+    }
+}
+
 fn handle_password_action(
     session: &mut Session,
     gpu: &GpuState,
     vault: &mut Option<VaultSession>,
     generated_password: &mut Option<String>,
+    pending_save_offer: &mut Option<PendingSaveOffer>,
     browser_id: i32,
     action: PasswordAction,
 ) {
@@ -667,6 +953,13 @@ fn handle_password_action(
                     return;
                 }
             }
+            // Keep across the login navigation; also try to show now (SPA).
+            *pending_save_offer = Some(PendingSaveOffer {
+                origin: origin.clone(),
+                username: username.clone(),
+                password: password.clone(),
+                id: id.clone(),
+            });
             if let Some(page) = session
                 .pages()
                 .iter()
@@ -702,8 +995,6 @@ fn handle_password_action(
                 username,
                 password,
                 email: None,
-                given_name: None,
-                family_name: None,
                 address_line1: None,
                 city: None,
                 postal_code: None,
@@ -714,11 +1005,13 @@ fn handle_password_action(
             if let Err(e) = v.upsert(entry) {
                 log::warn!("vault save: {e}");
             }
+            *pending_save_offer = None;
         }
         PasswordAction::Never { origin } => {
             if let Some(v) = vault.as_mut() {
                 let _ = v.add_never_save(&origin);
             }
+            *pending_save_offer = None;
         }
         PasswordAction::Delete { id } => {
             if let Some(v) = vault.as_mut() {
@@ -732,8 +1025,6 @@ fn handle_password_action(
             username,
             password,
             email,
-            given_name,
-            family_name,
         } => {
             if let Some(v) = vault.as_mut() {
                 let entry = VaultEntry {
@@ -742,8 +1033,6 @@ fn handle_password_action(
                     username,
                     password,
                     email,
-                    given_name,
-                    family_name,
                     address_line1: None,
                     city: None,
                     postal_code: None,
@@ -773,8 +1062,6 @@ fn fill_entry_js(entry: &VaultEntry) -> String {
         "username": entry.username,
         "password": entry.password,
         "email": entry.email,
-        "given_name": entry.given_name,
-        "family_name": entry.family_name,
         "address_line1": entry.address_line1,
         "city": entry.city,
         "postal_code": entry.postal_code,
@@ -787,16 +1074,13 @@ fn fill_entry_js(entry: &VaultEntry) -> String {
 }
 
 fn reinject_autofill(session: &Session) {
+    let bridge = autofill_bridge::script(&session.theme());
     for page in session.pages() {
         if page.ephemeral {
             continue;
         }
         if let Some(frame) = page.browser.main_frame() {
-            frame.execute_java_script(
-                Some(&autofill_bridge::AUTOFILL_BRIDGE_SCRIPT.into()),
-                Some(&"".into()),
-                0,
-            );
+            frame.execute_java_script(Some(&bridge.as_str().into()), Some(&"".into()), 0);
         }
     }
 }

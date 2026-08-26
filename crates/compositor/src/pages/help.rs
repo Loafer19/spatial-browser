@@ -48,6 +48,7 @@ pub const HELP_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+Scroll", "Zoom canvas"),
             ("One-finger drag (empty)", "Pan canvas (touch)"),
             ("Two-finger pinch/drag", "Zoom + pan canvas (touch)"),
+            ("Right-click", "Context menu (page / link / canvas)"),
             ("Ctrl+Shift+0", "Reset canvas view"),
         ],
     ),

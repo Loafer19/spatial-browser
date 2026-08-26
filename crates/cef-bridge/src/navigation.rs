@@ -377,8 +377,6 @@ pub enum PasswordAction {
         username: String,
         password: String,
         email: Option<String>,
-        given_name: Option<String>,
-        family_name: Option<String>,
     },
     RemoveNever {
         origin: String,
@@ -394,6 +392,63 @@ pub enum PasswordAction {
 thread_local! {
     pub static PENDING_PASSWORD_ACTION: RefCell<Option<(i32, PasswordAction)>> =
         const { RefCell::new(None) };
+}
+
+/// Right-click context menu actions (`context://...`).
+pub enum ContextAction {
+    /// Element hit-test result from a page (async after right-click).
+    Hit {
+        link: Option<String>,
+        image: Option<String>,
+        password_field: bool,
+        page_url: String,
+    },
+    OpenLink(String),
+    Copy(String),
+    SaveImage(String),
+    GenPassword,
+    FillPassword,
+    ClosePage,
+    NewPage,
+    SaveWorkspace,
+    Reader,
+    Dismiss,
+}
+
+thread_local! {
+    pub static PENDING_CONTEXT_ACTION: RefCell<Option<(i32, ContextAction)>> =
+        const { RefCell::new(None) };
+}
+
+fn parse_context_action(url: &str) -> Option<ContextAction> {
+    let rest = url.strip_prefix("context://")?;
+    if let Some(query) = rest.strip_prefix("hit?") {
+        return Some(ContextAction::Hit {
+            link: query_param(query, "link").filter(|s| !s.is_empty()),
+            image: query_param(query, "image").filter(|s| !s.is_empty()),
+            password_field: query_param(query, "pwd").as_deref() == Some("1"),
+            page_url: query_param(query, "page").unwrap_or_default(),
+        });
+    }
+    if let Some(query) = rest.strip_prefix("open-link?") {
+        return Some(ContextAction::OpenLink(query_param(query, "url")?));
+    }
+    if let Some(query) = rest.strip_prefix("copy?") {
+        return Some(ContextAction::Copy(query_param(query, "text")?));
+    }
+    if let Some(query) = rest.strip_prefix("save-image?") {
+        return Some(ContextAction::SaveImage(query_param(query, "url")?));
+    }
+    Some(match rest {
+        "gen-password" => ContextAction::GenPassword,
+        "fill-password" => ContextAction::FillPassword,
+        "close-page" => ContextAction::ClosePage,
+        "new-page" => ContextAction::NewPage,
+        "save-workspace" => ContextAction::SaveWorkspace,
+        "reader" => ContextAction::Reader,
+        "dismiss" => ContextAction::Dismiss,
+        _ => return None,
+    })
 }
 
 fn parse_password_action(url: &str) -> Option<PasswordAction> {
@@ -451,8 +506,6 @@ fn parse_password_action(url: &str) -> Option<PasswordAction> {
             username: query_param(query, "username").unwrap_or_default(),
             password: query_param(query, "password").unwrap_or_default(),
             email: query_param(query, "email").filter(|s| !s.is_empty()),
-            given_name: query_param(query, "given_name").filter(|s| !s.is_empty()),
-            family_name: query_param(query, "family_name").filter(|s| !s.is_empty()),
         });
     }
     if let Some(query) = rest.strip_prefix("remove-never?") {
@@ -563,6 +616,10 @@ wrap_request_handler! {
             }
             if let Some(action) = parse_password_action(&url) {
                 PENDING_PASSWORD_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
+                return true as _;
+            }
+            if let Some(action) = parse_context_action(&url) {
+                PENDING_CONTEXT_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
                 return true as _;
             }
             if let Some(text) = parse_clipboard_copy(&url) {

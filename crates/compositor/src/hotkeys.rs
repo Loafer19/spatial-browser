@@ -240,7 +240,7 @@ pub fn handle(
 /// immediately closes and replaces it with a real page for the resolved
 /// destination (see app.rs's PENDING_OMNIBOX handling); if left
 /// untouched there's nothing worth freezing into session.json either.
-fn open_new(
+pub(crate) fn open_new(
     session: &mut Session,
     gpu: &GpuState,
     typed_history: &[String],
@@ -325,7 +325,7 @@ fn copy_focused_url(session: &Session) {
 /// see reader_mode.rs for the extraction script and browser::Page's
 /// `reader_mode` field for why toggling off just reloads instead of
 /// reversing the rewrite in place.
-fn toggle_reader_mode(session: &Session, settings: &AppSettings) {
+pub(crate) fn toggle_reader_mode(session: &Session, settings: &AppSettings) {
     let Some(page) = session.pages().last() else {
         return;
     };

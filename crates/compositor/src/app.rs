@@ -30,7 +30,24 @@ use crate::session::Session;
 use crate::persistence::vault::VaultSession;
 use crate::userscripts;
 use crate::userstyles;
-use cef::{ImplBrowser, ImplBrowserHost};
+use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
+
+/// Stashed after a login form submit until the following page load.
+#[derive(Clone)]
+pub struct PendingSaveOffer {
+    pub origin: String,
+    pub username: String,
+    pub password: String,
+    pub id: String,
+}
+
+/// Open right-click menu (ephemeral page) and the page it applies to.
+pub struct ContextMenuState {
+    pub menu_browser_id: i32,
+    pub target_browser_id: Option<i32>,
+    #[allow(dead_code)]
+    pub screen_pos: (f32, f32),
+}
 use cef_bridge::CURSOR;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -83,6 +100,12 @@ pub struct App {
     vault: Option<VaultSession>,
     /// Last generated password shown on the passwords list page.
     generated_password: Option<String>,
+    /// Save-offer captured on form submit; re-shown after the next
+    /// top-level load for that origin (login navigations wipe in-page UI).
+    pending_save_offer: Option<PendingSaveOffer>,
+    context_menu: Option<ContextMenuState>,
+    /// After right-click on a page, wait for context://hit before opening menu.
+    pending_context_hit: Option<(i32, (f32, f32))>,
     mouse: MouseInput,
     touch: TouchInput,
     keyboard: KeyboardInput,
@@ -154,6 +177,9 @@ impl Default for App {
             userstyles: userstyles::load(),
             vault: None,
             generated_password: None,
+            pending_save_offer: None,
+            context_menu: None,
+            pending_context_hit: None,
             mouse: MouseInput::default(),
             touch: TouchInput::default(),
             keyboard: KeyboardInput::default(),
@@ -381,6 +407,29 @@ impl ApplicationHandler for App {
                 if button == MouseButton::Left {
                     match element_state {
                         ElementState::Pressed => {
+                            // Dismiss context menu on any left click outside it
+                            // (clicks on the menu itself are CEF navigations).
+                            if self.context_menu.is_some() {
+                                let cursor_world = self
+                                    .session
+                                    .viewport()
+                                    .screen_to_world(self.cursor_window);
+                                let on_menu = self.context_menu.as_ref().and_then(|cm| {
+                                    self.session.pages().iter().find(|p| {
+                                        p.browser.identifier() == cm.menu_browser_id
+                                            && cursor_world.0 >= p.rect.x
+                                            && cursor_world.0 <= p.rect.x + p.rect.w
+                                            && cursor_world.1 >= p.rect.y
+                                            && cursor_world.1 <= p.rect.y + p.rect.h
+                                    })
+                                });
+                                if on_menu.is_none() {
+                                    pending_actions::dismiss_context_menu(
+                                        &mut self.session,
+                                        &mut self.context_menu,
+                                    );
+                                }
+                            }
                             if let Some(i) = resize_hit_test(
                                 self.session.pages(),
                                 &self.session.viewport(),
@@ -398,6 +447,73 @@ impl ApplicationHandler for App {
                             }
                         }
                     }
+                }
+
+                // Right-click → our context menu (not CEF's).
+                if button == MouseButton::Right && element_state == ElementState::Pressed {
+                    pending_actions::dismiss_context_menu(
+                        &mut self.session,
+                        &mut self.context_menu,
+                    );
+                    let cursor_world = self.session.viewport().screen_to_world(self.cursor_window);
+                    let scale = state.window.scale_factor();
+                    match hit_test(self.session.pages(), cursor_world.0, cursor_world.1) {
+                        None => {
+                            pending_actions::open_context_menu(
+                                &mut self.session,
+                                state,
+                                &mut self.context_menu,
+                                self.cursor_window,
+                                crate::pages::context_menu::MenuContext {
+                                    on_canvas: true,
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                        Some(i) => {
+                            let i = self.session.bring_to_front(i);
+                            let page = &self.session.pages()[i];
+                            // Skip reopening menu on the menu page itself.
+                            if self.context_menu.as_ref().map(|c| c.menu_browser_id)
+                                == Some(page.browser.identifier())
+                            {
+                                return;
+                            }
+                            let browser_id = page.browser.identifier();
+                            let page_url = page.url();
+                            let ephemeral = page.ephemeral;
+                            if ephemeral {
+                                // Utility pages have no autofill bridge — page-level menu only.
+                                pending_actions::open_context_menu(
+                                    &mut self.session,
+                                    state,
+                                    &mut self.context_menu,
+                                    self.cursor_window,
+                                    crate::pages::context_menu::MenuContext {
+                                        on_canvas: false,
+                                        page_url: Some(page_url),
+                                        target_browser_id: Some(browser_id),
+                                        ..Default::default()
+                                    },
+                                );
+                            } else {
+                                let local_x = (cursor_world.0 - page.rect.x) / scale as f32;
+                                let local_y = (cursor_world.1 - page.rect.y) / scale as f32;
+                                self.pending_context_hit = Some((browser_id, self.cursor_window));
+                                if let Some(frame) = page.browser.main_frame() {
+                                    let js = format!(
+                                        "window.__spatialContextHitAt && window.__spatialContextHitAt({local_x},{local_y});"
+                                    );
+                                    frame.execute_java_script(
+                                        Some(&js.as_str().into()),
+                                        Some(&"".into()),
+                                        0,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    return;
                 }
 
                 let cursor_world = self.session.viewport().screen_to_world(self.cursor_window);
@@ -551,6 +667,9 @@ impl ApplicationHandler for App {
                     &mut self.userstyles,
                     &mut self.vault,
                     &mut self.generated_password,
+                    &mut self.pending_save_offer,
+                    &mut self.context_menu,
+                    &mut self.pending_context_hit,
                 );
 
                 if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {
