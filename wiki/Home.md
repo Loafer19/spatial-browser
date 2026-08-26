@@ -28,6 +28,7 @@ Latest release: [v0.5.0](https://github.com/Loafer19/spatial-browser/releases/ta
 | [[Architecture]] | Crates, CEF OSR, canvas UI model |
 | [[Canvas-and-Shortcuts]] | Pan/zoom/touch + every hotkey |
 | [[Userscripts]] | Scripts + userstyles (`spatial-ui` for built-in pages) |
+| [[Password-Manager]] | Local vault, autofill, save prompts (`Ctrl+Shift+P`) |
 | [[Features]] | Bookmarks, history, workspaces, reader, adblock, … |
 | [[Configuration]] | Config paths, settings, env overrides |
 | [[Limitations]] | No Chrome Web Store, known CEF crashes, workarounds |
