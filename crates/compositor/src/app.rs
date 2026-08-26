@@ -11,6 +11,7 @@
 
 use crate::browser::{self, Page};
 use crate::hotkeys;
+use crate::hud::{Hud, HudHit};
 use crate::input::{
     send_touch_to_host, KeyboardInput, MouseInput, TouchCmd, TouchHit, TouchInput,
 };
@@ -24,7 +25,7 @@ use crate::persistence::{
     history::{self, HistoryEntry},
     settings::{self, AppSettings},
     typed_history,
-    workspaces::{self, Workspace},
+    workspaces::{self, WorkspaceRuntime, WorkspaceStore},
 };
 use crate::session::Session;
 use crate::persistence::vault::VaultSession;
@@ -80,11 +81,13 @@ pub struct App {
     // Loaded once at startup from history.json, saved immediately on
     // every completed page visit (see PENDING_VISITS handling below).
     history: Vec<HistoryEntry>,
-    // Loaded once at startup from workspaces.json, saved immediately on
-    // every save/rename/delete (see PENDING_WORKSPACE_ACTION handling
-    // below) — rare, deliberate actions, no need for the canvas
-    // session's debounce.
-    workspaces: Vec<Workspace>,
+    // Live workspace slots (workspaces.json v2). Active slot mirrors
+    // the canvas; captured on switch and on the session save debounce.
+    workspaces: WorkspaceStore,
+    // In-process parked browsers for non-active slots (no reload on switch).
+    workspace_runtime: WorkspaceRuntime,
+    // Top chip strip — created with the GPU device in `resumed`.
+    hud: Option<Hud>,
     // Loaded once at startup from settings.json, saved immediately on
     // every change (see PENDING_SETTINGS_ACTION handling below).
     // cef-bridge's own live ad-block state (blocklist::ENABLED/
@@ -171,7 +174,9 @@ impl Default for App {
             typed_history: typed_history::load(),
             downloads: downloads::load(),
             history: history::load(),
-            workspaces: workspaces::load(),
+            workspaces: WorkspaceStore::load(),
+            workspace_runtime: WorkspaceRuntime::new(),
+            hud: None,
             settings,
             userscripts: userscripts::load(),
             userstyles: userstyles::load(),
@@ -236,49 +241,59 @@ impl ApplicationHandler for App {
         );
         let state = pollster::block_on(GpuState::new(window.clone()));
 
-        self.session = persistence::load(&state, &window).unwrap_or_else(|| {
-            // No saved session yet (first run, or a load error) — two
-            // pages side by side, with margins, proves the canvas holds
-            // more than one independently-rendered, independently-placed
-            // page.
-            let size = window.inner_size();
-            let margin = 24.0;
-            let gap = 24.0;
-            let page_w = (size.width as f32 - margin * 2.0 - gap) / 2.0;
-            let page_h = size.height as f32 - margin * 2.0;
-            let rects = [
-                Rect {
-                    x: margin,
-                    y: margin,
-                    w: page_w,
-                    h: page_h,
-                },
-                Rect {
-                    x: margin + page_w + gap,
-                    y: margin,
-                    w: page_w,
-                    h: page_h,
-                },
-            ];
-            let urls = [
-                "https://www.google.com",
-                // Hex colors avoided deliberately: an unescaped `#` in a
-                // `data:` URL starts a fragment, silently truncating
-                // everything after it from the actual document.
-                "data:text/html;charset=utf-8,<body style=\"background:rgb(42,106,74);color:rgb(255,255,255);font-family:sans-serif;font-size:48px;display:flex;align-items:center;justify-content:center;height:100vh;margin:0\">Page 2</body>",
-            ];
-            let pages = rects
-                .into_iter()
-                .zip(urls)
-                .map(|(rect, url)| browser::spawn(&state, &window, url, rect, false))
-                .collect();
-            Session::new(pages, Viewport::default(), THEMES[0])
-        });
+        let mut hud = Hud::new(&state.device, &state.queue, state.surface_format());
+        let (cw, ch) = state.size();
+        hud.set_screen_size(cw, ch);
+
+        // Prefer the active live slot when it has been visited; otherwise
+        // fall back to the legacy session file / first-run defaults, then
+        // capture into the active slot so slots become the source of truth.
+        if self.workspaces.active_slot().visited {
+            let slot = self.workspaces.active_slot().clone();
+            self.session = Session::new(Vec::new(), Viewport::default(), THEMES[0]);
+            workspaces::apply_slot_to_session(&mut self.session, &state, &slot);
+        } else {
+            self.session = persistence::load(&state, &window).unwrap_or_else(|| {
+                let size = window.inner_size();
+                let margin = 24.0;
+                let gap = 24.0;
+                let page_w = (size.width as f32 - margin * 2.0 - gap) / 2.0;
+                let page_h = size.height as f32 - margin * 2.0;
+                let rects = [
+                    Rect {
+                        x: margin,
+                        y: margin,
+                        w: page_w,
+                        h: page_h,
+                    },
+                    Rect {
+                        x: margin + page_w + gap,
+                        y: margin,
+                        w: page_w,
+                        h: page_h,
+                    },
+                ];
+                let urls = [
+                    "https://www.google.com",
+                    "data:text/html;charset=utf-8,<body style=\"background:rgb(42,106,74);color:rgb(255,255,255);font-family:sans-serif;font-size:48px;display:flex;align-items:center;justify-content:center;height:100vh;margin:0\">Page 2</body>",
+                ];
+                let pages = rects
+                    .into_iter()
+                    .zip(urls)
+                    .map(|(rect, url)| browser::spawn(&state, &window, url, rect, false))
+                    .collect();
+                Session::new(pages, Viewport::default(), THEMES[0])
+            });
+            self.workspaces
+                .capture_active_from_session(&self.session);
+            self.workspaces.save();
+        }
         self.canvas_size = (
             window.inner_size().width as f32,
             window.inner_size().height as f32,
         );
 
+        self.hud = Some(hud);
         self.state = Some(state);
         window.request_redraw();
     }
@@ -293,6 +308,8 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::CloseRequested => {
+                self.workspaces.capture_active_from_session(&self.session);
+                self.workspaces.save();
                 persistence::save(&self.session);
                 event_loop.exit();
             }
@@ -307,10 +324,16 @@ impl ApplicationHandler for App {
                     self.session.rescale_pages(scale_x, scale_y, dpi_scale);
                 }
                 self.canvas_size = (new_w, new_h);
+                if let Some(hud) = &mut self.hud {
+                    hud.set_screen_size(new_w, new_h);
+                }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let scale = state.window.scale_factor();
                 self.cursor_window = (position.x as f32, position.y as f32);
+                if let Some(hud) = &mut self.hud {
+                    hud.on_cursor(self.cursor_window.1);
+                }
 
                 if let Some((start, offset_at_start)) = self.panning {
                     let dx = self.cursor_window.0 - start.0;
@@ -407,6 +430,32 @@ impl ApplicationHandler for App {
                 if button == MouseButton::Left {
                     match element_state {
                         ElementState::Pressed => {
+                            if let Some(hud) = &self.hud {
+                                if let Some(hit) =
+                                    hud.hit_test(&self.workspaces, self.cursor_window.0, self.cursor_window.1)
+                                {
+                                    match hit {
+                                        HudHit::Slot(id) => {
+                                            workspaces::switch_to(
+                                                &mut self.workspaces,
+                                                &mut self.workspace_runtime,
+                                                &mut self.session,
+                                                state,
+                                                id,
+                                            );
+                                        }
+                                        HudHit::Add => {
+                                            workspaces::add_and_switch(
+                                                &mut self.workspaces,
+                                                &mut self.workspace_runtime,
+                                                &mut self.session,
+                                                state,
+                                            );
+                                        }
+                                    }
+                                    return;
+                                }
+                            }
                             // Dismiss context menu on any left click outside it
                             // (clicks on the menu itself are CEF navigations).
                             if self.context_menu.is_some() {
@@ -632,7 +681,8 @@ impl ApplicationHandler for App {
                     &self.typed_history,
                     &self.downloads,
                     &self.history,
-                    &self.workspaces,
+                    &mut self.workspaces,
+                    &mut self.workspace_runtime,
                     &self.settings,
                     &mut self.userscripts,
                     &mut self.userstyles,
@@ -662,6 +712,7 @@ impl ApplicationHandler for App {
                     &mut self.downloads,
                     &mut self.history,
                     &mut self.workspaces,
+                    &mut self.workspace_runtime,
                     &mut self.settings,
                     &mut self.userscripts,
                     &mut self.userstyles,
@@ -698,7 +749,12 @@ impl ApplicationHandler for App {
                     .collect();
 
                 let theme = self.session.theme();
-                match state.render(&draws, &theme, viewport.offset, viewport.zoom) {
+                if let Some(hud) = &mut self.hud {
+                    hud.tick();
+                    hud.rebuild(&state.queue, &state.device, &self.workspaces, &theme);
+                }
+                let hud_ref = self.hud.as_ref();
+                match state.render(&draws, &theme, viewport.offset, viewport.zoom, hud_ref) {
                     FrameOutcome::Rendered | FrameOutcome::Skip => {}
                     FrameOutcome::Reconfigure => {
                         let size = state.window.inner_size();
@@ -712,6 +768,8 @@ impl ApplicationHandler for App {
 
                 if self.session.dirty() && self.last_save.elapsed() >= SAVE_DEBOUNCE {
                     persistence::save(&self.session);
+                    self.workspaces.capture_active_from_session(&self.session);
+                    self.workspaces.save();
                     self.session.clear_dirty();
                     self.last_save = Instant::now();
                 }

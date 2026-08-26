@@ -573,17 +573,27 @@ impl GpuState {
         self.surface.configure(&self.device, &self.config);
     }
 
+    pub fn surface_format(&self) -> wgpu::TextureFormat {
+        self.config.format
+    }
+
+    pub fn size(&self) -> (f32, f32) {
+        (self.config.width as f32, self.config.height as f32)
+    }
+
     /// Draws `pages` in the given order (back-to-front — last is topmost),
     /// over the dot-grid background. `viewport_offset`/`viewport_zoom` are
     /// the canvas pan/zoom (session::Session::viewport) — needed here
     /// only so the background grid can be drawn in world space; page
     /// rects arrive in `pages` already screen-space (see PageDraw).
+    /// Optional `hud` is drawn last (screen-space chip strip).
     pub fn render(
         &mut self,
         pages: &[PageDraw<'_>],
         theme: &Theme,
         viewport_offset: (f32, f32),
         viewport_zoom: f32,
+        hud: Option<&crate::hud::Hud>,
     ) -> FrameOutcome {
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) => t,
@@ -667,6 +677,9 @@ impl GpuState {
                 pass.set_bind_group(1, &page.quad.style_bind_group, &[]);
                 pass.set_vertex_buffer(0, page.quad.vertex_buffer.slice(..));
                 pass.draw(0..4, 0..1);
+            }
+            if let Some(hud) = hud {
+                hud.draw(&mut pass);
             }
         }
         self.queue.submit(Some(encoder.finish()));

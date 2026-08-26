@@ -20,7 +20,7 @@ use crate::persistence::bookmarks::{self, Bookmark};
 use crate::persistence::downloads::DownloadRecord;
 use crate::persistence::history::HistoryEntry;
 use crate::persistence::settings::AppSettings;
-use crate::persistence::workspaces::Workspace;
+use crate::persistence::workspaces::{self, WorkspaceRuntime, WorkspaceStore};
 use crate::reader_mode;
 use crate::session::Session;
 use crate::persistence::vault::{self, VaultSession};
@@ -42,7 +42,8 @@ pub fn handle(
     typed_history: &[String],
     downloads: &[DownloadRecord],
     history: &[HistoryEntry],
-    workspaces: &[Workspace],
+    workspaces: &mut WorkspaceStore,
+    workspace_runtime: &mut WorkspaceRuntime,
     settings: &AppSettings,
     userscripts: &mut Vec<UserScript>,
     userstyles: &mut Vec<UserStyle>,
@@ -98,6 +99,44 @@ pub fn handle(
                 open_workspaces(session, gpu, workspaces);
             } else {
                 session.close_topmost();
+            }
+            true
+        }
+        // Ctrl+N — new live workspace slot (same as HUD '+').
+        PhysicalKey::Code(KeyCode::KeyN) => {
+            if !modifiers.shift_key() {
+                workspaces::add_and_switch(workspaces, workspace_runtime, session, gpu);
+                true
+            } else {
+                false
+            }
+        }
+        // Ctrl+1..9 — switch to workspace slot N.
+        PhysicalKey::Code(
+            code @ (KeyCode::Digit1
+                | KeyCode::Digit2
+                | KeyCode::Digit3
+                | KeyCode::Digit4
+                | KeyCode::Digit5
+                | KeyCode::Digit6
+                | KeyCode::Digit7
+                | KeyCode::Digit8
+                | KeyCode::Digit9),
+        ) if !modifiers.shift_key() => {
+            let id = match code {
+                KeyCode::Digit1 => 1,
+                KeyCode::Digit2 => 2,
+                KeyCode::Digit3 => 3,
+                KeyCode::Digit4 => 4,
+                KeyCode::Digit5 => 5,
+                KeyCode::Digit6 => 6,
+                KeyCode::Digit7 => 7,
+                KeyCode::Digit8 => 8,
+                KeyCode::Digit9 => 9,
+                _ => 0,
+            };
+            if id > 0 {
+                workspaces::switch_to(workspaces, workspace_runtime, session, gpu, id);
             }
             true
         }
@@ -432,7 +471,7 @@ fn open_history(session: &mut Session, gpu: &GpuState, history: &[HistoryEntry])
 }
 
 /// Opens the Ctrl+Shift+W workspace list.
-fn open_workspaces(session: &mut Session, gpu: &GpuState, workspaces: &[Workspace]) {
+fn open_workspaces(session: &mut Session, gpu: &GpuState, workspaces: &WorkspaceStore) {
     let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
     let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);

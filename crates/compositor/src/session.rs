@@ -116,6 +116,26 @@ impl Session {
         self.mark_dirty();
     }
 
+    /// Pull every page out of the session **without** telling CEF to
+    /// close — used to park a workspace's live browsers while another
+    /// slot is active. Caller owns closing or later `install_pages`.
+    pub fn take_pages(&mut self) -> Vec<Page> {
+        self.zoomed_viewport = None;
+        self.mark_dirty();
+        std::mem::take(&mut self.pages)
+    }
+
+    /// Install previously-parked (or freshly spawned) pages. Session
+    /// must be empty — use `take_pages` / `close_topmost` first.
+    pub fn install_pages(&mut self, pages: Vec<Page>) {
+        debug_assert!(
+            self.pages.is_empty(),
+            "install_pages on a non-empty session would leak browsers"
+        );
+        self.pages = pages;
+        self.mark_dirty();
+    }
+
     /// Pops the topmost page and tells CEF to close it, if any. Its rect
     /// and current URL are kept for `pop_closed` (Ctrl+Shift+T) first —
     /// unless it's an ephemeral utility page (bookmarks/history/

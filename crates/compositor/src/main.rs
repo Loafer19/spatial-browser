@@ -16,6 +16,7 @@ mod autofill_bridge;
 mod browser;
 mod clipboard_bridge;
 mod hotkeys;
+mod hud;
 mod input;
 mod output;
 mod pages;

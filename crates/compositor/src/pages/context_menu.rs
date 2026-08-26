@@ -54,7 +54,7 @@ fn items(ctx: &MenuContext) -> Vec<(&'static str, String)> {
     }
 
     items.push(("New page", "context://new-page".into()));
-    items.push(("Save as workspace", "context://save-workspace".into()));
+    items.push(("New workspace", "context://save-workspace".into()));
     items
 }
 

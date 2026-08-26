@@ -23,7 +23,7 @@ use crate::persistence::{
     settings::{self, AppSettings},
     typed_history,
     vault::{self, VaultEntry, VaultSession},
-    workspaces::{self, Workspace, WorkspacePage},
+    workspaces::{self, WorkspaceRuntime, WorkspaceStore},
 };
 use crate::session::Session;
 use crate::userscripts::{self, RunAt, UserScript};
@@ -58,7 +58,8 @@ pub fn apply(
     typed_history: &mut Vec<String>,
     downloads: &mut Vec<DownloadRecord>,
     history: &mut Vec<HistoryEntry>,
-    workspaces: &mut Vec<Workspace>,
+    workspaces: &mut WorkspaceStore,
+    workspace_runtime: &mut WorkspaceRuntime,
     settings: &mut AppSettings,
     userscripts: &mut Vec<UserScript>,
     userstyles: &mut Vec<UserStyle>,
@@ -393,6 +394,7 @@ pub fn apply(
             context_menu,
             pending_context_hit,
             workspaces,
+            workspace_runtime,
             typed_history,
             settings,
             browser_id,
@@ -439,67 +441,41 @@ pub fn apply(
     {
         match action {
             WorkspacePageAction::Load(index) => {
-                if let Some(workspace) = workspaces.get(index).cloned() {
-                    // close_topmost (not close_at) so this still goes
-                    // through the Ctrl+Shift+T undo stack — except
-                    // ephemeral pages (this list itself included),
-                    // which close_topmost already excludes from that
-                    // stack.
-                    while !session.pages().is_empty() {
-                        session.close_topmost();
-                    }
-                    let theme = THEMES
-                        .iter()
-                        .find(|t| t.name == workspace.theme)
-                        .copied()
-                        .unwrap_or(THEMES[0]);
-                    session.set_theme(theme);
-                    session.set_viewport(workspace.viewport);
-                    for page in workspace.pages {
-                        session.add_page(browser::spawn(
-                            gpu,
-                            &gpu.window,
-                            &page.url,
-                            page.rect,
-                            false,
-                        ));
-                    }
+                if let Some(slot) = workspaces.slots.get(index).cloned() {
+                    workspaces::switch_to(
+                        workspaces,
+                        workspace_runtime,
+                        session,
+                        gpu,
+                        slot.id,
+                    );
                 }
             }
-            WorkspacePageAction::Rename(index, name) => {
-                if let Some(workspace) = workspaces.get_mut(index) {
-                    if !name.is_empty() {
-                        workspace.name = name;
-                    }
-                }
-                workspaces::save(workspaces);
+            WorkspacePageAction::Rename(_index, _name) => {
+                // Slots are numbered; rename is a no-op in v2.
                 refresh_workspaces_page(session, gpu, workspaces, browser_id);
             }
             WorkspacePageAction::Delete(index) => {
-                if index < workspaces.len() {
-                    workspaces.remove(index);
-                    workspaces::save(workspaces);
+                if let Some(id) = workspaces.slots.get(index).map(|s| s.id) {
+                    workspaces::delete_slot(
+                        workspaces,
+                        workspace_runtime,
+                        session,
+                        gpu,
+                        id,
+                    );
                 }
-                refresh_workspaces_page(session, gpu, workspaces, browser_id);
-            }
-            WorkspacePageAction::SaveNew => {
-                let pages = session
+                // List page may still be open if a non-active slot was deleted.
+                if session
                     .pages()
                     .iter()
-                    .filter(|p| !p.ephemeral)
-                    .map(|p| WorkspacePage {
-                        url: p.url(),
-                        rect: p.rect,
-                    })
-                    .collect();
-                workspaces.push(Workspace {
-                    name: format!("Workspace {}", workspaces.len() + 1),
-                    viewport: session.viewport(),
-                    theme: session.theme().name.to_string(),
-                    pages,
-                });
-                workspaces::save(workspaces);
-                refresh_workspaces_page(session, gpu, workspaces, browser_id);
+                    .any(|p| p.browser.identifier() == browser_id)
+                {
+                    refresh_workspaces_page(session, gpu, workspaces, browser_id);
+                }
+            }
+            WorkspacePageAction::SaveNew => {
+                workspaces::add_and_switch(workspaces, workspace_runtime, session, gpu);
             }
         }
     }
@@ -641,7 +617,8 @@ fn handle_context_action(
     vault: &mut Option<VaultSession>,
     context_menu: &mut Option<ContextMenuState>,
     pending_context_hit: &mut Option<(i32, (f32, f32))>,
-    workspaces: &mut Vec<Workspace>,
+    workspaces: &mut WorkspaceStore,
+    workspace_runtime: &mut WorkspaceRuntime,
     typed_history: &[String],
     settings: &AppSettings,
     browser_id: i32,
@@ -786,22 +763,7 @@ fn handle_context_action(
         }
         ContextAction::SaveWorkspace => {
             dismiss_context_menu(session, context_menu);
-            let pages: Vec<WorkspacePage> = session
-                .pages()
-                .iter()
-                .filter(|p| !p.ephemeral)
-                .map(|p| WorkspacePage {
-                    url: p.url(),
-                    rect: p.rect,
-                })
-                .collect();
-            workspaces.push(Workspace {
-                name: format!("Workspace {}", workspaces.len() + 1),
-                viewport: session.viewport(),
-                theme: session.theme().name.to_string(),
-                pages,
-            });
-            workspaces::save(workspaces);
+            workspaces::add_and_switch(workspaces, workspace_runtime, session, gpu);
         }
         ContextAction::Reader => {
             let target = context_menu.as_ref().and_then(|c| c.target_browser_id);
@@ -1205,7 +1167,7 @@ fn refresh_history_page(
 fn refresh_workspaces_page(
     session: &mut Session,
     gpu: &GpuState,
-    workspaces: &[Workspace],
+    workspaces: &WorkspaceStore,
     browser_id: i32,
 ) {
     let Some(index) = session
