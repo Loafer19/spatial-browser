@@ -16,7 +16,7 @@ instead of flat tabs.
 | [Getting started](https://github.com/Loafer19/spatial-browser/wiki/Getting-Started) | Install, run, Chrome bookmark import |
 | [Architecture](https://github.com/Loafer19/spatial-browser/wiki/Architecture) | Crates, CEF OSR, canvas UI model |
 | [Canvas & shortcuts](https://github.com/Loafer19/spatial-browser/wiki/Canvas-and-Shortcuts) | Pan/zoom/touch + hotkeys (`F1` in-app) |
-| [Userscripts](https://github.com/Loafer19/spatial-browser/wiki/Userscripts) | Tampermonkey-style plugins (`Ctrl+Shift+U`) |
+| [Scripts & styles](https://github.com/Loafer19/spatial-browser/wiki/Userscripts) | Userscripts + CSS (`spatial-ui` for built-in pages) |
 | [Features](https://github.com/Loafer19/spatial-browser/wiki/Features) | Bookmarks, workspaces, reader, adblock, … |
 | [Configuration](https://github.com/Loafer19/spatial-browser/wiki/Configuration) | Config paths, settings, env overrides |
 | [Limitations](https://github.com/Loafer19/spatial-browser/wiki/Limitations) | No Chrome extensions, known CEF quirks |

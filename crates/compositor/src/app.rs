@@ -28,6 +28,7 @@ use crate::persistence::{
 };
 use crate::session::Session;
 use crate::userscripts;
+use crate::userstyles;
 use cef::{ImplBrowser, ImplBrowserHost};
 use cef_bridge::CURSOR;
 use std::sync::Arc;
@@ -73,10 +74,10 @@ pub struct App {
     // change — see `sync_blocklist_settings` below — since that's what
     // `on_before_resource_load` actually reads from, not this struct.
     settings: AppSettings,
-    // Loaded at startup from ~/.config/spatial-browser/userscripts/;
-    // Ctrl+Shift+U / the list page's Reload re-reads from disk without
-    // restarting (see userscripts.rs).
+    // Loaded at startup from ~/.config/spatial-browser/userscripts/
+    // and userstyles/; Ctrl+Shift+U / Reload re-reads both from disk.
     userscripts: Vec<userscripts::UserScript>,
+    userstyles: Vec<userstyles::UserStyle>,
     mouse: MouseInput,
     touch: TouchInput,
     keyboard: KeyboardInput,
@@ -145,6 +146,7 @@ impl Default for App {
             workspaces: workspaces::load(),
             settings,
             userscripts: userscripts::load(),
+            userstyles: userstyles::load(),
             mouse: MouseInput::default(),
             touch: TouchInput::default(),
             keyboard: KeyboardInput::default(),
@@ -510,6 +512,7 @@ impl ApplicationHandler for App {
                     &self.workspaces,
                     &self.settings,
                     &mut self.userscripts,
+                    &mut self.userstyles,
                 ) {
                     return;
                 }
@@ -537,6 +540,7 @@ impl ApplicationHandler for App {
                     &mut self.workspaces,
                     &mut self.settings,
                     &mut self.userscripts,
+                    &mut self.userstyles,
                 );
 
                 if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {

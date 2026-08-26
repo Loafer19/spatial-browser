@@ -24,6 +24,7 @@ mod reader_mode;
 mod session;
 mod single_instance;
 mod userscripts;
+mod userstyles;
 mod viewport;
 
 use app::App;

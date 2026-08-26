@@ -14,6 +14,8 @@ Everything user-facing lives under:
 ├── settings.json
 ├── userscripts/           # your .js files
 ├── userscripts_state.json # disabled script basenames
+├── userstyles/            # your .css files
+├── userstyles_state.json  # disabled style basenames
 └── instance.sock          # single-instance lock
 ```
 

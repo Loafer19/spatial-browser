@@ -40,6 +40,10 @@ Tokyo Night / ANSI Terminal for canvas chrome. Cycle with `Ctrl+Shift+Space`, or
 
 Settings: 60 / 90 / 120 target. Monitor refresh is still the real ceiling.
 
+## Scripts & styles (`Ctrl+Shift+U`)
+
+Userscripts (`.js`) and userstyles (`.css`). Built-in UI pages can be styled with `@match spatial-ui` — see [[Userscripts]].
+
 ## Single instance
 
 Second launch focuses the existing window (Unix socket under the config dir) instead of starting a second CEF profile.

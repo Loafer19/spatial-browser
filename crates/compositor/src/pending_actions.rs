@@ -22,6 +22,7 @@ use crate::persistence::{
 };
 use crate::session::Session;
 use crate::userscripts::{self, RunAt, UserScript};
+use crate::userstyles::{self, UserStyle};
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 use cef_bridge::{
     BookmarkAction, DownloadPageAction, HistoryPageAction, SettingsPageAction,
@@ -54,6 +55,7 @@ pub fn apply(
     workspaces: &mut Vec<Workspace>,
     settings: &mut AppSettings,
     userscripts: &mut Vec<UserScript>,
+    userstyles: &mut Vec<UserStyle>,
 ) {
     // Set by cef-bridge's OsrRequestHandler when a click or form submit
     // inside the bookmarks-list page (hotkeys::open_bookmarks) hits one
@@ -239,12 +241,21 @@ pub fn apply(
             .iter()
             .find(|p| p.browser.identifier() == browser_id)
         {
-            if page.ephemeral {
-                continue;
-            }
             if let Some(frame) = page.browser.main_frame() {
-                for code in userscripts::matching_code(&url, userscripts, RunAt::DocumentStart) {
-                    frame.execute_java_script(Some(&code.as_str().into()), Some(&"".into()), 0);
+                // Userstyles can target spatial-ui (ephemeral) pages;
+                // userscripts still skip those.
+                for js in userstyles::matching_inject_js(&url, page.ephemeral, userstyles) {
+                    frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
+                }
+                if !page.ephemeral {
+                    for code in userscripts::matching_code(&url, userscripts, RunAt::DocumentStart)
+                    {
+                        frame.execute_java_script(
+                            Some(&code.as_str().into()),
+                            Some(&"".into()),
+                            0,
+                        );
+                    }
                 }
             }
         }
@@ -275,6 +286,11 @@ pub fn apply(
                     Some(&"".into()),
                     0,
                 );
+                // Styles again on load-end (covers navigations that
+                // skipped start, and re-applies after full document swap).
+                for js in userstyles::matching_inject_js(&url, page.ephemeral, userstyles) {
+                    frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
+                }
                 if !page.ephemeral {
                     for run_at in [RunAt::DocumentEnd, RunAt::DocumentIdle] {
                         for code in userscripts::matching_code(&url, userscripts, run_at) {
@@ -299,15 +315,22 @@ pub fn apply(
         match action {
             UserscriptsPageAction::Reload => {
                 userscripts::reload(userscripts);
+                userstyles::reload(userstyles);
             }
             UserscriptsPageAction::OpenDir => {
                 userscripts::open_dir();
             }
+            UserscriptsPageAction::OpenStylesDir => {
+                userstyles::open_dir();
+            }
             UserscriptsPageAction::Toggle(name) => {
                 userscripts::toggle_enabled(userscripts, &name);
             }
+            UserscriptsPageAction::ToggleStyle(name) => {
+                userstyles::toggle_enabled(userstyles, &name);
+            }
         }
-        refresh_userscripts_page(session, gpu, userscripts, browser_id);
+        refresh_userscripts_page(session, gpu, userscripts, userstyles, browser_id);
     }
 
     // Set by cef-bridge's OsrRequestHandler when a click inside the
@@ -611,6 +634,7 @@ fn refresh_userscripts_page(
     session: &mut Session,
     gpu: &GpuState,
     scripts: &[UserScript],
+    styles: &[UserStyle],
     browser_id: i32,
 ) {
     let Some(index) = session
@@ -623,7 +647,7 @@ fn refresh_userscripts_page(
     let Some(rect) = session.close_at(index) else {
         return;
     };
-    let url = pages::userscripts_list::page_url(&session.theme(), scripts);
+    let url = pages::userscripts_list::page_url(&session.theme(), scripts, styles);
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 

@@ -1,18 +1,18 @@
-// Ctrl+Shift+U userscripts list: enabled scripts under
-// ~/.config/spatial-browser/userscripts/, toggle/reload/open-dir via
-// `userscripts://...` links (see cef-bridge navigation + pending_actions).
+// Ctrl+Shift+U: userscripts + userstyles list. Scripts and styles share
+// this page; `userscripts://reload` reloads both from disk.
 
 use super::{html_escape, LIST_NAV_SCRIPT};
 use crate::output::Theme;
 use crate::userscripts::{RunAt, UserScript};
+use crate::userstyles::UserStyle;
 
-pub(crate) fn page_url(theme: &Theme, scripts: &[UserScript]) -> String {
-    let mut rows = String::new();
+pub(crate) fn page_url(theme: &Theme, scripts: &[UserScript], styles: &[UserStyle]) -> String {
+    let mut script_rows = String::new();
     if scripts.is_empty() {
-        rows.push_str(&format!(
-            "<p style=\"opacity:0.7;margin:8px 0\">No scripts yet. Drop a <code>.js</code> file with \
-             <code>// @match</code> lines into the userscripts folder, then hit Reload.</p>"
-        ));
+        script_rows.push_str(
+            "<p style=\"opacity:0.7;margin:8px 0\">No scripts yet. Drop a <code>.js</code> with \
+             <code>// @match</code> into the userscripts folder, then Reload.</p>",
+        );
     }
     for script in scripts {
         let state = if script.enabled { "On" } else { "Off" };
@@ -25,7 +25,7 @@ pub(crate) fn page_url(theme: &Theme, scripts: &[UserScript]) -> String {
         let name = html_escape(&script.name);
         let file = html_escape(&script.file_name);
         let toggle = format!("userscripts://toggle/{}", urlencoding_path(&script.file_name));
-        rows.push_str(&format!(
+        script_rows.push_str(&format!(
             "<div class=\"list-row\" data-open=\"{toggle}\" onclick=\"location='{toggle}'\" \
              style=\"display:flex;flex-direction:column;gap:4px;padding:10px 14px;\
              cursor:pointer;background:{card_bg};border-radius:8px;\
@@ -44,6 +44,42 @@ pub(crate) fn page_url(theme: &Theme, scripts: &[UserScript]) -> String {
         ));
     }
 
+    let mut style_rows = String::new();
+    if styles.is_empty() {
+        style_rows.push_str(
+            "<p style=\"opacity:0.7;margin:8px 0\">No styles yet. Drop a <code>.css</code> with \
+             <code>/* @match */</code> (use <code>spatial-ui</code> for built-in lists) into \
+             the userstyles folder, then Reload.</p>",
+        );
+    }
+    for style in styles {
+        let state = if style.enabled { "On" } else { "Off" };
+        let matches = html_escape(&style.matches.join(", "));
+        let name = html_escape(&style.name);
+        let file = html_escape(&style.file_name);
+        let toggle = format!(
+            "userscripts://toggle-style/{}",
+            urlencoding_path(&style.file_name)
+        );
+        style_rows.push_str(&format!(
+            "<div class=\"list-row\" data-open=\"{toggle}\" onclick=\"location='{toggle}'\" \
+             style=\"display:flex;flex-direction:column;gap:4px;padding:10px 14px;\
+             cursor:pointer;background:{card_bg};border-radius:8px;\
+             border:1px solid {card_border};opacity:{opacity}\">\
+             <div style=\"display:flex;align-items:center;gap:10px\">\
+             <span style=\"flex:1;font-weight:600;color:{fg}\">{name}</span>\
+             <span style=\"flex-shrink:0;color:{fg};opacity:0.7\">{state}</span>\
+             </div>\
+             <div style=\"font-size:12px;color:{fg};opacity:0.65\">{file}</div>\
+             <div style=\"font-size:12px;color:{fg};opacity:0.55;word-break:break-all\">{matches}</div>\
+             </div>",
+            card_bg = theme.help_card_bg,
+            card_border = theme.help_card_border,
+            fg = theme.help_heading,
+            opacity = if style.enabled { "1" } else { "0.55" },
+        ));
+    }
+
     let actions = format!(
         "<div style=\"display:flex;gap:8px;margin:0 0 12px;flex-wrap:wrap\">\
          <button onclick=\"location='userscripts://reload'\" style=\"\
@@ -51,7 +87,10 @@ pub(crate) fn page_url(theme: &Theme, scripts: &[UserScript]) -> String {
          padding:8px 12px;cursor:pointer;font-weight:600\">Reload</button>\
          <button onclick=\"location='userscripts://open-dir'\" style=\"\
          background:{card_bg};color:{fg};border:1px solid {card_border};border-radius:6px;\
-         padding:8px 12px;cursor:pointer\">Open folder</button>\
+         padding:8px 12px;cursor:pointer\">Scripts folder</button>\
+         <button onclick=\"location='userscripts://open-styles-dir'\" style=\"\
+         background:{card_bg};color:{fg};border:1px solid {card_border};border-radius:6px;\
+         padding:8px 12px;cursor:pointer\">Styles folder</button>\
          </div>",
         key_bg = theme.help_key_bg,
         key_fg = theme.help_key_fg,
@@ -62,19 +101,23 @@ pub(crate) fn page_url(theme: &Theme, scripts: &[UserScript]) -> String {
 
     format!(
         "data:text/html;charset=utf-8,{body_open}\
-         <h1 style=\"margin:0 0 4px;color:{heading};font-size:20px\">Userscripts</h1>\
+         <h1 style=\"margin:0 0 4px;color:{heading};font-size:20px\">Scripts &amp; styles</h1>\
          <p style=\"margin:0 0 12px;opacity:0.7;font-size:13px\">\
-         <code>// @match</code>, <code>// @exclude</code>, <code>// @run-at</code>, \
-         <code>// @name</code> · GM_addStyle / GM_getValue / GM_setValue</p>\
+         Scripts: <code>// @match</code> · Styles: <code>/* @match */</code> \
+         (incl. <code>spatial-ui</code> for built-in pages)</p>\
          {actions}\
-         <div style=\"display:flex;flex-direction:column;gap:8px\">{rows}</div>\
+         <h2 style=\"margin:8px 0;font-size:13px;text-transform:uppercase;\
+         letter-spacing:0.05em;color:{heading};opacity:0.8\">Userscripts</h2>\
+         <div style=\"display:flex;flex-direction:column;gap:8px\">{script_rows}</div>\
+         <h2 style=\"margin:20px 0 8px;font-size:13px;text-transform:uppercase;\
+         letter-spacing:0.05em;color:{heading};opacity:0.8\">Userstyles</h2>\
+         <div style=\"display:flex;flex-direction:column;gap:8px\">{style_rows}</div>\
          {LIST_NAV_SCRIPT}</body>",
         body_open = super::body_open(theme, ""),
         heading = theme.help_heading,
     )
 }
 
-/// Path-segment encode for a filename inside `userscripts://toggle/...`.
 fn urlencoding_path(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {

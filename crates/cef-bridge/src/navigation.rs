@@ -302,6 +302,10 @@ pub enum UserscriptsPageAction {
     OpenDir,
     /// Basename of the `.js` file to flip enabled/disabled.
     Toggle(String),
+    /// Open the userstyles folder (styles share the Ctrl+Shift+U page).
+    OpenStylesDir,
+    /// Basename of a `.css` userstyle to flip enabled/disabled.
+    ToggleStyle(String),
 }
 
 thread_local! {
@@ -316,6 +320,15 @@ fn parse_userscripts_action(url: &str) -> Option<UserscriptsPageAction> {
     }
     if rest == "open-dir" {
         return Some(UserscriptsPageAction::OpenDir);
+    }
+    if rest == "open-styles-dir" {
+        return Some(UserscriptsPageAction::OpenStylesDir);
+    }
+    if let Some(name) = rest.strip_prefix("toggle-style/") {
+        let name = percent_decode(name);
+        if !name.is_empty() {
+            return Some(UserscriptsPageAction::ToggleStyle(name));
+        }
     }
     if let Some(name) = rest.strip_prefix("toggle/") {
         let name = percent_decode(name);
