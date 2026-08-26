@@ -27,6 +27,7 @@ use crate::persistence::{
     workspaces::{self, Workspace},
 };
 use crate::session::Session;
+use crate::persistence::vault::VaultSession;
 use crate::userscripts;
 use crate::userstyles;
 use cef::{ImplBrowser, ImplBrowserHost};
@@ -78,6 +79,10 @@ pub struct App {
     // and userstyles/; Ctrl+Shift+U / Reload re-reads both from disk.
     userscripts: Vec<userscripts::UserScript>,
     userstyles: Vec<userstyles::UserStyle>,
+    /// Unlocked password vault for this process, if any.
+    vault: Option<VaultSession>,
+    /// Last generated password shown on the passwords list page.
+    generated_password: Option<String>,
     mouse: MouseInput,
     touch: TouchInput,
     keyboard: KeyboardInput,
@@ -147,6 +152,8 @@ impl Default for App {
             settings,
             userscripts: userscripts::load(),
             userstyles: userstyles::load(),
+            vault: None,
+            generated_password: None,
             mouse: MouseInput::default(),
             touch: TouchInput::default(),
             keyboard: KeyboardInput::default(),
@@ -513,6 +520,7 @@ impl ApplicationHandler for App {
                     &self.settings,
                     &mut self.userscripts,
                     &mut self.userstyles,
+                    &mut self.vault,
                 ) {
                     return;
                 }
@@ -541,6 +549,8 @@ impl ApplicationHandler for App {
                     &mut self.settings,
                     &mut self.userscripts,
                     &mut self.userstyles,
+                    &mut self.vault,
+                    &mut self.generated_password,
                 );
 
                 if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {

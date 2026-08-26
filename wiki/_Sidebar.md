@@ -5,6 +5,7 @@
 - [[Architecture]]
 - [[Canvas-and-Shortcuts]]
 - [[Userscripts]]
+- [[Password-Manager]]
 - [[Features]]
 - [[Configuration]]
 - [[Limitations]]

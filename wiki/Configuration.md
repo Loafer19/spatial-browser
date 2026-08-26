@@ -16,6 +16,7 @@ Everything user-facing lives under:
 ├── userscripts_state.json # disabled script basenames
 ├── userstyles/            # your .css files
 ├── userstyles_state.json  # disabled style basenames
+├── vault.enc              # encrypted password vault (after first create)
 └── instance.sock          # single-instance lock
 ```
 

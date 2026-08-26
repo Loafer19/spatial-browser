@@ -22,6 +22,7 @@ pub mod downloads;
 pub mod history;
 pub mod settings;
 pub mod typed_history;
+pub mod vault;
 pub mod workspaces;
 
 use crate::browser;

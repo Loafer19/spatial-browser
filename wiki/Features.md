@@ -44,6 +44,10 @@ Settings: 60 / 90 / 120 target. Monitor refresh is still the real ceiling.
 
 Userscripts (`.js`) and userstyles (`.css`). Built-in UI pages can be styled with `@match spatial-ui` — see [[Userscripts]].
 
+## Passwords (`Ctrl+Shift+P`)
+
+Encrypted local vault, autofill, multi-account picker, save prompts, generator, never-save list — see [[Password-Manager]].
+
 ## Single instance
 
 Second launch focuses the existing window (Unix socket under the config dir) instead of starting a second CEF profile.

@@ -23,6 +23,7 @@ use crate::persistence::settings::AppSettings;
 use crate::persistence::workspaces::Workspace;
 use crate::reader_mode;
 use crate::session::Session;
+use crate::persistence::vault::{self, VaultSession};
 use crate::userscripts::{self, UserScript};
 use crate::userstyles::{self, UserStyle};
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
@@ -45,6 +46,7 @@ pub fn handle(
     settings: &AppSettings,
     userscripts: &mut Vec<UserScript>,
     userstyles: &mut Vec<UserStyle>,
+    vault: &mut Option<VaultSession>,
 ) -> bool {
     if event.state != ElementState::Pressed {
         return false;
@@ -191,6 +193,11 @@ pub fn handle(
             userscripts::reload(userscripts);
             userstyles::reload(userstyles);
             open_userscripts(session, gpu, userscripts, userstyles);
+            true
+        }
+        // Ctrl+Shift+P — password vault list (unlock/create if needed).
+        PhysicalKey::Code(KeyCode::KeyP) if modifiers.shift_key() => {
+            open_passwords(session, gpu, vault.as_ref());
             true
         }
 
@@ -456,6 +463,27 @@ fn open_userscripts(
     let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
     let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
     let url = pages::userscripts_list::page_url(&session.theme(), scripts, styles);
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
+pub(crate) fn open_passwords(
+    session: &mut Session,
+    gpu: &GpuState,
+    vault: Option<&VaultSession>,
+) {
+    let size = gpu.window.inner_size();
+    let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
+    let h = (size.height as f32 * 0.75).clamp(420.0, 800.0);
+    let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
+    let url = match vault {
+        Some(v) => pages::passwords_list::page_url(
+            &session.theme(),
+            &v.data.entries,
+            &v.data.never_save,
+            None,
+        ),
+        None => pages::passwords_list::unlock_url(&session.theme(), !vault::exists(), None),
+    };
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 

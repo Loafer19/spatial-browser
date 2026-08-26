@@ -30,6 +30,7 @@ pub const HELP_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+K", "Switch to an open page"),
             ("Ctrl+Shift+W", "Workspace list"),
             ("Ctrl+Shift+U", "Scripts & styles list"),
+            ("Ctrl+Shift+P", "Passwords / vault"),
             ("Ctrl+,", "Settings"),
         ],
     ),

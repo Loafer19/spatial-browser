@@ -22,3 +22,8 @@ winit = "0.30.13"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+aes-gcm = "0.10.3"
+argon2 = "0.5.3"
+rand = { version = "0.10.2", features = ["std_rng"] }
+zeroize = { version = "1.9.0", features = ["derive"] }
+getrandom = "0.4.3"

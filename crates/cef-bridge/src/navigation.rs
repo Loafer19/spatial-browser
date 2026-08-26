@@ -339,6 +339,140 @@ fn parse_userscripts_action(url: &str) -> Option<UserscriptsPageAction> {
     None
 }
 
+/// Password vault / autofill actions from `password://...` links
+/// (autofill bridge + passwords list UI).
+pub enum PasswordAction {
+    /// Master password for unlock or create (confirm also set for create).
+    Unlock {
+        password: String,
+        create: bool,
+        confirm: Option<String>,
+    },
+    Query {
+        origin: String,
+    },
+    Fill {
+        id: String,
+    },
+    SaveOffer {
+        origin: String,
+        username: String,
+        password: String,
+    },
+    Save {
+        origin: String,
+        username: String,
+        password: String,
+        id: Option<String>,
+    },
+    Never {
+        origin: String,
+    },
+    Delete {
+        id: String,
+    },
+    Upsert {
+        id: Option<String>,
+        origin: String,
+        username: String,
+        password: String,
+        email: Option<String>,
+        given_name: Option<String>,
+        family_name: Option<String>,
+    },
+    RemoveNever {
+        origin: String,
+    },
+    Generate {
+        length: usize,
+        symbols: bool,
+    },
+    /// Open the passwords list after a successful unlock.
+    OpenList,
+}
+
+thread_local! {
+    pub static PENDING_PASSWORD_ACTION: RefCell<Option<(i32, PasswordAction)>> =
+        const { RefCell::new(None) };
+}
+
+fn parse_password_action(url: &str) -> Option<PasswordAction> {
+    let rest = url.strip_prefix("password://")?;
+    if let Some(query) = rest.strip_prefix("unlock?") {
+        let password = query_param(query, "password")?;
+        let create = query_param(query, "create").as_deref() == Some("1");
+        let confirm = query_param(query, "confirm");
+        return Some(PasswordAction::Unlock {
+            password,
+            create,
+            confirm,
+        });
+    }
+    if let Some(query) = rest.strip_prefix("query?") {
+        return Some(PasswordAction::Query {
+            origin: query_param(query, "origin")?,
+        });
+    }
+    if let Some(query) = rest.strip_prefix("fill?") {
+        return Some(PasswordAction::Fill {
+            id: query_param(query, "id")?,
+        });
+    }
+    if let Some(query) = rest.strip_prefix("save-offer?") {
+        return Some(PasswordAction::SaveOffer {
+            origin: query_param(query, "origin").unwrap_or_default(),
+            username: query_param(query, "username").unwrap_or_default(),
+            password: query_param(query, "password").unwrap_or_default(),
+        });
+    }
+    if let Some(query) = rest.strip_prefix("save?") {
+        let id = query_param(query, "id").filter(|s| !s.is_empty());
+        return Some(PasswordAction::Save {
+            origin: query_param(query, "origin").unwrap_or_default(),
+            username: query_param(query, "username").unwrap_or_default(),
+            password: query_param(query, "password").unwrap_or_default(),
+            id,
+        });
+    }
+    if let Some(query) = rest.strip_prefix("never?") {
+        return Some(PasswordAction::Never {
+            origin: query_param(query, "origin")?,
+        });
+    }
+    if let Some(query) = rest.strip_prefix("delete?") {
+        return Some(PasswordAction::Delete {
+            id: query_param(query, "id")?,
+        });
+    }
+    if let Some(query) = rest.strip_prefix("upsert?") {
+        return Some(PasswordAction::Upsert {
+            id: query_param(query, "id").filter(|s| !s.is_empty()),
+            origin: query_param(query, "origin").unwrap_or_default(),
+            username: query_param(query, "username").unwrap_or_default(),
+            password: query_param(query, "password").unwrap_or_default(),
+            email: query_param(query, "email").filter(|s| !s.is_empty()),
+            given_name: query_param(query, "given_name").filter(|s| !s.is_empty()),
+            family_name: query_param(query, "family_name").filter(|s| !s.is_empty()),
+        });
+    }
+    if let Some(query) = rest.strip_prefix("remove-never?") {
+        return Some(PasswordAction::RemoveNever {
+            origin: query_param(query, "origin")?,
+        });
+    }
+    if let Some(query) = rest.strip_prefix("generate?") {
+        let length = query_param(query, "length")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(20);
+        let symbols = query_param(query, "symbols").as_deref() != Some("0");
+        return Some(PasswordAction::Generate { length, symbols });
+    }
+    if rest == "open-list" {
+        return Some(PasswordAction::OpenList);
+    }
+    None
+}
+
 /// Parses a `clipboard://copy?text=...` navigation into the copied
 /// text — sent by the copy-bridge script every page has injected into
 /// it (compositor::clipboard_bridge), since CEF's windowless/OSR
@@ -425,6 +559,10 @@ wrap_request_handler! {
             }
             if let Some(action) = parse_userscripts_action(&url) {
                 PENDING_USERSCRIPT_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
+                return true as _;
+            }
+            if let Some(action) = parse_password_action(&url) {
+                PENDING_PASSWORD_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
                 return true as _;
             }
             if let Some(text) = parse_clipboard_copy(&url) {
