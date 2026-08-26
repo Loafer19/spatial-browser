@@ -5,6 +5,8 @@ canvas instead of flat tabs, with its own bookmarks/history/downloads UI.
 
 ![Canvas with a focused page, a background page, and the history/bookmarks/downloads/shortcuts lists open](.github/screenshots/canvas.png)
 
+**Docs:** [Wiki](https://github.com/Loafer19/spatial-browser/wiki) — getting started, architecture, shortcuts, userscripts, configuration, limitations.
+
 ## Architecture
 
 - **Web engine:** CEF (Chromium Embedded Framework), off-screen rendering.
