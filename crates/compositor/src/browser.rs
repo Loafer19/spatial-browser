@@ -63,6 +63,10 @@ pub struct Page {
     // reload, not what to restore. A `Cell`, like `size`/`texture`
     // above, since hotkeys only ever sees `&Session`/`&Page`.
     pub reader_mode: std::cell::Cell<bool>,
+    /// Top-edge load bar: CEF `on_loading_progress_change` (0..1).
+    pub load_progress: std::cell::Cell<f32>,
+    /// True while CEF reports the page is loading (state + progress).
+    pub load_active: std::cell::Cell<bool>,
 }
 
 impl Page {
@@ -148,5 +152,8 @@ pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect, ephemeral: 
         zoomed_from: None,
         ephemeral,
         reader_mode: std::cell::Cell::new(false),
+        load_progress: std::cell::Cell::new(0.0),
+        // Utility pages (help/settings/…) skip the load bar.
+        load_active: std::cell::Cell::new(!ephemeral),
     }
 }

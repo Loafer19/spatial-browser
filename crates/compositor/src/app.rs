@@ -740,11 +740,17 @@ impl ApplicationHandler for App {
                     .iter()
                     .zip(textures.iter())
                     .enumerate()
-                    .map(|(i, (page, texture))| PageDraw {
-                        rect: viewport.rect_to_screen(page.rect),
-                        quad: &page.quad,
-                        texture: texture.as_ref(),
-                        focused: i == last_index,
+                    .map(|(i, (page, texture))| {
+                        let progress = page.load_progress.get();
+                        let active = page.load_active.get() && !page.ephemeral;
+                        PageDraw {
+                            rect: viewport.rect_to_screen(page.rect),
+                            quad: &page.quad,
+                            texture: texture.as_ref(),
+                            focused: i == last_index,
+                            load_progress: progress,
+                            load_bar: active && progress < 0.999,
+                        }
                     })
                     .collect();
 

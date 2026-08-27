@@ -18,6 +18,9 @@ thread_local! {
     // Same shape for on_load_start — document-start userscripts need to
     // run before the page's own scripts; on_load_end is too late for that.
     pub static PENDING_LOAD_START: RefCell<Vec<(i32, String)>> = const { RefCell::new(Vec::new()) };
+
+    // (browser_id, is_loading) — fallback when progress events are sparse.
+    pub static PENDING_LOAD_STATE: RefCell<Vec<(i32, bool)>> = const { RefCell::new(Vec::new()) };
 }
 
 #[derive(Clone)]
@@ -29,6 +32,20 @@ wrap_load_handler! {
     }
 
     impl LoadHandler {
+        fn on_loading_state_change(
+            &self,
+            browser: Option<&mut Browser>,
+            is_loading: ::std::os::raw::c_int,
+            _can_go_back: ::std::os::raw::c_int,
+            _can_go_forward: ::std::os::raw::c_int,
+        ) {
+            let Some(browser) = browser else {
+                return;
+            };
+            PENDING_LOAD_STATE
+                .with_borrow_mut(|q| q.push((browser.identifier(), is_loading != 0)));
+        }
+
         fn on_load_start(
             &self,
             browser: Option<&mut Browser>,

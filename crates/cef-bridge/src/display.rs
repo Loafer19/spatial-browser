@@ -1,6 +1,6 @@
-// Cursor shape: CEF doesn't drive the OS cursor itself in
-// windowless/OSR mode (there's no native window to do it through), so
-// the embedder has to read what shape a page wants and apply it.
+// Cursor shape + load progress: CEF doesn't drive the OS cursor itself in
+// windowless/OSR mode, so the embedder applies cursor changes. Load
+// progress (0..1) comes from DisplayHandler, not LoadHandler.
 
 use cef::{self, rc::Rc, *};
 use std::cell::RefCell;
@@ -15,6 +15,9 @@ thread_local! {
     // mouse gets cursor-change events, so this naturally tracks whichever
     // page's cursor should be showing.
     pub static CURSOR: RefCell<Option<CursorIcon>> = const { RefCell::new(None) };
+
+    // (browser_id, progress 0..1) from on_loading_progress_change.
+    pub static PENDING_LOAD_PROGRESS: RefCell<Vec<(i32, f64)>> = const { RefCell::new(Vec::new()) };
 }
 
 #[derive(Clone)]
@@ -37,6 +40,18 @@ wrap_display_handler! {
                 cursor.replace(cef_cursor_to_winit(type_));
             });
             true as _
+        }
+
+        fn on_loading_progress_change(
+            &self,
+            browser: Option<&mut Browser>,
+            progress: f64,
+        ) {
+            let Some(browser) = browser else {
+                return;
+            };
+            PENDING_LOAD_PROGRESS
+                .with_borrow_mut(|q| q.push((browser.identifier(), progress)));
         }
     }
 }

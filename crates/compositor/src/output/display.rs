@@ -68,13 +68,17 @@ impl Rect {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct PageStyleUniform {
-    // xy = page size in pixels, z = corner radius, w unused
+    // xy = page size in pixels, z = corner radius,
+    // w = 1.0 if no CEF frame yet (placeholder)
     size_radius: [f32; 4],
     focus_border_color: [f32; 4],
     unfocused_border_color: [f32; 4],
     // x = 1.0 if focused else 0.0, y = focus border width,
     // z = unfocused border width, w = unfocused dim factor
     flags: [f32; 4],
+    // x = load progress 0..1, y = 1.0 if top load bar visible,
+    // z = bar height in page pixels (from theme border width)
+    load: [f32; 4],
 }
 
 /// One page's on-GPU quad geometry and chrome style (rounded corners,
@@ -111,6 +115,7 @@ impl PageQuad {
                 focus_border_color: [0.0; 4],
                 unfocused_border_color: [0.0; 4],
                 flags: [0.0; 4],
+                load: [0.0; 4],
             }]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -137,6 +142,8 @@ impl PageQuad {
         viewport: (f32, f32),
         focused: bool,
         is_loading: bool,
+        load_progress: f32,
+        load_bar: bool,
         theme: &Theme,
     ) {
         let (vw, vh) = viewport;
@@ -183,6 +190,14 @@ impl PageQuad {
                     theme.unfocused_border_width,
                     theme.unfocused_dim,
                 ],
+                load: [
+                    load_progress.clamp(0.0, 1.0),
+                    if load_bar { 1.0 } else { 0.0 },
+                    // Match focus ring weight so Tokyo Night (4px) vs ANSI
+                    // (1.5px) get a proportional top bar.
+                    theme.focus_border_width.clamp(2.0, 5.0),
+                    0.0,
+                ],
             }]),
         );
     }
@@ -196,6 +211,9 @@ pub struct PageDraw<'a> {
     pub quad: &'a PageQuad,
     pub texture: Option<&'a wgpu::BindGroup>,
     pub focused: bool,
+    /// CEF load progress 0..1 while the top bar should show.
+    pub load_progress: f32,
+    pub load_bar: bool,
 }
 
 pub struct GpuState {
@@ -615,6 +633,8 @@ impl GpuState {
                 screen_size,
                 page.focused,
                 page.texture.is_none(),
+                page.load_progress,
+                page.load_bar,
                 theme,
             );
         }

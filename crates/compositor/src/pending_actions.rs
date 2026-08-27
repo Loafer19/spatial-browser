@@ -33,9 +33,9 @@ use cef_bridge::{
     BookmarkAction, ContextAction, DownloadPageAction, HistoryPageAction, PasswordAction,
     SettingsPageAction, UserscriptsPageAction, WorkspacePageAction, PENDING_BOOKMARK,
     PENDING_CONTEXT_ACTION, PENDING_DOWNLOADS, PENDING_DOWNLOAD_ACTION, PENDING_HISTORY_ACTION,
-    PENDING_LOAD_START, PENDING_OMNIBOX, PENDING_PASSWORD_ACTION, PENDING_POPUPS,
-    PENDING_SETTINGS_ACTION, PENDING_SWITCH, PENDING_USERSCRIPT_ACTION, PENDING_VISITS,
-    PENDING_WORKSPACE_ACTION,
+    PENDING_LOAD_PROGRESS, PENDING_LOAD_START, PENDING_LOAD_STATE, PENDING_OMNIBOX,
+    PENDING_PASSWORD_ACTION, PENDING_POPUPS, PENDING_SETTINGS_ACTION, PENDING_SWITCH,
+    PENDING_USERSCRIPT_ACTION, PENDING_VISITS, PENDING_WORKSPACE_ACTION,
 };
 
 /// Pushes the current ad-block toggle/custom-hosts into cef-bridge's
@@ -134,6 +134,46 @@ pub fn apply(
     context_menu: &mut Option<ContextMenuState>,
     pending_context_hit: &mut Option<(i32, (f32, f32))>,
 ) {
+    // Load progress / state → per-page top-edge bar (skip ephemeral chrome).
+    let load_states = PENDING_LOAD_STATE.with_borrow_mut(std::mem::take);
+    for (browser_id, is_loading) in load_states {
+        if let Some(page) = session
+            .pages()
+            .iter()
+            .find(|p| p.browser.identifier() == browser_id)
+        {
+            if page.ephemeral {
+                page.load_active.set(false);
+                continue;
+            }
+            page.load_active.set(is_loading);
+            if is_loading {
+                if page.load_progress.get() >= 1.0 {
+                    page.load_progress.set(0.0);
+                }
+            } else {
+                page.load_progress.set(1.0);
+                page.load_active.set(false);
+            }
+        }
+    }
+    let load_progress = PENDING_LOAD_PROGRESS.with_borrow_mut(std::mem::take);
+    for (browser_id, progress) in load_progress {
+        if let Some(page) = session
+            .pages()
+            .iter()
+            .find(|p| p.browser.identifier() == browser_id)
+        {
+            if page.ephemeral {
+                page.load_active.set(false);
+                continue;
+            }
+            let p = (progress as f32).clamp(0.0, 1.0);
+            page.load_progress.set(p);
+            page.load_active.set(p < 0.999);
+        }
+    }
+
     // Set by cef-bridge's OsrRequestHandler when a click or form submit
     // inside the bookmarks-list page (hotkeys::open_bookmarks) hits one
     // of its `bookmark://...` links — that navigation was already
@@ -318,6 +358,10 @@ pub fn apply(
             .iter()
             .find(|p| p.browser.identifier() == browser_id)
         {
+            if !page.ephemeral {
+                page.load_active.set(true);
+                page.load_progress.set(0.0);
+            }
             if let Some(frame) = page.browser.main_frame() {
                 // EasyList cosmetic hides + optional ##+js scriptlets.
                 if !page.ephemeral {
