@@ -61,9 +61,24 @@ wrap_app! {
             // SoftNavigationDetection — targeted the wrong feature names
             // and didn't help.) Reading Mode is browser-chrome UI a
             // windowless app can't surface anyway, so this costs nothing.
+            //
+            // VaapiVideoDecoder*: on this machine VAAPI decode fails
+            // (`vaEndPicture failed`) and Twitch then surfaces Error
+            // #4000 ("not supported in this browser"). Force software
+            // decode; CPU cost is acceptable for a personal shell.
             command_line.append_switch_with_value(
                 Some(&"disable-features".into()),
-                Some(&"ImmersiveReadAnything".into()),
+                Some(
+                    &"ImmersiveReadAnything,VaapiVideoDecoder,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder"
+                        .into(),
+                ),
+            );
+            command_line.append_switch(Some(&"disable-accelerated-video-decode".into()));
+            // Embedded OSR has no reliable "user gesture" for media;
+            // without this, sites that gate MSE/autoplay can refuse play.
+            command_line.append_switch_with_value(
+                Some(&"autoplay-policy".into()),
+                Some(&"no-user-gesture-required".into()),
             );
         }
 
