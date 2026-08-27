@@ -1,4 +1,7 @@
-// EasyList / EasyPrivacy network matching via Brave's `adblock` crate.
+// EasyList / EasyPrivacy via Brave's `adblock` crate: network cancel,
+// cosmetic hide CSS, and optional ##+js scriptlets (classic uBO
+// scriptlets.js assembled with `resource-assembler`).
+//
 // Engine is rebuilt on the UI thread when Settings change; CEF's IO
 // thread only calls `check_request`. Requires adblock without the
 // `single-thread` feature so Engine is Sync.
@@ -12,12 +15,15 @@ use std::sync::Mutex;
 
 static ENGINE: Mutex<Option<Engine>> = Mutex::new(None);
 static COSMETIC_ENABLED: AtomicBool = AtomicBool::new(true);
+static SCRIPTLETS_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Which list files to load from `filters_dir`.
 #[derive(Clone, Debug, Default)]
 pub struct FilterEngineConfig {
     pub easylist: bool,
     pub easyprivacy: bool,
+    /// Load `scriptlets.js` into the Engine (needed for ##+js output).
+    pub load_scriptlets: bool,
     pub filters_dir: PathBuf,
 }
 
@@ -46,7 +52,11 @@ pub fn rebuild(config: &FilterEngineConfig) {
     let engine = if loaded == 0 {
         None
     } else {
-        Some(Engine::new_with_filter_set(set))
+        let mut engine = Engine::new_with_filter_set(set);
+        if config.load_scriptlets {
+            attach_scriptlets(&mut engine, &config.filters_dir);
+        }
+        Some(engine)
     };
 
     match ENGINE.lock() {
@@ -54,7 +64,8 @@ pub fn rebuild(config: &FilterEngineConfig) {
             *slot = engine;
             if loaded > 0 {
                 log::info!(
-                    "filter engine rebuilt ({loaded} list(s) from {})",
+                    "filter engine rebuilt ({loaded} list(s), scriptlets={}) from {}",
+                    config.load_scriptlets,
                     config.filters_dir.display()
                 );
             } else {
@@ -85,9 +96,21 @@ fn load_list(set: &mut FilterSet, dir: &Path, name: &str, format: FilterFormat) 
     }
 }
 
+fn attach_scriptlets(engine: &mut Engine, dir: &Path) {
+    let path = dir.join("scriptlets.js");
+    if !path.is_file() {
+        log::warn!("scriptlets.js missing at {}", path.display());
+        return;
+    }
+    #[allow(deprecated)]
+    let resources =
+        adblock::resources::resource_assembler::assemble_scriptlet_resources(&path);
+    log::info!("loaded {} scriptlet resources", resources.len());
+    engine.use_resources(resources);
+}
+
 fn map_resource_type(rt: cef::ResourceType) -> &'static str {
     use cef::ResourceType as RT;
-    // CEF ResourceType is a newtype; compare against known constants.
     if rt == RT::MAIN_FRAME {
         "document"
     } else if rt == RT::SUB_FRAME {
@@ -115,9 +138,12 @@ fn map_resource_type(rt: cef::ResourceType) -> &'static str {
     }
 }
 
-/// Whether cosmetic CSS inject is allowed (Settings → Advanced).
 pub fn set_cosmetic_enabled(enabled: bool) {
     COSMETIC_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+pub fn set_scriptlets_enabled(enabled: bool) {
+    SCRIPTLETS_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
 /// Returns true if an enabled EasyList/EasyPrivacy rule says to block.
@@ -136,10 +162,6 @@ pub fn check_request(url: &str, source_url: &str, resource_type: cef::ResourceTy
 }
 
 /// Build a stylesheet of `{ display:none !important }` rules for `url`.
-/// Returns `None` when cosmetic is off, the engine is empty, or there
-/// are no hide selectors. Generic class/id follow-up
-/// (`hidden_class_id_selectors`) is not wired yet — URL-specific hides
-/// only.
 pub fn cosmetic_hide_css(url: &str) -> Option<String> {
     if !COSMETIC_ENABLED.load(Ordering::Relaxed) {
         return None;
@@ -155,11 +177,7 @@ pub fn cosmetic_hide_css(url: &str) -> Option<String> {
     let mut css = String::new();
     let mut first = true;
     for sel in &resources.hide_selectors {
-        if sel.is_empty() {
-            continue;
-        }
-        // Skip selectors that would break out of our style rule.
-        if sel.contains('}') || sel.contains('<') {
+        if sel.is_empty() || sel.contains('}') || sel.contains('<') {
             continue;
         }
         if !first {
@@ -173,6 +191,28 @@ pub fn cosmetic_hide_css(url: &str) -> Option<String> {
     }
     css.push_str("{display:none!important;}");
     Some(css)
+}
+
+/// Ready-to-run JS from `##+js(...)` rules for `url`, if scriptlets are on.
+pub fn scriptlet_js(url: &str) -> Option<String> {
+    if !SCRIPTLETS_ENABLED.load(Ordering::Relaxed) {
+        return None;
+    }
+    let Ok(guard) = ENGINE.lock() else {
+        return None;
+    };
+    let engine = guard.as_ref()?;
+    let resources = engine.url_cosmetic_resources(url);
+    let script = resources.injected_script;
+    if script.trim().is_empty() {
+        return None;
+    }
+    Some(script)
+}
+
+/// Wrap raw scriptlet source so a single failure cannot break the page.
+pub fn scriptlet_inject_js(script: &str) -> String {
+    format!("(function(){{try{{\n{script}\n}}catch(e){{}}}})();")
 }
 
 /// JS snippet that injects `css` as a `<style data-spatial-cosmetic>` node.

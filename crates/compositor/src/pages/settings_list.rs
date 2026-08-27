@@ -280,7 +280,7 @@ fn blocking_panel(theme: &Theme, settings: &AppSettings) -> String {
     ));
     rows.push_str(&format!(
         "<p style=\"margin:4px 0 0;color:{fg};opacity:0.55;font-size:12px\">\
-         Not wired yet — reserved for ##+js rules.</p>",
+         Injects ##+js from enabled lists. Off by default — can break sites.</p>",
         fg = theme.help_fg,
     ));
 

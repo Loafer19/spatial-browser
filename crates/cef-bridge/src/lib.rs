@@ -39,8 +39,8 @@ mod render;
 pub use app::*;
 pub use blocklist::{set_custom_hosts, set_enabled, set_peter_lowe_enabled};
 pub use filter_engine::{
-    cosmetic_hide_css, cosmetic_inject_js, rebuild as rebuild_filter_engine,
-    set_cosmetic_enabled, FilterEngineConfig,
+    cosmetic_hide_css, cosmetic_inject_js, rebuild as rebuild_filter_engine, scriptlet_inject_js,
+    scriptlet_js, set_cosmetic_enabled, set_scriptlets_enabled, FilterEngineConfig,
 };
 pub use clean_urls::set_enabled as set_clean_urls_enabled;
 pub use client::*;

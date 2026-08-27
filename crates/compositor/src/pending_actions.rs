@@ -56,11 +56,13 @@ pub(crate) fn sync_blocklist_settings(settings: &AppSettings) {
     cef_bridge::set_peter_lowe_enabled(settings.filter_lists.peter_lowe);
     cef_bridge::set_custom_hosts(settings.custom_blocked_hosts.clone());
     cef_bridge::set_cosmetic_enabled(cosmetic_on);
+    cef_bridge::set_scriptlets_enabled(scriptlets_on);
 
     let filters_dir = ensure_filter_lists_dir();
     cef_bridge::rebuild_filter_engine(&cef_bridge::FilterEngineConfig {
         easylist: need_engine && settings.filter_lists.easylist,
         easyprivacy: need_engine && settings.filter_lists.easyprivacy,
+        load_scriptlets: scriptlets_on,
         filters_dir,
     });
 }
@@ -74,7 +76,7 @@ fn ensure_filter_lists_dir() -> std::path::PathBuf {
         log::warn!("filters dir {}: {e}", dest.display());
         return dest;
     }
-    for name in ["easylist.txt", "easyprivacy.txt"] {
+    for name in ["easylist.txt", "easyprivacy.txt", "scriptlets.js"] {
         let dest_file = dest.join(name);
         if dest_file.exists() {
             continue;
@@ -317,10 +319,14 @@ pub fn apply(
             .find(|p| p.browser.identifier() == browser_id)
         {
             if let Some(frame) = page.browser.main_frame() {
-                // EasyList cosmetic hides — skip utility chrome pages.
+                // EasyList cosmetic hides + optional ##+js scriptlets.
                 if !page.ephemeral {
                     if let Some(css) = cef_bridge::cosmetic_hide_css(&url) {
                         let js = cef_bridge::cosmetic_inject_js(&css);
+                        frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
+                    }
+                    if let Some(script) = cef_bridge::scriptlet_js(&url) {
+                        let js = cef_bridge::scriptlet_inject_js(&script);
                         frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
                     }
                 }
