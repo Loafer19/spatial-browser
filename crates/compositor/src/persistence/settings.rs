@@ -19,9 +19,8 @@ impl Default for FilterLists {
     fn default() -> Self {
         Self {
             peter_lowe: true,
-            // Off until the adblock Engine ships (P1); rows still show in UI.
-            easylist: false,
-            easyprivacy: false,
+            easylist: true,
+            easyprivacy: true,
         }
     }
 }

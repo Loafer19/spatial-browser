@@ -26,6 +26,7 @@
 
 mod app;
 mod blocklist;
+mod filter_engine;
 mod clean_urls;
 mod client;
 mod display;
@@ -37,6 +38,7 @@ mod render;
 
 pub use app::*;
 pub use blocklist::{set_custom_hosts, set_enabled, set_peter_lowe_enabled};
+pub use filter_engine::{rebuild as rebuild_filter_engine, FilterEngineConfig};
 pub use clean_urls::set_enabled as set_clean_urls_enabled;
 pub use client::*;
 pub use display::*;

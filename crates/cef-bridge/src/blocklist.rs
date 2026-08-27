@@ -155,6 +155,14 @@ wrap_resource_request_handler! {
                 return ReturnValue::CONTINUE;
             };
             let url = cef::CefString::from(&request.url()).to_string();
+            if !ENABLED.load(Ordering::Relaxed) {
+                return ReturnValue::CONTINUE;
+            }
+            let referrer = cef::CefString::from(&request.referrer_url()).to_string();
+            let rtype = request.resource_type();
+            if crate::filter_engine::check_request(&url, &referrer, rtype) {
+                return ReturnValue::CANCEL;
+            }
             if is_blocked(host_of(&url)) {
                 return ReturnValue::CANCEL;
             }

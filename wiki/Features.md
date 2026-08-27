@@ -43,11 +43,11 @@ Heuristic article extract → single-column view (Light / Sepia / Dark from Sett
 Settings → **Blocking** tab (`Ctrl+,`):
 
 - **Content filtering** master switch
-- **Filter lists** (subscription rows): Peter Lowe hosts (active); EasyList / EasyPrivacy (UI reserved, engine coming)
+- **Filter lists** (subscription rows): Peter Lowe hosts; **EasyList** / **EasyPrivacy** (Brave `adblock` network engine)
 - **Custom hosts** add/remove
-- **Advanced**: network / cosmetic / scriptlets layers (cosmetic & scriptlets apply once the filter engine lands)
+- **Advanced**: network / cosmetic / scriptlets layers — **network** is live; cosmetic & scriptlets not injected yet
 
-Today’s live blocker is still a **domain list**: every resource request’s host is checked; matches are canceled. Baseline: [Peter Lowe’s ad-server list](https://pgl.yoyo.org/adservers/) (~3500 domains), compiled in. Not yet a full EasyList/uBlock engine (no cosmetic hide / scriptlets in the pipeline).
+Network path: EasyList-syntax rules cancel matching resource requests (plus optional Peter Lowe host list + custom hosts). List files live under `~/.config/spatial-browser/filters/` (seeded from the bundle’s `filters/` on first run). Cosmetic CSS / scriptlets are still ahead.
 
 ## Clean URLs
 

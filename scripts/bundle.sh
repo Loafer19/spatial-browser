@@ -20,4 +20,9 @@ export PATH="$HOME/.local/share/cargo-cef-tools/bin:$PATH"
 
 cd "$(dirname "$0")/.."
 bundle-cef-app "$package" -o target/bundle --release "$@"
+# EasyList / EasyPrivacy for the content-filter engine (Settings → Blocking).
+if [[ -d data/filters ]]; then
+  mkdir -p target/bundle/filters
+  cp -a data/filters/. target/bundle/filters/
+fi
 echo "Run it: target/bundle/$package"

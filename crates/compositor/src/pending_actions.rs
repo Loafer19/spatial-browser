@@ -50,6 +50,59 @@ pub(crate) fn sync_blocklist_settings(settings: &AppSettings) {
     cef_bridge::set_enabled(network_on);
     cef_bridge::set_peter_lowe_enabled(settings.filter_lists.peter_lowe);
     cef_bridge::set_custom_hosts(settings.custom_blocked_hosts.clone());
+    let filters_dir = ensure_filter_lists_dir();
+    cef_bridge::rebuild_filter_engine(&cef_bridge::FilterEngineConfig {
+        easylist: network_on && settings.filter_lists.easylist,
+        easyprivacy: network_on && settings.filter_lists.easyprivacy,
+        filters_dir,
+    });
+}
+
+/// Prefer `~/.config/spatial-browser/filters/`; seed from bundle or repo
+/// `data/filters` on first run.
+fn ensure_filter_lists_dir() -> std::path::PathBuf {
+    let home = std::env::var_os("HOME").expect("HOME not set");
+    let dest = std::path::PathBuf::from(home).join(".config/spatial-browser/filters");
+    if let Err(e) = std::fs::create_dir_all(&dest) {
+        log::warn!("filters dir {}: {e}", dest.display());
+        return dest;
+    }
+    for name in ["easylist.txt", "easyprivacy.txt"] {
+        let dest_file = dest.join(name);
+        if dest_file.exists() {
+            continue;
+        }
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                candidates.push(dir.join("filters").join(name));
+            }
+        }
+        candidates.push(std::path::PathBuf::from("data/filters").join(name));
+        candidates.push(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../data/filters")
+                .join(name),
+        );
+        for src in candidates {
+            if src.is_file() {
+                match std::fs::copy(&src, &dest_file) {
+                    Ok(_) => {
+                        log::info!("seeded filter list {} ← {}", name, src.display());
+                        break;
+                    }
+                    Err(e) => log::warn!("copy {} → {}: {e}", src.display(), dest_file.display()),
+                }
+            }
+        }
+        if !dest_file.exists() {
+            log::warn!(
+                "filter list {name} missing — enable EasyList files under {}",
+                dest.display()
+            );
+        }
+    }
+    dest
 }
 
 /// Drains and acts on every pending action queued since the last frame.

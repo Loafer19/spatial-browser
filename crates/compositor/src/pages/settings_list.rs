@@ -197,17 +197,17 @@ fn blocking_panel(theme: &Theme, settings: &AppSettings) -> String {
         theme,
         "settings://toggle-filter-list/easylist",
         "EasyList",
-        "Ads · EasyList syntax · coming with filter engine",
+        "Ads · EasyList / uBlock syntax (network)",
         settings.filter_lists.easylist,
-        false,
+        true,
     ));
     rows.push_str(&list_row(
         theme,
         "settings://toggle-filter-list/easyprivacy",
         "EasyPrivacy",
-        "Trackers · EasyList syntax · coming with filter engine",
+        "Trackers · EasyList / uBlock syntax (network)",
         settings.filter_lists.easyprivacy,
-        false,
+        true,
     ));
 
     rows.push_str(&section_h2(theme, "Custom hosts"));

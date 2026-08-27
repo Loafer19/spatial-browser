@@ -9,6 +9,8 @@ default = ["accelerated_osr"]
 accelerated_osr = ["cef/accelerated_osr"]
 
 [dependencies]
+# Disable default `single-thread` so Engine is Sync/Send for CEF's IO thread.
+adblock = { version = "0.13", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling"] }
 cef = { version = "151.8.0", default-features = false }
 log = "0.4"
 wgpu = "30"

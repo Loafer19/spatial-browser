@@ -11,6 +11,7 @@ Everything user-facing lives under:
 ├── downloads.json
 ├── typed_history.json
 ├── workspaces.json        # live slots (v2); autosaved on switch
+├── filters/               # EasyList / EasyPrivacy .txt (seeded from bundle)
 ├── settings.json
 ├── userscripts/           # your .js files
 ├── userscripts_state.json # disabled script basenames
