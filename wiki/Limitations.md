@@ -34,6 +34,20 @@ Password manager is **local-only** (see [[Password-Manager]]); no cloud sync, CS
 
 **Linux x86_64 only.**
 
+## No H.264 / AAC (Twitch, many MP4 streams)
+
+Official CEF binaries used here are **`minimal`** and ship **without proprietary codecs**. Chromium logs:
+
+`Proprietary codecs not enabled in this Chromium build`
+
+Twitch live video typically needs **H.264 + AAC**, so the player surfaces **Error #4000** (“not supported in this browser”). GPU choice / VAAPI / adblock do not fix this — the codecs were never compiled in.
+
+Open codecs that *are* present (VP8/VP9/AV1) do not help when the site only offers H.264.
+
+**Workaround:** open Twitch (and similar) in system Chrome/Firefox. Enabling codecs requires a **custom CEF/Chromium build** (`proprietary_codecs=true`, `ffmpeg_branding=Chrome`) plus awareness of patent/licensing constraints when redistributing.
+
+A throwaway Qt WebEngine probe lives at `tools/qt_webengine_twitch_smoke.py` — the PySide6 wheel on this machine also reports `NO` for `avc1` / `mp4a.40.2` (same class of problem unless you install distro `qt6-webengine` built with openh264).
+
 ## Security-related switches
 
 Child-process command line currently includes aggressive flags used during embedding bring-up (`ignore-certificate-errors`, etc.). Treat as a personal tool; don’t assume hardened multi-user browser defaults.
