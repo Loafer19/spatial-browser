@@ -62,10 +62,11 @@ wrap_app! {
             // and didn't help.) Reading Mode is browser-chrome UI a
             // windowless app can't surface anyway, so this costs nothing.
             //
-            // VaapiVideoDecoder*: on this machine VAAPI decode fails
-            // (`vaEndPicture failed`) and Twitch then surfaces Error
-            // #4000 ("not supported in this browser"). Force software
-            // decode; CPU cost is acceptable for a personal shell.
+            // Prefer software decode over broken VAAPI paths on Linux
+            // (`vaEndPicture failed` in logs). Do **not** also set
+            // disable-accelerated-video-decode: some CEF builds only
+            // expose H.264/AAC via the accelerated path, and killing
+            // that entirely makes Twitch report Error #4000.
             command_line.append_switch_with_value(
                 Some(&"disable-features".into()),
                 Some(
@@ -73,7 +74,6 @@ wrap_app! {
                         .into(),
                 ),
             );
-            command_line.append_switch(Some(&"disable-accelerated-video-decode".into()));
             // Embedded OSR has no reliable "user gesture" for media;
             // without this, sites that gate MSE/autoplay can refuse play.
             command_line.append_switch_with_value(

@@ -193,9 +193,37 @@ pub fn cosmetic_hide_css(url: &str) -> Option<String> {
     Some(css)
 }
 
+/// Hosts where ##+js injection is known to break the main player
+/// (Twitch Error #4000, similar MSE players). Cosmetic hide still runs.
+fn scriptlet_denied(url: &str) -> bool {
+    let host = url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(url)
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim_start_matches("www.");
+    matches!(
+        host,
+        "twitch.tv"
+            | "player.twitch.tv"
+            | "m.twitch.tv"
+            | "clips.twitch.tv"
+            | "kick.com"
+            | "youtube.com"
+            | "youtu.be"
+            | "www.youtube.com"
+            | "m.youtube.com"
+    ) || host.ends_with(".twitch.tv")
+}
+
 /// Ready-to-run JS from `##+js(...)` rules for `url`, if scriptlets are on.
 pub fn scriptlet_js(url: &str) -> Option<String> {
     if !SCRIPTLETS_ENABLED.load(Ordering::Relaxed) {
+        return None;
+    }
+    if scriptlet_denied(url) {
         return None;
     }
     let Ok(guard) = ENGINE.lock() else {
