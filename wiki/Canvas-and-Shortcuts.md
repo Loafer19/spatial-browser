@@ -48,8 +48,11 @@ Pages live in **world space** on a pannable/zoomable canvas. Hit-testing and dra
 | `Ctrl+J` | Downloads |
 | `Ctrl+H` | History |
 | `Ctrl+K` | Switcher (open pages) |
-| `Ctrl+Shift+W` | Workspaces |
-| `Ctrl+Shift+U` | Userscripts |
+| `Ctrl+Shift+W` | Workspace slot list |
+| `Ctrl+N` | New workspace slot |
+| `Ctrl+1`…`Ctrl+9` | Switch to workspace slot N |
+| `Ctrl+Shift+U` | Scripts & styles |
+| `Ctrl+Shift+P` | Passwords / vault |
 | `Ctrl+,` | Settings |
 
 ### Canvas
@@ -59,6 +62,7 @@ Pages live in **world space** on a pannable/zoomable canvas. Hit-testing and dra
 | `Ctrl+G` | Auto-layout into a grid |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous page |
 | `Ctrl+Space` | Zoom focused page to canvas |
+| Top-edge hover | Show workspace chip strip |
 | `Ctrl+Shift+0` | Reset canvas view |
 
 ### Other
@@ -68,4 +72,4 @@ Pages live in **world space** on a pannable/zoomable canvas. Hit-testing and dra
 | `Ctrl+Shift+Space` | Cycle UI theme |
 | `F1` / `Ctrl+/` | This help list (in-app) |
 
-Same table is always available in-app via **F1**.
+Same table is always available in-app via **F1**. Live workspace slots: see [[Features]].

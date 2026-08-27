@@ -15,9 +15,24 @@ Type a URL or search. Prefixes: `@g`, `@y`, `@ddg`, `@bing`, `@wiki`. Typed hist
 
 Chrome bookmarks: one-time merge via `import-chrome` — [[Getting-Started]].
 
-## Workspaces (`Ctrl+Shift+W`)
+## Workspaces (live slots)
 
-Named **save snapshots** of the whole canvas (URLs, rects, viewport, theme). Load closes everything open and restores the snapshot — not a live auto-synced workspace.
+Numbered **live slots** (default three), not named one-shot snapshots.
+
+| Action | How |
+|--------|-----|
+| Switch slot | Top-edge chip strip, or `Ctrl+1`…`Ctrl+9` |
+| New slot | Chip `+`, `Ctrl+N`, or context menu **New workspace** |
+| Slot list / delete | `Ctrl+Shift+W` |
+
+**Behavior**
+
+- Always one active slot. Switching **autosaves** the current canvas (URLs, rects, viewport, theme) into that slot, then shows the target.
+- Slots start **lazy**: first visit is an empty canvas until you open pages there.
+- Within one process run, pages of a slot you’ve already opened stay **parked in memory** when you leave — switching back restores the same CEF browsers (no reload). A cold start still restores from the on-disk snapshot.
+- File: `~/.config/spatial-browser/workspaces.json` (version 2). Older v1 named snapshots migrate into visited slots on load.
+
+Hover the **top edge** of the window to reveal the chip strip (auto-hides when the pointer leaves).
 
 ## Reader mode (`Ctrl+Shift+R`)
 
@@ -25,12 +40,14 @@ Heuristic article extract → single-column view (Light / Sepia / Dark from Sett
 
 ## Ad / tracker blocking
 
-- Peter Lowe’s ad-server list (~3500 domains), request-level block
-- On by default; toggle + custom hosts in Settings (`Ctrl+,`)
+- **Domain blocklist**, not a full EasyList/uBlock engine: every resource request’s host is checked; matching requests are canceled
+- Baseline: [Peter Lowe’s ad-server list](https://pgl.yoyo.org/adservers/) (~3500 domains), compiled into the binary (`blocked_domains.txt`) — no runtime download
+- On by default; toggle + **extra blocked hosts** in Settings (`Ctrl+,`)
+- Does **not** do cosmetic filtering (hiding empty ad slots in the page layout)
 
 ## Clean URLs
 
-Strips tracking params from navigations (`utm_*`, `fbclid`, `gclid`, …). Toggle in Settings.
+Strips tracking params from navigations (`utm_*`, `fbclid`, `gclid`, …). Separate from ad-block; toggle in Settings.
 
 ## Themes
 

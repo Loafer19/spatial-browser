@@ -10,7 +10,7 @@ Everything user-facing lives under:
 ├── history.json
 ├── downloads.json
 ├── typed_history.json
-├── workspaces.json
+├── workspaces.json        # live slots (v2); autosaved on switch
 ├── settings.json
 ├── userscripts/           # your .js files
 ├── userscripts_state.json # disabled script basenames

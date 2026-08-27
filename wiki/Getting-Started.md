@@ -38,6 +38,7 @@ cargo build
 | New page (omnibox) | `Ctrl+T` |
 | Bookmarks | `Ctrl+D` / `Ctrl+B` |
 | History | `Ctrl+H` |
+| Workspace slots | Top-edge chips / `Ctrl+1`…`9` / `Ctrl+N` |
 | Settings | `Ctrl+,` |
 | All shortcuts | `F1` or `Ctrl+/` |
 | Userscripts | `Ctrl+Shift+U` |
