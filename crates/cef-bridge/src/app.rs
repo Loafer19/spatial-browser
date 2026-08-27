@@ -135,6 +135,19 @@ wrap_browser_process_handler! {
             command_line.append_switch(Some(&"disable-session-crashed-bubble".into()));
             command_line.append_switch(Some(&"ignore-certificate-errors".into()));
             command_line.append_switch(Some(&"ignore-ssl-errors".into()));
+            // GPU/renderer children need the same VAAPI opt-out as the
+            // browser process — otherwise Twitch still hits broken HW decode.
+            command_line.append_switch_with_value(
+                Some(&"disable-features".into()),
+                Some(
+                    &"ImmersiveReadAnything,VaapiVideoDecoder,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder"
+                        .into(),
+                ),
+            );
+            command_line.append_switch_with_value(
+                Some(&"autoplay-policy".into()),
+                Some(&"no-user-gesture-required".into()),
+            );
         }
     }
 }
