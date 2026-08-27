@@ -45,15 +45,22 @@ use cef_bridge::{
 /// `on_before_resource_load` (cef-bridge) reads that thread_local
 /// directly, not `AppSettings`.
 pub(crate) fn sync_blocklist_settings(settings: &AppSettings) {
-    // Network layer gates request cancel; cosmetic/scriptlets inject later.
-    let network_on = settings.ad_block_enabled && settings.filter_network_enabled;
+    let master = settings.ad_block_enabled;
+    let network_on = master && settings.filter_network_enabled;
+    let cosmetic_on = master && settings.filter_cosmetic_enabled;
+    let scriptlets_on = master && settings.filter_scriptlets_enabled;
+    // Engine needed for any layer that reads EasyList/EasyPrivacy rules.
+    let need_engine = network_on || cosmetic_on || scriptlets_on;
+
     cef_bridge::set_enabled(network_on);
     cef_bridge::set_peter_lowe_enabled(settings.filter_lists.peter_lowe);
     cef_bridge::set_custom_hosts(settings.custom_blocked_hosts.clone());
+    cef_bridge::set_cosmetic_enabled(cosmetic_on);
+
     let filters_dir = ensure_filter_lists_dir();
     cef_bridge::rebuild_filter_engine(&cef_bridge::FilterEngineConfig {
-        easylist: network_on && settings.filter_lists.easylist,
-        easyprivacy: network_on && settings.filter_lists.easyprivacy,
+        easylist: need_engine && settings.filter_lists.easylist,
+        easyprivacy: need_engine && settings.filter_lists.easyprivacy,
         filters_dir,
     });
 }
@@ -310,6 +317,13 @@ pub fn apply(
             .find(|p| p.browser.identifier() == browser_id)
         {
             if let Some(frame) = page.browser.main_frame() {
+                // EasyList cosmetic hides — skip utility chrome pages.
+                if !page.ephemeral {
+                    if let Some(css) = cef_bridge::cosmetic_hide_css(&url) {
+                        let js = cef_bridge::cosmetic_inject_js(&css);
+                        frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
+                    }
+                }
                 // Both styles and scripts honor `@match spatial-ui` for
                 // ephemeral chrome pages (bookmarks, settings, …).
                 for js in userstyles::matching_inject_js(&url, page.ephemeral, userstyles) {
@@ -568,12 +582,14 @@ pub fn apply(
                 settings.filter_cosmetic_enabled = !settings.filter_cosmetic_enabled;
                 settings.settings_tab = "blocking".into();
                 settings::save(settings);
+                sync_blocklist_settings(settings);
                 refresh_settings_page(session, gpu, settings, browser_id);
             }
             SettingsPageAction::ToggleFilterScriptlets => {
                 settings.filter_scriptlets_enabled = !settings.filter_scriptlets_enabled;
                 settings.settings_tab = "blocking".into();
                 settings::save(settings);
+                sync_blocklist_settings(settings);
                 refresh_settings_page(session, gpu, settings, browser_id);
             }
             SettingsPageAction::ToggleFilterList(id) => {

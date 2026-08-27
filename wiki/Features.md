@@ -45,9 +45,13 @@ Settings → **Blocking** tab (`Ctrl+,`):
 - **Content filtering** master switch
 - **Filter lists** (subscription rows): Peter Lowe hosts; **EasyList** / **EasyPrivacy** (Brave `adblock` network engine)
 - **Custom hosts** add/remove
-- **Advanced**: network / cosmetic / scriptlets layers — **network** is live; cosmetic & scriptlets not injected yet
+- **Advanced**: network / cosmetic / scriptlets layers — **network** + **cosmetic** are live; scriptlets not yet
 
-Network path: EasyList-syntax rules cancel matching resource requests (plus optional Peter Lowe host list + custom hosts). List files live under `~/.config/spatial-browser/filters/` (seeded from the bundle’s `filters/` on first run). Cosmetic CSS / scriptlets are still ahead.
+**Network:** EasyList-syntax rules cancel matching resource requests (plus optional Peter Lowe host list + custom hosts).
+
+**Cosmetic:** on document-start, injects `{display:none!important}` for URL-specific hide selectors from enabled lists. Generic class/id follow-up and `##+js` scriptlets are still ahead.
+
+List files: `~/.config/spatial-browser/filters/` (seeded from the bundle’s `filters/` on first run).
 
 ## Clean URLs
 

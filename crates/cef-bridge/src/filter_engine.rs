@@ -7,9 +7,11 @@ use adblock::lists::{FilterFormat, FilterSet, ParseOptions};
 use adblock::request::Request;
 use adblock::Engine;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 static ENGINE: Mutex<Option<Engine>> = Mutex::new(None);
+static COSMETIC_ENABLED: AtomicBool = AtomicBool::new(true);
 
 /// Which list files to load from `filters_dir`.
 #[derive(Clone, Debug, Default)]
@@ -113,6 +115,11 @@ fn map_resource_type(rt: cef::ResourceType) -> &'static str {
     }
 }
 
+/// Whether cosmetic CSS inject is allowed (Settings → Advanced).
+pub fn set_cosmetic_enabled(enabled: bool) {
+    COSMETIC_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
 /// Returns true if an enabled EasyList/EasyPrivacy rule says to block.
 pub fn check_request(url: &str, source_url: &str, resource_type: cef::ResourceType) -> bool {
     let Ok(guard) = ENGINE.lock() else {
@@ -126,4 +133,73 @@ pub fn check_request(url: &str, source_url: &str, resource_type: cef::ResourceTy
         return false;
     };
     engine.check_network_request(&req).should_block()
+}
+
+/// Build a stylesheet of `{ display:none !important }` rules for `url`.
+/// Returns `None` when cosmetic is off, the engine is empty, or there
+/// are no hide selectors. Generic class/id follow-up
+/// (`hidden_class_id_selectors`) is not wired yet — URL-specific hides
+/// only.
+pub fn cosmetic_hide_css(url: &str) -> Option<String> {
+    if !COSMETIC_ENABLED.load(Ordering::Relaxed) {
+        return None;
+    }
+    let Ok(guard) = ENGINE.lock() else {
+        return None;
+    };
+    let engine = guard.as_ref()?;
+    let resources = engine.url_cosmetic_resources(url);
+    if resources.hide_selectors.is_empty() {
+        return None;
+    }
+    let mut css = String::new();
+    let mut first = true;
+    for sel in &resources.hide_selectors {
+        if sel.is_empty() {
+            continue;
+        }
+        // Skip selectors that would break out of our style rule.
+        if sel.contains('}') || sel.contains('<') {
+            continue;
+        }
+        if !first {
+            css.push(',');
+        }
+        first = false;
+        css.push_str(sel);
+    }
+    if first {
+        return None;
+    }
+    css.push_str("{display:none!important;}");
+    Some(css)
+}
+
+/// JS snippet that injects `css` as a `<style data-spatial-cosmetic>` node.
+pub fn cosmetic_inject_js(css: &str) -> String {
+    let payload = js_string_literal(css);
+    format!(
+        "(function(){{try{{var c={payload};var s=document.createElement('style');\
+         s.setAttribute('data-spatial-cosmetic','1');s.textContent=c;\
+         (document.documentElement||document.head||document).appendChild(s);\
+         }}catch(e){{}}}})();"
+    )
+}
+
+fn js_string_literal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }

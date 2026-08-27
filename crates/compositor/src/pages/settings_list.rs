@@ -269,7 +269,7 @@ fn blocking_panel(theme: &Theme, settings: &AppSettings) -> String {
     ));
     rows.push_str(&format!(
         "<p style=\"margin:4px 0 0;color:{fg};opacity:0.55;font-size:12px\">\
-         Cosmetic inject arrives with the filter engine.</p>",
+         Hides elements matched by enabled lists (URL-specific rules).</p>",
         fg = theme.help_fg,
     ));
     rows.push_str(&toggle_row(
@@ -280,7 +280,7 @@ fn blocking_panel(theme: &Theme, settings: &AppSettings) -> String {
     ));
     rows.push_str(&format!(
         "<p style=\"margin:4px 0 0;color:{fg};opacity:0.55;font-size:12px\">\
-         Off by default when scriptlets ship — can break sites.</p>",
+         Not wired yet — reserved for ##+js rules.</p>",
         fg = theme.help_fg,
     ));
 
