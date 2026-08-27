@@ -144,10 +144,6 @@ wrap_browser_process_handler! {
                         .into(),
                 ),
             );
-            // Hard stop: feature flags alone were not enough (vaEndPicture
-            // still appeared). Force software decode in GPU/renderer.
-            command_line.append_switch(Some(&"disable-accelerated-video-decode".into()));
-            command_line.append_switch(Some(&"disable-accelerated-video-encode".into()));
             command_line.append_switch_with_value(
                 Some(&"autoplay-policy".into()),
                 Some(&"no-user-gesture-required".into()),
