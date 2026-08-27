@@ -45,7 +45,10 @@ use cef_bridge::{
 /// `on_before_resource_load` (cef-bridge) reads that thread_local
 /// directly, not `AppSettings`.
 pub(crate) fn sync_blocklist_settings(settings: &AppSettings) {
-    cef_bridge::set_enabled(settings.ad_block_enabled);
+    // Network layer gates request cancel; cosmetic/scriptlets inject later.
+    let network_on = settings.ad_block_enabled && settings.filter_network_enabled;
+    cef_bridge::set_enabled(network_on);
+    cef_bridge::set_peter_lowe_enabled(settings.filter_lists.peter_lowe);
     cef_bridge::set_custom_hosts(settings.custom_blocked_hosts.clone());
 }
 
@@ -489,30 +492,78 @@ pub fn apply(
         match action {
             SettingsPageAction::ToggleAdBlock => {
                 settings.ad_block_enabled = !settings.ad_block_enabled;
+                settings.settings_tab = "blocking".into();
                 settings::save(settings);
                 sync_blocklist_settings(settings);
                 refresh_settings_page(session, gpu, settings, browser_id);
             }
             SettingsPageAction::ToggleCleanUrls => {
                 settings.clean_urls_enabled = !settings.clean_urls_enabled;
+                settings.settings_tab = "general".into();
                 settings::save(settings);
                 cef_bridge::set_clean_urls_enabled(settings.clean_urls_enabled);
                 refresh_settings_page(session, gpu, settings, browser_id);
             }
+            SettingsPageAction::ToggleFilterNetwork => {
+                settings.filter_network_enabled = !settings.filter_network_enabled;
+                settings.settings_tab = "blocking".into();
+                settings::save(settings);
+                sync_blocklist_settings(settings);
+                refresh_settings_page(session, gpu, settings, browser_id);
+            }
+            SettingsPageAction::ToggleFilterCosmetic => {
+                settings.filter_cosmetic_enabled = !settings.filter_cosmetic_enabled;
+                settings.settings_tab = "blocking".into();
+                settings::save(settings);
+                refresh_settings_page(session, gpu, settings, browser_id);
+            }
+            SettingsPageAction::ToggleFilterScriptlets => {
+                settings.filter_scriptlets_enabled = !settings.filter_scriptlets_enabled;
+                settings.settings_tab = "blocking".into();
+                settings::save(settings);
+                refresh_settings_page(session, gpu, settings, browser_id);
+            }
+            SettingsPageAction::ToggleFilterList(id) => {
+                match id.as_str() {
+                    "peter_lowe" => {
+                        settings.filter_lists.peter_lowe = !settings.filter_lists.peter_lowe;
+                    }
+                    "easylist" => {
+                        settings.filter_lists.easylist = !settings.filter_lists.easylist;
+                    }
+                    "easyprivacy" => {
+                        settings.filter_lists.easyprivacy = !settings.filter_lists.easyprivacy;
+                    }
+                    _ => {}
+                }
+                settings.settings_tab = "blocking".into();
+                settings::save(settings);
+                sync_blocklist_settings(settings);
+                refresh_settings_page(session, gpu, settings, browser_id);
+            }
+            SettingsPageAction::SetTab(tab) => {
+                settings.settings_tab = AppSettings::normalize_tab(&tab).to_string();
+                settings::save(settings);
+                refresh_settings_page(session, gpu, settings, browser_id);
+            }
             SettingsPageAction::SetSearchEngine(engine) => {
                 settings.default_search_engine = engine;
+                settings.settings_tab = "general".into();
                 settings::save(settings);
                 refresh_settings_page(session, gpu, settings, browser_id);
             }
             SettingsPageAction::SetTheme(index) => {
+                settings.settings_tab = "appearance".into();
                 if let Some(theme) = THEMES.get(index) {
                     session.set_theme(*theme);
                 }
+                settings::save(settings);
                 refresh_settings_page(session, gpu, settings, browser_id);
             }
             SettingsPageAction::SetReaderTheme(index) => {
                 if index < crate::reader_mode::READER_THEMES.len() {
                     settings.reader_theme = index;
+                    settings.settings_tab = "appearance".into();
                     settings::save(settings);
                 }
                 refresh_settings_page(session, gpu, settings, browser_id);
@@ -521,6 +572,7 @@ pub fn apply(
                 let host = host.trim();
                 if !host.is_empty() && !settings.custom_blocked_hosts.iter().any(|h| h == host) {
                     settings.custom_blocked_hosts.push(host.to_string());
+                    settings.settings_tab = "blocking".into();
                     settings::save(settings);
                     sync_blocklist_settings(settings);
                 }
@@ -529,6 +581,7 @@ pub fn apply(
             SettingsPageAction::RemoveBlockedHost(index) => {
                 if index < settings.custom_blocked_hosts.len() {
                     settings.custom_blocked_hosts.remove(index);
+                    settings.settings_tab = "blocking".into();
                     settings::save(settings);
                     sync_blocklist_settings(settings);
                 }
@@ -536,6 +589,7 @@ pub fn apply(
             }
             SettingsPageAction::SetFrameRate(fps) => {
                 settings.target_fps = fps;
+                settings.settings_tab = "general".into();
                 settings::save(settings);
                 browser::set_target_frame_rate(fps);
                 // Applied immediately to every currently-open page's own

@@ -1,55 +1,79 @@
-// User-editable preferences: ad-block on/off, the omnibox's default
-// search engine, and hosts the user has added to the ad/tracker
-// blocklist themselves (on top of cef-bridge's compiled-in list —
-// see blocklist.rs's own header comment for why that one's static
-// instead of user-editable). One object, not a list, so unlike
-// bookmarks/history/downloads/workspaces this is a single JSON object
-// rather than a `{ entries: [...] }` wrapper.
+// User-editable preferences. One JSON object in settings.json.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-// `#[serde(default)]` at the container level: a field added here in the
-// future, after real settings.json files already exist on disk without
-// it, falls back to its own default instead of failing to parse the
-// whole file just because one key is missing.
+/// Which built-in host/filter subscriptions are enabled.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FilterLists {
+    /// Compiled-in Peter Lowe ad-server hosts (`blocked_domains.txt`).
+    pub peter_lowe: bool,
+    /// EasyList (network + cosmetic) — wired in a later phase.
+    pub easylist: bool,
+    /// EasyPrivacy — wired in a later phase.
+    pub easyprivacy: bool,
+}
+
+impl Default for FilterLists {
+    fn default() -> Self {
+        Self {
+            peter_lowe: true,
+            // Off until the adblock Engine ships (P1); rows still show in UI.
+            easylist: false,
+            easyprivacy: false,
+        }
+    }
+}
+
+// `#[serde(default)]` at the container level: a field added later falls
+// back instead of failing to parse older settings.json files.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
+    /// Master content-filtering switch. Off → no list / layer applies.
     pub ad_block_enabled: bool,
-    /// Strips utm_*/fbclid/gclid/etc. tracking params from a link
-    /// before it loads — see cef-bridge::clean_urls.
+    /// Apply network (request-cancel) rules from enabled lists.
+    pub filter_network_enabled: bool,
+    /// Apply cosmetic hiding (CSS inject) — no-op until P2.
+    pub filter_cosmetic_enabled: bool,
+    /// Apply scriptlets (`+js`) — no-op until P3; default Off.
+    pub filter_scriptlets_enabled: bool,
+    pub filter_lists: FilterLists,
+    /// Strips utm_*/fbclid/gclid/etc. from navigations.
     pub clean_urls_enabled: bool,
-    /// A full search URL template with the query appended directly
-    /// (e.g. `https://www.google.com/search?q=`) — the same shape
-    /// omnibox.rs's `@prefix` engines already use, so applying it is
-    /// just using this instead of that map's hardcoded default.
     pub default_search_engine: String,
-    /// Index into `reader_mode::READER_THEMES` — the colors Ctrl+Shift+R
-    /// (reader mode) rewrites a page's content with. Independent of the
-    /// UI chrome's own `Theme`/`THEMES`: reading comfort (light/sepia/
-    /// dark article background) is a different concern than the
-    /// canvas/list-page chrome color scheme.
     pub reader_theme: usize,
     pub custom_blocked_hosts: Vec<String>,
-    /// CEF's `windowless_frame_rate` for every page, and the main
-    /// event loop's own pacing (main.rs) — one of 60/90/120, picked
-    /// from Settings, not free text (a monitor's actual max refresh
-    /// rate is the real ceiling regardless of this; higher just gives
-    /// CEF/the loop room to produce frames that fast if the display can
-    /// show them).
     pub target_fps: u32,
+    /// Last Settings UI tab: `general` | `blocking` | `appearance`.
+    pub settings_tab: String,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             ad_block_enabled: true,
+            filter_network_enabled: true,
+            filter_cosmetic_enabled: true,
+            filter_scriptlets_enabled: false,
+            filter_lists: FilterLists::default(),
             clean_urls_enabled: true,
             default_search_engine: "https://www.google.com/search?q=".to_string(),
             reader_theme: 0,
             custom_blocked_hosts: Vec::new(),
             target_fps: 60,
+            settings_tab: "general".to_string(),
+        }
+    }
+}
+
+impl AppSettings {
+    pub fn normalize_tab(tab: &str) -> &'static str {
+        match tab {
+            "blocking" => "blocking",
+            "appearance" => "appearance",
+            _ => "general",
         }
     }
 }
@@ -59,8 +83,6 @@ fn path() -> PathBuf {
     PathBuf::from(home).join(".config/spatial-browser/settings.json")
 }
 
-/// Falls back to `AppSettings::default()` if there's no file yet or it
-/// fails to parse.
 pub fn load() -> AppSettings {
     std::fs::read(path())
         .ok()
@@ -68,8 +90,6 @@ pub fn load() -> AppSettings {
         .unwrap_or_default()
 }
 
-/// Settings edits are rare, deliberate actions — saved immediately, no
-/// debounce.
 pub fn save(settings: &AppSettings) {
     let path = path();
     if let Some(parent) = path.parent() {

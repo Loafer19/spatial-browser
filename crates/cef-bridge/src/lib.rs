@@ -36,7 +36,7 @@ mod navigation;
 mod render;
 
 pub use app::*;
-pub use blocklist::{set_custom_hosts, set_enabled};
+pub use blocklist::{set_custom_hosts, set_enabled, set_peter_lowe_enabled};
 pub use clean_urls::set_enabled as set_clean_urls_enabled;
 pub use client::*;
 pub use display::*;

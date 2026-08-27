@@ -1,40 +1,20 @@
-// The Ctrl+, settings page: ad-block on/off, the omnibox's default
-// search engine, a direct theme picker (Ctrl+Shift+Space already cycles
-// themes — this is the same choice, just click instead of cycle), the
-// target frame rate (60/90/120 — a monitor's own max refresh rate is
-// still the real ceiling, this just gives the pipeline room to reach
-// it), and the user's own additions to the ad/tracker blocklist (on top
-// of cef-bridge's compiled-in one — see blocklist.rs's header comment
-// for why that one stays static). See cef-bridge's OsrRequestHandler /
-// app.rs's PENDING_SETTINGS_ACTION for how clicks on this page's
-// `settings://...` links get handled.
+// Ctrl+, settings: tabbed General / Blocking / Appearance.
+// Tab clicks use settings://tab/… so the active tab survives refresh
+// after toggles. See PENDING_SETTINGS_ACTION.
 
 use super::{html_escape, CHECKMARK_SVG_PATH, LIST_NAV_SCRIPT, TRASH_SVG_PATH};
 use crate::output::{Theme, THEMES};
 use crate::persistence::settings::AppSettings;
 use crate::reader_mode::READER_THEMES;
 
-/// The default-search-engine choices offered — a fixed, known-good set
-/// rather than a free-text URL template: no chance of saving a broken
-/// one, at the cost of not supporting an arbitrary engine.
 const SEARCH_ENGINES: &[(&str, &str)] = &[
     ("Google", "https://www.google.com/search?q="),
     ("DuckDuckGo", "https://duckduckgo.com/?q="),
     ("Bing", "https://www.bing.com/search?q="),
 ];
 
-/// Frame-rate choices offered — CEF's own `windowless_frame_rate` and
-/// the main event loop's pacing both get set to this (browser.rs's
-/// `set_target_frame_rate`, main.rs's own loop reading `App::target_fps`
-/// live). A monitor's actual max refresh rate is still the real
-/// ceiling regardless of this setting; 120 just gives the pipeline room
-/// to hit it if the display can show it.
 const FRAME_RATES: &[u32] = &[60, 90, 120];
 
-/// A small static checkmark (not a button) marking whichever choice in
-/// a settings section is currently active — reuses `help_key_bg` as the
-/// accent color, the same one `group-toggle button.active` already uses
-/// in history_list.rs for the same "this one's selected" meaning.
 fn checkmark(theme: &Theme, current: bool) -> String {
     if !current {
         return String::new();
@@ -46,136 +26,193 @@ fn checkmark(theme: &Theme, current: bool) -> String {
     )
 }
 
-/// Builds the settings page's `data:` URL. `pub(crate)` so app.rs can
-/// rebuild this page in place after any change, same close+respawn
-/// pattern as every other list page (see refresh_bookmarks_page).
-pub(crate) fn page_url(theme: &Theme, settings: &AppSettings) -> String {
-    let adblock_state = if settings.ad_block_enabled {
+fn on_off(v: bool) -> &'static str {
+    if v {
         "On"
     } else {
         "Off"
-    };
-    let clean_urls_state = if settings.clean_urls_enabled {
-        "On"
-    } else {
-        "Off"
-    };
-    let mut rows = format!(
-        "<h2 style=\"margin:0 0 8px;font-size:13px;text-transform:uppercase;\
-         letter-spacing:0.05em;color:{heading};opacity:0.8\">Ad &amp; tracker blocking</h2>\
-         <div class=\"list-row\" data-open=\"settings://toggle-adblock\" \
-         onclick=\"location='settings://toggle-adblock'\" \
-         style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
-         cursor:pointer;background:{card_bg};border-radius:8px;\
-         border:1px solid {card_border}\">\
-         <span style=\"flex:1;color:{fg}\">Block known ad/tracker requests</span>\
-         <span style=\"flex-shrink:0;color:{fg};opacity:0.7\">{adblock_state}</span>\
-         </div>\
-         <div class=\"list-row\" data-open=\"settings://toggle-clean-urls\" \
-         onclick=\"location='settings://toggle-clean-urls'\" \
-         style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
-         cursor:pointer;background:{card_bg};border-radius:8px;\
-         border:1px solid {card_border}\">\
-         <span style=\"flex:1;color:{fg}\">Strip tracking parameters from links</span>\
-         <span style=\"flex-shrink:0;color:{fg};opacity:0.7\">{clean_urls_state}</span>\
-         </div>",
+    }
+}
+
+fn section_h2(theme: &Theme, title: &str) -> String {
+    format!(
+        "<h2 style=\"margin:16px 0 8px;font-size:13px;text-transform:uppercase;\
+         letter-spacing:0.05em;color:{heading};opacity:0.8\">{title}</h2>",
         heading = theme.help_heading,
+    )
+}
+
+fn toggle_row(theme: &Theme, href: &str, label: &str, state: bool) -> String {
+    format!(
+        "<div class=\"list-row\" data-open=\"{href}\" \
+         onclick=\"location='{href}'\" \
+         style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
+         cursor:pointer;background:{card_bg};border-radius:8px;\
+         border:1px solid {card_border}\">\
+         <span style=\"flex:1;color:{fg}\">{label}</span>\
+         <span style=\"flex-shrink:0;color:{fg};opacity:0.7\">{state}</span>\
+         </div>",
         card_bg = theme.help_card_bg,
         card_border = theme.help_card_border,
         fg = theme.help_fg,
+        state = on_off(state),
+    )
+}
+
+/// Subscription-style row: title, subtitle, On/Off.
+fn list_row(
+    theme: &Theme,
+    href: &str,
+    title: &str,
+    subtitle: &str,
+    enabled: bool,
+    available: bool,
+) -> String {
+    let state = if !available {
+        "Soon"
+    } else {
+        on_off(enabled)
+    };
+    let opacity = if available { "1" } else { "0.55" };
+    let cursor = if available { "pointer" } else { "default" };
+    let onclick = if available {
+        format!("onclick=\"location='{href}'\"")
+    } else {
+        String::new()
+    };
+    format!(
+        "<div class=\"list-row\" data-open=\"{href}\" {onclick} \
+         style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
+         cursor:{cursor};background:{card_bg};border-radius:8px;\
+         border:1px solid {card_border};opacity:{opacity}\">\
+         <div style=\"flex:1;min-width:0\">\
+         <div style=\"color:{fg};font-weight:600\">{title}</div>\
+         <div style=\"color:{fg};opacity:0.6;font-size:12px;margin-top:2px\">{subtitle}</div>\
+         </div>\
+         <span style=\"flex-shrink:0;color:{fg};opacity:0.7\">{state}</span>\
+         </div>",
+        card_bg = theme.help_card_bg,
+        card_border = theme.help_card_border,
+        fg = theme.help_fg,
+    )
+}
+
+fn choice_row(theme: &Theme, href: &str, label: &str, current: bool) -> String {
+    format!(
+        "<div class=\"list-row\" data-open=\"{href}\" \
+         onclick=\"location='{href}'\" \
+         style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
+         cursor:pointer;background:{card_bg};border-radius:8px;\
+         border:1px solid {card_border}\">\
+         <span style=\"flex:1;color:{fg}\">{label}</span>{checkmark}</div>",
+        card_bg = theme.help_card_bg,
+        card_border = theme.help_card_border,
+        fg = theme.help_fg,
+        checkmark = checkmark(theme, current),
+    )
+}
+
+fn tab_bar(theme: &Theme, active: &str) -> String {
+    let mut html = String::from(
+        "<div style=\"display:flex;gap:6px;margin:0 0 20px;flex-wrap:wrap\">",
     );
+    for (id, label) in [
+        ("general", "General"),
+        ("blocking", "Blocking"),
+        ("appearance", "Appearance"),
+    ] {
+        let on = active == id;
+        let (bg, fg, border) = if on {
+            (theme.help_key_bg, theme.help_key_fg, theme.help_key_bg)
+        } else {
+            (theme.help_card_bg, theme.help_fg, theme.help_card_border)
+        };
+        html.push_str(&format!(
+            "<a href=\"settings://tab/{id}\" \
+             style=\"text-decoration:none;padding:8px 14px;border-radius:8px;\
+             border:1px solid {border};background:{bg};color:{fg};font-size:13px;\
+             font-weight:600\">{label}</a>",
+        ));
+    }
+    html.push_str("</div>");
+    html
+}
 
-    rows.push_str(&format!(
-        "<h2 style=\"margin:16px 0 8px;font-size:13px;text-transform:uppercase;\
-         letter-spacing:0.05em;color:{heading};opacity:0.8\">Default search engine</h2>",
-        heading = theme.help_heading,
+fn general_panel(theme: &Theme, settings: &AppSettings) -> String {
+    let mut rows = String::new();
+    rows.push_str(&section_h2(theme, "Privacy"));
+    rows.push_str(&toggle_row(
+        theme,
+        "settings://toggle-clean-urls",
+        "Strip tracking parameters from links",
+        settings.clean_urls_enabled,
     ));
+
+    rows.push_str(&section_h2(theme, "Default search engine"));
     for (name, url) in SEARCH_ENGINES {
-        let is_current = settings.default_search_engine == *url;
-        rows.push_str(&format!(
-            "<div class=\"list-row\" data-open=\"settings://search-engine?engine={url_enc}\" \
-             onclick=\"location='settings://search-engine?engine={url_enc}'\" \
-             style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
-             cursor:pointer;background:{card_bg};border-radius:8px;\
-             border:1px solid {card_border}\">\
-             <span style=\"flex:1;color:{fg}\">{name}</span>{checkmark}</div>",
-            url_enc = urlencoding_lite(url),
-            card_bg = theme.help_card_bg,
-            card_border = theme.help_card_border,
-            fg = theme.help_fg,
-            checkmark = checkmark(theme, is_current),
+        rows.push_str(&choice_row(
+            theme,
+            &format!("settings://search-engine?engine={}", urlencoding_lite(url)),
+            name,
+            settings.default_search_engine == *url,
         ));
     }
 
-    rows.push_str(&format!(
-        "<h2 style=\"margin:16px 0 8px;font-size:13px;text-transform:uppercase;\
-         letter-spacing:0.05em;color:{heading};opacity:0.8\">Theme</h2>",
-        heading = theme.help_heading,
-    ));
-    for (index, candidate) in THEMES.iter().enumerate() {
-        let is_current = candidate.name == theme.name;
-        rows.push_str(&format!(
-            "<div class=\"list-row\" data-open=\"settings://theme/{index}\" \
-             onclick=\"location='settings://theme/{index}'\" \
-             style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
-             cursor:pointer;background:{card_bg};border-radius:8px;\
-             border:1px solid {card_border}\">\
-             <span style=\"flex:1;color:{fg}\">{name}</span>{checkmark}</div>",
-            card_bg = theme.help_card_bg,
-            card_border = theme.help_card_border,
-            fg = theme.help_fg,
-            name = candidate.name,
-            checkmark = checkmark(theme, is_current),
-        ));
-    }
-
-    rows.push_str(&format!(
-        "<h2 style=\"margin:16px 0 8px;font-size:13px;text-transform:uppercase;\
-         letter-spacing:0.05em;color:{heading};opacity:0.8\">Reading mode (Ctrl+Shift+R)</h2>",
-        heading = theme.help_heading,
-    ));
-    for (index, candidate) in READER_THEMES.iter().enumerate() {
-        let is_current = settings.reader_theme == index;
-        rows.push_str(&format!(
-            "<div class=\"list-row\" data-open=\"settings://reader-theme/{index}\" \
-             onclick=\"location='settings://reader-theme/{index}'\" \
-             style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
-             cursor:pointer;background:{card_bg};border-radius:8px;\
-             border:1px solid {card_border}\">\
-             <span style=\"flex:1;color:{fg}\">{name}</span>{checkmark}</div>",
-            card_bg = theme.help_card_bg,
-            card_border = theme.help_card_border,
-            fg = theme.help_fg,
-            name = candidate.name,
-            checkmark = checkmark(theme, is_current),
-        ));
-    }
-
-    rows.push_str(&format!(
-        "<h2 style=\"margin:16px 0 8px;font-size:13px;text-transform:uppercase;\
-         letter-spacing:0.05em;color:{heading};opacity:0.8\">Performance</h2>",
-        heading = theme.help_heading,
-    ));
+    rows.push_str(&section_h2(theme, "Performance"));
     for fps in FRAME_RATES {
-        let is_current = settings.target_fps == *fps;
-        rows.push_str(&format!(
-            "<div class=\"list-row\" data-open=\"settings://frame-rate/{fps}\" \
-             onclick=\"location='settings://frame-rate/{fps}'\" \
-             style=\"display:flex;align-items:center;gap:10px;padding:10px 14px;\
-             cursor:pointer;background:{card_bg};border-radius:8px;\
-             border:1px solid {card_border}\">\
-             <span style=\"flex:1;color:{fg}\">{fps} fps</span>{checkmark}</div>",
-            card_bg = theme.help_card_bg,
-            card_border = theme.help_card_border,
-            fg = theme.help_fg,
-            checkmark = checkmark(theme, is_current),
+        rows.push_str(&choice_row(
+            theme,
+            &format!("settings://frame-rate/{fps}"),
+            &format!("{fps} fps"),
+            settings.target_fps == *fps,
         ));
     }
+    rows
+}
 
+fn blocking_panel(theme: &Theme, settings: &AppSettings) -> String {
+    let mut rows = String::new();
+    rows.push_str(&toggle_row(
+        theme,
+        "settings://toggle-adblock",
+        "Content filtering",
+        settings.ad_block_enabled,
+    ));
     rows.push_str(&format!(
-        "<h2 style=\"margin:16px 0 8px;font-size:13px;text-transform:uppercase;\
-         letter-spacing:0.05em;color:{heading};opacity:0.8\">Your blocked hosts</h2>\
-         <form method=\"get\" action=\"settings://add-host\" \
+        "<p style=\"margin:8px 0 0;color:{fg};opacity:0.65;font-size:12px\">\
+         Master switch. When off, no filter list or layer runs.</p>",
+        fg = theme.help_fg,
+    ));
+
+    rows.push_str(&section_h2(theme, "Filter lists"));
+    rows.push_str(&list_row(
+        theme,
+        "settings://toggle-filter-list/peter_lowe",
+        "Peter Lowe hosts",
+        "Built-in ad/tracker domains (~3500) · request block",
+        settings.filter_lists.peter_lowe,
+        true,
+    ));
+    rows.push_str(&list_row(
+        theme,
+        "settings://toggle-filter-list/easylist",
+        "EasyList",
+        "Ads · EasyList syntax · coming with filter engine",
+        settings.filter_lists.easylist,
+        false,
+    ));
+    rows.push_str(&list_row(
+        theme,
+        "settings://toggle-filter-list/easyprivacy",
+        "EasyPrivacy",
+        "Trackers · EasyList syntax · coming with filter engine",
+        settings.filter_lists.easyprivacy,
+        false,
+    ));
+
+    rows.push_str(&section_h2(theme, "Custom hosts"));
+    rows.push_str(&format!(
+        "<form method=\"get\" action=\"settings://add-host\" \
          style=\"display:flex;gap:8px;margin-bottom:8px\">\
          <input name=\"host\" placeholder=\"example.com\" \
          style=\"flex:1;min-width:0;background:{card_bg};color:{fg};\
@@ -184,7 +221,6 @@ pub(crate) fn page_url(theme: &Theme, settings: &AppSettings) -> String {
          <button type=\"submit\" style=\"background:{key_bg};color:{key_fg};border:none;\
          border-radius:6px;padding:8px 16px;font:inherit;font-size:14px;cursor:pointer\">\
          Add</button></form>",
-        heading = theme.help_heading,
         card_bg = theme.help_card_bg,
         card_border = theme.help_card_border,
         fg = theme.help_fg,
@@ -194,7 +230,7 @@ pub(crate) fn page_url(theme: &Theme, settings: &AppSettings) -> String {
     if settings.custom_blocked_hosts.is_empty() {
         rows.push_str(&super::empty_state(
             theme,
-            "No hosts added yet &mdash; the list above blocks the common ones already.",
+            "No custom hosts yet — add domains the built-in list misses.",
         ));
     }
     for (index, host) in settings.custom_blocked_hosts.iter().enumerate() {
@@ -218,27 +254,92 @@ pub(crate) fn page_url(theme: &Theme, settings: &AppSettings) -> String {
         ));
     }
 
+    rows.push_str(&section_h2(theme, "Advanced"));
+    rows.push_str(&toggle_row(
+        theme,
+        "settings://toggle-filter-network",
+        "Apply network rules (cancel requests)",
+        settings.filter_network_enabled,
+    ));
+    rows.push_str(&toggle_row(
+        theme,
+        "settings://toggle-filter-cosmetic",
+        "Apply cosmetic hiding (CSS)",
+        settings.filter_cosmetic_enabled,
+    ));
+    rows.push_str(&format!(
+        "<p style=\"margin:4px 0 0;color:{fg};opacity:0.55;font-size:12px\">\
+         Cosmetic inject arrives with the filter engine.</p>",
+        fg = theme.help_fg,
+    ));
+    rows.push_str(&toggle_row(
+        theme,
+        "settings://toggle-filter-scriptlets",
+        "Apply scriptlets (experimental)",
+        settings.filter_scriptlets_enabled,
+    ));
+    rows.push_str(&format!(
+        "<p style=\"margin:4px 0 0;color:{fg};opacity:0.55;font-size:12px\">\
+         Off by default when scriptlets ship — can break sites.</p>",
+        fg = theme.help_fg,
+    ));
+
+    rows
+}
+
+fn appearance_panel(theme: &Theme, settings: &AppSettings) -> String {
+    let mut rows = String::new();
+    rows.push_str(&section_h2(theme, "UI theme"));
+    for (index, candidate) in THEMES.iter().enumerate() {
+        rows.push_str(&choice_row(
+            theme,
+            &format!("settings://theme/{index}"),
+            candidate.name,
+            candidate.name == theme.name,
+        ));
+    }
+
+    rows.push_str(&section_h2(theme, "Reading mode (Ctrl+Shift+R)"));
+    for (index, reader) in READER_THEMES.iter().enumerate() {
+        rows.push_str(&choice_row(
+            theme,
+            &format!("settings://reader-theme/{index}"),
+            reader.name,
+            settings.reader_theme == index,
+        ));
+    }
+    rows
+}
+
+pub(crate) fn page_url(theme: &Theme, settings: &AppSettings) -> String {
+    let tab = AppSettings::normalize_tab(&settings.settings_tab);
+    let panel = match tab {
+        "blocking" => blocking_panel(theme, settings),
+        "appearance" => appearance_panel(theme, settings),
+        _ => general_panel(theme, settings),
+    };
+
     format!(
         "data:text/html;charset=utf-8,{nav_script}\
          <style>{icon_hover}\
          .list-row:hover,.list-row.list-active{{background:{key_bg}!important}}\
-         .list-row:hover span,.list-row.list-active span{{color:{key_fg}!important}}</style>\
+         .list-row:hover span,.list-row.list-active span,\
+         .list-row:hover div,.list-row.list-active div{{color:{key_fg}!important}}</style>\
          {body_open}\
-         <h1 style=\"margin:0 0 20px;color:{heading};font-size:20px\">Settings</h1>\
-         <div style=\"display:flex;flex-direction:column;gap:8px\">{rows}</div></body>",
+         <h1 style=\"margin:0 0 12px;color:{heading};font-size:20px\">Settings</h1>\
+         {tabs}\
+         <div style=\"display:flex;flex-direction:column;gap:8px\">{panel}</div></body>",
         nav_script = LIST_NAV_SCRIPT,
         icon_hover = super::icon_button_hover_css(theme),
         body_open = super::body_open(theme, ""),
         key_bg = theme.help_key_bg,
         key_fg = theme.help_key_fg,
         heading = theme.help_heading,
+        tabs = tab_bar(theme, tab),
+        panel = panel,
     )
 }
 
-/// Percent-encodes just enough of a URL template to survive as one
-/// query-string value (`:`, `/`, `?`, `=`, `&`) — the templates in
-/// `SEARCH_ENGINES` above are the only input, so this doesn't need to
-/// handle arbitrary text.
 fn urlencoding_lite(s: &str) -> String {
     s.chars()
         .map(|c| match c {

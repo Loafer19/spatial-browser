@@ -40,10 +40,14 @@ Heuristic article extract → single-column view (Light / Sepia / Dark from Sett
 
 ## Ad / tracker blocking
 
-- **Domain blocklist**, not a full EasyList/uBlock engine: every resource request’s host is checked; matching requests are canceled
-- Baseline: [Peter Lowe’s ad-server list](https://pgl.yoyo.org/adservers/) (~3500 domains), compiled into the binary (`blocked_domains.txt`) — no runtime download
-- On by default; toggle + **extra blocked hosts** in Settings (`Ctrl+,`)
-- Does **not** do cosmetic filtering (hiding empty ad slots in the page layout)
+Settings → **Blocking** tab (`Ctrl+,`):
+
+- **Content filtering** master switch
+- **Filter lists** (subscription rows): Peter Lowe hosts (active); EasyList / EasyPrivacy (UI reserved, engine coming)
+- **Custom hosts** add/remove
+- **Advanced**: network / cosmetic / scriptlets layers (cosmetic & scriptlets apply once the filter engine lands)
+
+Today’s live blocker is still a **domain list**: every resource request’s host is checked; matches are canceled. Baseline: [Peter Lowe’s ad-server list](https://pgl.yoyo.org/adservers/) (~3500 domains), compiled in. Not yet a full EasyList/uBlock engine (no cosmetic hide / scriptlets in the pipeline).
 
 ## Clean URLs
 

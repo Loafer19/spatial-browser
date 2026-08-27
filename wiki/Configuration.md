@@ -22,15 +22,15 @@ Everything user-facing lives under:
 
 ## Settings UI (`Ctrl+,`)
 
-Persisted in `settings.json`:
+Tabbed page: **General** | **Blocking** | **Appearance**. Persisted in `settings.json`:
 
-- Ad-block on/off
+- Content filtering master + filter-list toggles + network/cosmetic/scriptlets layers
 - Clean URLs on/off
 - Default search engine
-- UI theme
-- Reader theme
+- UI theme / reader theme
 - Extra blocked hosts
 - Target frame rate (60/90/120)
+- Last opened settings tab
 
 ## Environment overrides
 

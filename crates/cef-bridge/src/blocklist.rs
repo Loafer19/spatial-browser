@@ -47,12 +47,17 @@ use std::sync::{LazyLock, Mutex};
 // unaffected either way) blocked real requests, but a custom host added
 // through the settings page never took effect.
 static ENABLED: AtomicBool = AtomicBool::new(true);
+static PETER_LOWE_ENABLED: AtomicBool = AtomicBool::new(true);
 static CUSTOM_HOSTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// Called once at startup (from the loaded settings.json) and again on
-/// every Ctrl+, toggle.
+/// Master content-filtering switch (Settings → Blocking).
 pub fn set_enabled(enabled: bool) {
     ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+/// Whether the compiled-in Peter Lowe host list participates.
+pub fn set_peter_lowe_enabled(enabled: bool) {
+    PETER_LOWE_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
 /// Called once at startup and again on every add/remove in the settings
@@ -111,7 +116,9 @@ fn is_blocked(host: &str) -> bool {
     if !ENABLED.load(Ordering::Relaxed) {
         return false;
     }
-    if suffixes(host).any(|suffix| BLOCKED_DOMAINS.contains(suffix)) {
+    if PETER_LOWE_ENABLED.load(Ordering::Relaxed)
+        && suffixes(host).any(|suffix| BLOCKED_DOMAINS.contains(suffix))
+    {
         return true;
     }
     // A poisoned lock (a panic while holding it, on either thread) is

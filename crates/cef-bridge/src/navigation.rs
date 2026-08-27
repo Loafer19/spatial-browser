@@ -241,6 +241,13 @@ fn parse_workspace_action(url: &str) -> Option<WorkspacePageAction> {
 pub enum SettingsPageAction {
     ToggleAdBlock,
     ToggleCleanUrls,
+    ToggleFilterNetwork,
+    ToggleFilterCosmetic,
+    ToggleFilterScriptlets,
+    /// Built-in list id: `peter_lowe` | `easylist` | `easyprivacy`.
+    ToggleFilterList(String),
+    /// Persist which Settings tab is shown after refresh.
+    SetTab(String),
     /// A full search URL template (e.g. `https://www.bing.com/search?q=`)
     /// — one of the settings page's own fixed choices, not free text.
     SetSearchEngine(String),
@@ -268,6 +275,23 @@ fn parse_settings_action(url: &str) -> Option<SettingsPageAction> {
     }
     if rest == "toggle-clean-urls" {
         return Some(SettingsPageAction::ToggleCleanUrls);
+    }
+    if rest == "toggle-filter-network" {
+        return Some(SettingsPageAction::ToggleFilterNetwork);
+    }
+    if rest == "toggle-filter-cosmetic" {
+        return Some(SettingsPageAction::ToggleFilterCosmetic);
+    }
+    if rest == "toggle-filter-scriptlets" {
+        return Some(SettingsPageAction::ToggleFilterScriptlets);
+    }
+    if let Some(id) = rest.strip_prefix("toggle-filter-list/") {
+        if matches!(id, "peter_lowe" | "easylist" | "easyprivacy") {
+            return Some(SettingsPageAction::ToggleFilterList(id.to_string()));
+        }
+    }
+    if let Some(tab) = rest.strip_prefix("tab/") {
+        return Some(SettingsPageAction::SetTab(tab.to_string()));
     }
     if let Some(query) = rest.strip_prefix("search-engine?") {
         let engine = query_param(query, "engine")?;
