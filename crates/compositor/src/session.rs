@@ -50,6 +50,12 @@ impl Session {
         self.viewport
     }
 
+    /// Viewport to persist while a page is Ctrl+Space zoomed-to-canvas
+    /// (the pre-zoom pan/zoom), otherwise the live viewport.
+    pub fn layout_viewport(&self) -> Viewport {
+        self.zoomed_viewport.unwrap_or(self.viewport)
+    }
+
     /// Replaces the whole viewport outright (pan+zoom together) — for
     /// loading a saved workspace snapshot, as opposed to
     /// `pan_viewport_to`/`zoom_viewport_at`'s incremental adjustments.
@@ -223,22 +229,6 @@ impl Session {
             page.set_rect(rect, scale_factor);
             self.mark_dirty();
         }
-    }
-
-    /// Proportionally rescales every page's rect — used to correct page
-    /// layout when the window's real size arrives late (tiling WMs often
-    /// settle into final geometry via a `Resized` shortly after creation).
-    pub fn rescale_pages(&mut self, scale_x: f32, scale_y: f32, dpi_scale: f64) {
-        for page in &mut self.pages {
-            let rect = Rect {
-                x: page.rect.x * scale_x,
-                y: page.rect.y * scale_y,
-                w: page.rect.w * scale_x,
-                h: page.rect.h * scale_y,
-            };
-            page.set_rect(rect, dpi_scale);
-        }
-        self.mark_dirty();
     }
 
     pub fn pan_viewport_to(&mut self, offset: (f32, f32)) {

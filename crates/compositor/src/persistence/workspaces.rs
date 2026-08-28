@@ -197,7 +197,8 @@ impl WorkspaceStore {
     pub fn capture_active_from_session(&mut self, session: &Session) {
         let slot = self.active_slot_mut();
         slot.visited = true;
-        slot.viewport = session.viewport();
+        // Pre-Ctrl+Space geometry — see Session::layout_viewport / Page::layout_rect.
+        slot.viewport = session.layout_viewport();
         slot.theme = session.theme().name.to_string();
         slot.pages = session
             .pages()
@@ -205,7 +206,7 @@ impl WorkspaceStore {
             .filter(|p| !p.ephemeral)
             .map(|p| WorkspacePage {
                 url: p.url(),
-                rect: p.rect,
+                rect: p.layout_rect(),
             })
             .collect();
     }

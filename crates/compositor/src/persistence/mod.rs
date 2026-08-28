@@ -18,6 +18,7 @@
 // clean exit (see app.rs).
 
 pub mod bookmarks;
+pub mod bookmarks_chrome;
 pub mod downloads;
 pub mod history;
 pub mod settings;
@@ -55,18 +56,18 @@ fn path() -> PathBuf {
 pub fn save(session: &Session) {
     let data = SessionFile {
         theme: session.theme().name.to_string(),
-        viewport: session.viewport(),
+        // Use pre-Ctrl+Space viewport/rects so a zoomed-to-canvas page
+        // doesn't permanently overwrite the real layout on disk.
+        viewport: session.layout_viewport(),
         // Skips ephemeral pages (F1 help, bookmarks list): they're
-        // regenerated fresh from current data whenever reopened, so
-        // persisting one would just freeze a stale snapshot that reopens
-        // on every future launch instead of real content.
+        // regenerated fresh from current data whenever reopened.
         pages: session
             .pages()
             .iter()
             .filter(|p| !p.ephemeral)
             .map(|p| PageFile {
                 url: p.url(),
-                rect: p.rect,
+                rect: p.layout_rect(),
             })
             .collect(),
     };

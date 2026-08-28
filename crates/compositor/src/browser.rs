@@ -45,8 +45,10 @@ pub struct Page {
     // resized on the canvas.
     size: Rc<RefCell<winit::dpi::LogicalSize<f32>>>,
     texture: Rc<RefCell<Option<wgpu::BindGroup>>>,
-    // The rect this page had before the zoom-toggle hotkey enlarged it —
-    // `Some` while zoomed in, restored and cleared on toggling back out.
+    // The rect this page had before the zoom-toggle hotkey (Ctrl+Space)
+    // enlarged it — `Some` while zoomed in, restored and cleared on
+    // toggling back out. Persistence must save this, not the temporary
+    // fullscreen `rect`, or restarts leave pages stuck at canvas size.
     pub zoomed_from: Option<Rect>,
     // True for generated utility pages (F1 help, the bookmarks list) —
     // persistence.rs skips these when saving. Without this, a bookmarks-
@@ -87,6 +89,11 @@ impl Page {
     }
 
     /// Update this page's canvas rect and let CEF know its view resized.
+    /// World rect to persist (pre-Ctrl+Space size while zoomed-to-canvas).
+    pub fn layout_rect(&self) -> Rect {
+        self.zoomed_from.unwrap_or(self.rect)
+    }
+
     pub fn set_rect(&mut self, rect: Rect, scale_factor: f64) {
         let rect = rect.clamp_size(MAX_PAGE_DIMENSION);
         self.rect = rect;

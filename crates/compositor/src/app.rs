@@ -122,13 +122,8 @@ pub struct App {
     // whichever page's local coordinates.
     cursor_window: (f32, f32),
     modifiers: ModifiersState,
-    // Window size (physical pixels) that the current page rects are laid
-    // out against. Tiling window managers often settle the window into
-    // its real geometry via a `Resized` event shortly *after* creation —
-    // rather than trust the size seen in `resumed()` as final, every
-    // `Resized` rescales existing page rects proportionally against
-    // whatever size they were last laid out for, keeping draw and
-    // hit-test in agreement no matter when the "real" size arrives.
+    // Current window size (physical pixels) — used for cascade/auto-layout
+    // and minimap, not for mutating saved page world-rects on resize.
     canvas_size: (f32, f32),
     // Offset from the dragged (always-topmost, since dragging brings a
     // page to front) page's rect origin (world space) to the cursor, set
@@ -325,13 +320,13 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => {
                 state.resize(size.width, size.height);
 
-                let (old_w, old_h) = self.canvas_size;
+                // Page rects live in world space and must NOT be multiplied by
+                // the window size ratio. Doing so on every Resized (common at
+                // startup on tiling WMs, and whenever the window is resized)
+                // drifted saved layouts: after restart pages jumped and pairs
+                // spread apart. The viewport maps the same world onto the new
+                // screen; use auto-layout if you want pages to reflow.
                 let (new_w, new_h) = (size.width as f32, size.height as f32);
-                if old_w > 0.0 && old_h > 0.0 {
-                    let (scale_x, scale_y) = (new_w / old_w, new_h / old_h);
-                    let dpi_scale = state.window.scale_factor();
-                    self.session.rescale_pages(scale_x, scale_y, dpi_scale);
-                }
                 self.canvas_size = (new_w, new_h);
                 if let Some(hud) = &mut self.hud {
                     hud.set_screen_size(new_w, new_h);
