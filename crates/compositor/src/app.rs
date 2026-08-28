@@ -15,6 +15,7 @@ use crate::hud::{Hud, HudHit};
 use crate::input::{
     send_touch_to_host, KeyboardInput, MouseInput, TouchCmd, TouchHit, TouchInput,
 };
+use crate::minimap::Minimap;
 use crate::viewport::Viewport;
 use crate::output::{FrameOutcome, GpuState, PageDraw, Rect, THEMES};
 use crate::pending_actions;
@@ -88,6 +89,9 @@ pub struct App {
     workspace_runtime: WorkspaceRuntime,
     // Top chip strip — created with the GPU device in `resumed`.
     hud: Option<Hud>,
+    minimap: Option<Minimap>,
+    /// Dragging the minimap viewfinder: (cursor at press, viewport offset at press).
+    minimap_drag: Option<((f32, f32), (f32, f32))>,
     // Loaded once at startup from settings.json, saved immediately on
     // every change (see PENDING_SETTINGS_ACTION handling below).
     // cef-bridge's own live ad-block state (blocklist::ENABLED/
@@ -177,6 +181,8 @@ impl Default for App {
             workspaces: WorkspaceStore::load(),
             workspace_runtime: WorkspaceRuntime::new(),
             hud: None,
+            minimap: None,
+            minimap_drag: None,
             settings,
             userscripts: userscripts::load(),
             userstyles: userstyles::load(),
@@ -242,8 +248,10 @@ impl ApplicationHandler for App {
         let state = pollster::block_on(GpuState::new(window.clone()));
 
         let mut hud = Hud::new(&state.device, &state.queue, state.surface_format());
+        let mut minimap = Minimap::new(&state.device, &state.queue, state.surface_format());
         let (cw, ch) = state.size();
         hud.set_screen_size(cw, ch);
+        minimap.set_screen_size(cw, ch);
 
         // Prefer the active live slot when it has been visited; otherwise
         // fall back to the legacy session file / first-run defaults, then
@@ -294,6 +302,7 @@ impl ApplicationHandler for App {
         );
 
         self.hud = Some(hud);
+        self.minimap = Some(minimap);
         self.state = Some(state);
         window.request_redraw();
     }
@@ -327,12 +336,30 @@ impl ApplicationHandler for App {
                 if let Some(hud) = &mut self.hud {
                     hud.set_screen_size(new_w, new_h);
                 }
+                if let Some(minimap) = &mut self.minimap {
+                    minimap.set_screen_size(new_w, new_h);
+                }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let scale = state.window.scale_factor();
                 self.cursor_window = (position.x as f32, position.y as f32);
                 if let Some(hud) = &mut self.hud {
                     hud.on_cursor(self.cursor_window.1);
+                }
+
+                if let Some((start, offset_at_start)) = self.minimap_drag {
+                    if let Some(minimap) = &self.minimap {
+                        if let Some(map_scale) = minimap.scale() {
+                            let dx = self.cursor_window.0 - start.0;
+                            let dy = self.cursor_window.1 - start.1;
+                            // Dragging the viewfinder right → look further right.
+                            self.session.pan_viewport_to((
+                                offset_at_start.0 + dx / map_scale,
+                                offset_at_start.1 + dy / map_scale,
+                            ));
+                        }
+                    }
+                    return;
                 }
 
                 if let Some((start, offset_at_start)) = self.panning {
@@ -456,6 +483,35 @@ impl ApplicationHandler for App {
                                     return;
                                 }
                             }
+                            if let Some(minimap) = &self.minimap {
+                                if minimap.visible()
+                                    && minimap.contains_screen(
+                                        self.cursor_window.0,
+                                        self.cursor_window.1,
+                                    )
+                                {
+                                    if minimap.hit_viewfinder(
+                                        self.cursor_window.0,
+                                        self.cursor_window.1,
+                                    ) {
+                                        self.minimap_drag = Some((
+                                            self.cursor_window,
+                                            self.session.viewport().offset,
+                                        ));
+                                    } else if let Some(world) = minimap.screen_to_world(
+                                        self.cursor_window.0,
+                                        self.cursor_window.1,
+                                    ) {
+                                        let (sw, sh) = self.canvas_size;
+                                        let zoom = self.session.viewport().zoom;
+                                        self.session.pan_viewport_to((
+                                            world.0 - sw / zoom * 0.5,
+                                            world.1 - sh / zoom * 0.5,
+                                        ));
+                                    }
+                                    return;
+                                }
+                            }
                             // Dismiss context menu on any left click outside it
                             // (clicks on the menu itself are CEF navigations).
                             if self.context_menu.is_some() {
@@ -490,6 +546,9 @@ impl ApplicationHandler for App {
                             }
                         }
                         ElementState::Released => {
+                            if self.minimap_drag.take().is_some() {
+                                return;
+                            }
                             if self.resizing {
                                 self.resizing = false;
                                 return;
@@ -759,8 +818,27 @@ impl ApplicationHandler for App {
                     hud.tick();
                     hud.rebuild(&state.queue, &state.device, &self.workspaces, &theme);
                 }
+                let focused = self.session.pages().len().checked_sub(1);
+                if let Some(minimap) = &mut self.minimap {
+                    minimap.rebuild(
+                        &state.queue,
+                        &state.device,
+                        self.session.pages(),
+                        &viewport,
+                        &theme,
+                        focused,
+                    );
+                }
                 let hud_ref = self.hud.as_ref();
-                match state.render(&draws, &theme, viewport.offset, viewport.zoom, hud_ref) {
+                let minimap_ref = self.minimap.as_ref();
+                match state.render(
+                    &draws,
+                    &theme,
+                    viewport.offset,
+                    viewport.zoom,
+                    hud_ref,
+                    minimap_ref,
+                ) {
                     FrameOutcome::Rendered | FrameOutcome::Skip => {}
                     FrameOutcome::Reconfigure => {
                         let size = state.window.inner_size();

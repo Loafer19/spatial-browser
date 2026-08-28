@@ -63,6 +63,7 @@ Pages live in **world space** on a pannable/zoomable canvas. Hit-testing and dra
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous page |
 | `Ctrl+Space` | Zoom focused page to canvas |
 | Top-edge hover | Show workspace chip strip |
+| Zoom out below ~0.55 | Minimap (bottom-right, ~22% of shorter side): page rects + viewfinder; drag/click to pan |
 | `Ctrl+Shift+0` | Reset canvas view |
 
 ### Other

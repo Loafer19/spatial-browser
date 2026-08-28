@@ -604,7 +604,7 @@ impl GpuState {
     /// the canvas pan/zoom (session::Session::viewport) — needed here
     /// only so the background grid can be drawn in world space; page
     /// rects arrive in `pages` already screen-space (see PageDraw).
-    /// Optional `hud` is drawn last (screen-space chip strip).
+    /// Optional `hud` / `minimap` are drawn last (screen-space overlays).
     pub fn render(
         &mut self,
         pages: &[PageDraw<'_>],
@@ -612,6 +612,7 @@ impl GpuState {
         viewport_offset: (f32, f32),
         viewport_zoom: f32,
         hud: Option<&crate::hud::Hud>,
+        minimap: Option<&crate::minimap::Minimap>,
     ) -> FrameOutcome {
         let surface_texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) => t,
@@ -697,6 +698,9 @@ impl GpuState {
                 pass.set_bind_group(1, &page.quad.style_bind_group, &[]);
                 pass.set_vertex_buffer(0, page.quad.vertex_buffer.slice(..));
                 pass.draw(0..4, 0..1);
+            }
+            if let Some(minimap) = minimap {
+                minimap.draw(&mut pass);
             }
             if let Some(hud) = hud {
                 hud.draw(&mut pass);

@@ -18,6 +18,7 @@ mod clipboard_bridge;
 mod hotkeys;
 mod hud;
 mod input;
+mod minimap;
 mod output;
 mod pages;
 mod pending_actions;
