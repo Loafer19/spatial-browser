@@ -29,7 +29,7 @@ cargo build
 ./scripts/install.sh   # optional: desktop launcher entry
 ```
 
-`CEF_PATH` defaults via `.cargo/config.toml` to `~/.local/share/cef`. Keep the installed `cef` / `export-cef-dir` version in sync with `crates/*/Cargo.toml` (also pinned in CI as `CEF_VERSION`).
+Set `CEF_PATH` (usually `~/.local/share/cef`): copy `.cargo/config.toml.example` → `.cargo/config.toml` (gitignored) or export the env var. Keep `cef` / `export-cef-dir` in sync with `crates/*/Cargo.toml` (also pinned in CI as `CEF_VERSION`).
 
 ## First minutes
 
@@ -45,12 +45,6 @@ cargo build
 
 More: [[Canvas-and-Shortcuts]], [[Features]].
 
-## Import Chrome bookmarks
+## Import browser bookmarks
 
-One-shot CLI (no ongoing sync):
-
-```sh
-cargo run -p import-chrome
-```
-
-Reads Chrome’s Bookmarks file and merges into `~/.config/spatial-browser/bookmarks.json`, keeping existing entries.
+**Ctrl+B** → **Import…** → file dialog (always). If a profile is found, it opens in that folder (e.g. `~/.config/google-chrome/Default/`) with `Bookmarks` or `AccountBookmarks` preselected. Merges by URL; existing entries are kept.

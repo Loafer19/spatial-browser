@@ -441,12 +441,12 @@ fn bookmark_focused(session: &Session, bookmarks: &mut Vec<Bookmark>) {
     bookmarks::save(bookmarks);
 }
 
-fn open_bookmarks(session: &mut Session, gpu: &GpuState, bookmarks: &[Bookmark]) {
+pub(crate) fn open_bookmarks(session: &mut Session, gpu: &GpuState, bookmarks: &[Bookmark]) {
     let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
     let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
     let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
-    let url = pages::bookmarks_list::page_url(&session.theme(), bookmarks);
+    let url = pages::bookmarks_list::page_url(&session.theme(), bookmarks, None);
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 

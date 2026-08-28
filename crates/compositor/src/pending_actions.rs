@@ -18,6 +18,7 @@ use crate::pages;
 use crate::pages::context_menu::MenuContext;
 use crate::persistence::{
     bookmarks::{self, Bookmark},
+    bookmarks_chrome,
     downloads::{self, DownloadRecord},
     history::{self, HistoryEntry},
     settings::{self, AppSettings},
@@ -38,6 +39,19 @@ use cef_bridge::{
     PENDING_PASSWORD_ACTION, PENDING_POPUPS, PENDING_SETTINGS_ACTION, PENDING_SWITCH,
     PENDING_USERSCRIPT_ACTION, PENDING_VISITS, PENDING_WORKSPACE_ACTION,
 };
+use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::Mutex;
+
+/// File dialog must not block the winit/CEF thread — xdg-desktop-portal
+/// times out (~2s) when the parent app stops pumping Wayland events.
+struct AsyncFilePick {
+    browser_id: i32,
+    rx: Receiver<Option<PathBuf>>,
+}
+
+static BOOKMARK_FILE_PICK: Mutex<Option<AsyncFilePick>> = Mutex::new(None);
+static CSV_FILE_PICK: Mutex<Option<AsyncFilePick>> = Mutex::new(None);
 
 /// Pushes the current ad-block toggle/custom-hosts into cef-bridge's
 /// own live state (a thread_local, not part of `AppSettings` itself) —
@@ -135,6 +149,10 @@ pub fn apply(
     context_menu: &mut Option<ContextMenuState>,
     pending_context_hit: &mut Option<(i32, (f32, f32))>,
 ) {
+    // Finish any file dialogs started on a background thread.
+    poll_bookmark_file_pick(session, gpu, bookmarks);
+    poll_csv_file_pick(session, gpu, vault, generated_password);
+
     // Load progress / state → per-page top-edge bar (skip ephemeral chrome).
     let load_states = PENDING_LOAD_STATE.with_borrow_mut(std::mem::take);
     for (browser_id, is_loading) in load_states {
@@ -196,7 +214,7 @@ pub fn apply(
                     bookmarks.remove(index);
                     bookmarks::save(bookmarks);
                 }
-                refresh_bookmarks_page(session, gpu, bookmarks, browser_id);
+                refresh_bookmarks_page(session, gpu, bookmarks, None, browser_id);
             }
             BookmarkAction::Rename(index, title, folder) => {
                 if let Some(bookmark) = bookmarks.get_mut(index) {
@@ -204,7 +222,13 @@ pub fn apply(
                     bookmark.folder = (!folder.is_empty()).then_some(folder);
                 }
                 bookmarks::save(bookmarks);
-                refresh_bookmarks_page(session, gpu, bookmarks, browser_id);
+                refresh_bookmarks_page(session, gpu, bookmarks, None, browser_id);
+            }
+            BookmarkAction::ImportBrowse => {
+                // Keep the same page open so browser_id stays valid while the
+                // dialog runs on a background thread (portal needs the app
+                // event loop alive — blocking here dies in ~2s).
+                start_bookmark_file_dialog(browser_id);
             }
         }
     }
@@ -1179,26 +1203,19 @@ fn handle_password_action(
             );
         }
         PasswordAction::ImportBrowse => {
-            let status = match vault.as_mut() {
-                None => "Unlock the vault first".to_string(),
-                Some(v) => match pick_and_import_csv(v, gpu) {
-                    Ok(None) => "Import cancelled".to_string(),
-                    Ok(Some(stats)) => format!(
-                        "Import done: {} added, {} updated, {} skipped",
-                        stats.added, stats.updated, stats.skipped
-                    ),
-                    Err(e) => format!("Import failed: {e}"),
-                },
-            };
-            refresh_passwords_page(
-                session,
-                gpu,
-                vault.as_ref(),
-                generated_password.as_deref(),
-                Some(&status),
-                "add",
-                browser_id,
-            );
+            if vault.is_none() {
+                refresh_passwords_page(
+                    session,
+                    gpu,
+                    None,
+                    generated_password.as_deref(),
+                    Some("Unlock the vault first"),
+                    "add",
+                    browser_id,
+                );
+            } else {
+                start_csv_file_dialog(browser_id);
+            }
         }
         PasswordAction::Tab { id } => {
             refresh_passwords_page(
@@ -1214,26 +1231,156 @@ fn handle_password_action(
     }
 }
 
-fn pick_and_import_csv(
-    vault: &mut VaultSession,
-    gpu: &GpuState,
-) -> Result<Option<vault_csv::ImportStats>, String> {
-    let downloads = std::env::var_os("HOME")
-        .map(|h| std::path::PathBuf::from(h).join("Downloads"))
-        .filter(|p| p.is_dir());
-    let mut dialog = rfd::FileDialog::new()
-        .set_title("Import passwords CSV")
-        .add_filter("CSV", &["csv"])
-        .add_filter("All files", &["*"])
-        .set_parent(gpu.window.as_ref());
-    if let Some(dir) = downloads {
-        dialog = dialog.set_directory(dir);
+fn start_bookmark_file_dialog(browser_id: i32) {
+    let (start_dir, file_name) = bookmarks_chrome::dialog_start();
+    let (tx, rx) = mpsc::channel();
+    if let Ok(mut slot) = BOOKMARK_FILE_PICK.lock() {
+        *slot = Some(AsyncFilePick { browser_id, rx });
     }
-    let Some(path) = dialog.pick_file() else {
-        return Ok(None);
+    let _ = std::thread::Builder::new()
+        .name("bookmark-file-dialog".into())
+        .spawn(move || {
+            let mut dialog = rfd::FileDialog::new()
+                .set_title("Import bookmarks (Chrome / Chromium / Brave / Edge)");
+            if let Some(dir) = start_dir.filter(|p| p.is_dir()) {
+                dialog = dialog.set_directory(dir);
+            }
+            if let Some(name) = file_name {
+                dialog = dialog.set_file_name(name);
+            }
+            let _ = tx.send(dialog.pick_file());
+        });
+}
+
+fn poll_bookmark_file_pick(
+    session: &mut Session,
+    gpu: &GpuState,
+    bookmarks: &mut Vec<Bookmark>,
+) {
+    let path = {
+        let mut slot = match BOOKMARK_FILE_PICK.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        let Some(pending) = slot.as_ref() else {
+            return;
+        };
+        match pending.rx.try_recv() {
+            Ok(p) => {
+                let browser_id = pending.browser_id;
+                *slot = None;
+                drop(slot);
+                (browser_id, p)
+            }
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                *slot = None;
+                return;
+            }
+        }
     };
-    let path_str = path.to_string_lossy();
-    vault_csv::import_path(vault, path_str.as_ref()).map(Some)
+    let (browser_id, path) = path;
+
+    let status = match path {
+        None => "Import cancelled".to_string(),
+        Some(path) => match bookmarks_chrome::import_path(bookmarks, &path.to_string_lossy()) {
+            Ok(stats) => {
+                bookmarks::save(bookmarks);
+                format!(
+                    "Import done: {} added, {} skipped — from {}",
+                    stats.added,
+                    stats.skipped,
+                    path.display()
+                )
+            }
+            Err(e) => format!("Import failed: {e}"),
+        },
+    };
+    if session
+        .pages()
+        .iter()
+        .any(|p| p.browser.identifier() == browser_id)
+    {
+        refresh_bookmarks_page(session, gpu, bookmarks, Some(&status), browser_id);
+    } else {
+        hotkeys::open_bookmarks(session, gpu, bookmarks);
+        if let Some(page) = session.pages().last() {
+            let id = page.browser.identifier();
+            refresh_bookmarks_page(session, gpu, bookmarks, Some(&status), id);
+        }
+    }
+}
+
+fn start_csv_file_dialog(browser_id: i32) {
+    let downloads = std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join("Downloads"))
+        .filter(|p| p.is_dir());
+    let (tx, rx) = mpsc::channel();
+    if let Ok(mut slot) = CSV_FILE_PICK.lock() {
+        *slot = Some(AsyncFilePick { browser_id, rx });
+    }
+    let _ = std::thread::Builder::new()
+        .name("csv-file-dialog".into())
+        .spawn(move || {
+            let mut dialog = rfd::FileDialog::new().set_title("Import passwords CSV");
+            // Keep CSV filter — those files have extensions. No set_parent.
+            dialog = dialog.add_filter("CSV", &["csv"]);
+            if let Some(dir) = downloads {
+                dialog = dialog.set_directory(dir);
+            }
+            let _ = tx.send(dialog.pick_file());
+        });
+}
+
+fn poll_csv_file_pick(
+    session: &mut Session,
+    gpu: &GpuState,
+    vault: &mut Option<VaultSession>,
+    generated_password: &mut Option<String>,
+) {
+    let (browser_id, path) = {
+        let mut slot = match CSV_FILE_PICK.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        let Some(pending) = slot.as_ref() else {
+            return;
+        };
+        match pending.rx.try_recv() {
+            Ok(p) => {
+                let browser_id = pending.browser_id;
+                *slot = None;
+                drop(slot);
+                (browser_id, p)
+            }
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                *slot = None;
+                return;
+            }
+        }
+    };
+
+    let status = match (path, vault.as_mut()) {
+        (None, _) => "Import cancelled".to_string(),
+        (_, None) => "Unlock the vault first".to_string(),
+        (Some(path), Some(v)) => match vault_csv::import_path(v, &path.to_string_lossy()) {
+            Ok(stats) => format!(
+                "Import done: {} added, {} updated, {} skipped",
+                stats.added, stats.updated, stats.skipped
+            ),
+            Err(e) => format!("Import failed: {e}"),
+        },
+    };
+    refresh_passwords_page(
+        session,
+        gpu,
+        vault.as_ref(),
+        generated_password.as_deref(),
+        Some(&status),
+        "add",
+        browser_id,
+    );
 }
 
 /// Always suggest (picker) — never silent-fill — when ≥1 match.
@@ -1345,6 +1492,7 @@ fn refresh_bookmarks_page(
     session: &mut Session,
     gpu: &GpuState,
     bookmarks: &[Bookmark],
+    status: Option<&str>,
     browser_id: i32,
 ) {
     let Some(index) = session
@@ -1357,7 +1505,7 @@ fn refresh_bookmarks_page(
     let Some(rect) = session.close_at(index) else {
         return;
     };
-    let url = pages::bookmarks_list::page_url(&session.theme(), bookmarks);
+    let url = pages::bookmarks_list::page_url(&session.theme(), bookmarks, status);
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 

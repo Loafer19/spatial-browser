@@ -21,12 +21,26 @@ use crate::persistence::bookmarks::{self, Bookmark};
 /// (`https://{host}/favicon.ico`) rather than captured/stored ourselves;
 /// a colored initial-letter tile sits underneath it as a fallback that
 /// never needs the network, shown until (or unless) the real icon loads.
-pub(crate) fn page_url(theme: &Theme, bookmarks: &[Bookmark]) -> String {
+pub(crate) fn page_url(theme: &Theme, bookmarks: &[Bookmark], status: Option<&str>) -> String {
+    let radius = theme.css_radius();
+    let status_html = status
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            format!(
+                "<p style=\"margin:0 0 12px;padding:8px 10px;border-radius:8px;\
+                 border:1px solid {border};background:{card};color:{fg};font-size:13px\">{msg}</p>",
+                msg = html_escape(s),
+                border = theme.help_card_border,
+                card = theme.help_card_bg,
+                fg = theme.help_fg,
+            )
+        })
+        .unwrap_or_default();
     let mut rows = String::new();
     if bookmarks.is_empty() {
         rows.push_str(&super::empty_state(
             theme,
-            "No bookmarks yet &mdash; Ctrl+D on a page to add one.",
+            "No bookmarks yet &mdash; Ctrl+D on a page, or Import from a browser below.",
         ));
     }
 
@@ -113,7 +127,15 @@ pub(crate) fn page_url(theme: &Theme, bookmarks: &[Bookmark]) -> String {
          .list-row:hover,.list-row.list-active{{background:{key_bg}!important}}\
          .list-row:hover span,.list-row.list-active span{{color:{key_fg}!important}}</style>\
          {body_open}\
-         <h1 style=\"margin:0 0 20px;color:{heading};font-size:20px\">Bookmarks</h1>\
+         <div style=\"display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 12px\">\
+         <h1 style=\"margin:0;color:{heading};font-size:20px;flex:1\">Bookmarks</h1>\
+         <button type=\"button\" onclick=\"location='bookmark://go/import-browse'\" \
+           style=\"padding:8px 14px;border:none;border-radius:{radius};background:{key_bg};\
+           color:{key_fg};font-weight:600;cursor:pointer;font-size:13px\">Import…</button>\
+         </div>\
+         <p style=\"opacity:0.65;font-size:12px;margin:0 0 14px;color:{fg}\">\
+         Pick <code>Bookmarks</code> or <code>AccountBookmarks</code>. Dialog opens in a found profile folder when possible.</p>\
+         {status_html}\
          <div style=\"display:flex;flex-direction:column;gap:8px\">{rows}</div></body>",
         nav_script = LIST_NAV_SCRIPT,
         icon_hover = super::icon_button_hover_css(theme),
@@ -121,5 +143,6 @@ pub(crate) fn page_url(theme: &Theme, bookmarks: &[Bookmark]) -> String {
         key_bg = theme.help_key_bg,
         key_fg = theme.help_key_fg,
         heading = theme.help_heading,
+        fg = theme.help_fg,
     )
 }

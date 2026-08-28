@@ -9,11 +9,11 @@ Type a URL or search. Prefixes: `@g`, `@y`, `@ddg`, `@bing`, `@wiki`. Typed hist
 | UI | Shortcut | Notes |
 |----|----------|--------|
 | Bookmark current | `Ctrl+D` | |
-| Bookmarks list | `Ctrl+B` | Folders, rename, delete |
+| Bookmarks list | `Ctrl+B` | Folders, rename, delete, **Import…** (Chrome/Chromium/Brave/Edge) |
 | History | `Ctrl+H` | Day/site grouping |
 | Downloads | `Ctrl+J` | To `~/Downloads`, desktop notification on complete |
 
-Chrome bookmarks: one-time merge via `import-chrome` — [[Getting-Started]].
+Browser bookmarks import — [[Getting-Started]].
 
 ## Workspaces (live slots)
 

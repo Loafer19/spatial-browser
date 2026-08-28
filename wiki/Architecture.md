@@ -26,7 +26,6 @@
 |-------|------|
 | `compositor` | Window, wgpu surface, session/canvas, pages UI, input, persistence |
 | `cef-bridge` | One file per CEF handler + custom-scheme interception |
-| `import-chrome` | Standalone one-time Chrome bookmarks merge |
 
 ## UI model
 

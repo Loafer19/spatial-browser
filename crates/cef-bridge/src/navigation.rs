@@ -26,6 +26,8 @@ pub enum BookmarkAction {
     Delete(usize),
     /// index, new title, new folder (empty string = clear/ungrouped)
     Rename(usize, String, String),
+    /// Native file picker → merge Chrome Bookmarks JSON.
+    ImportBrowse,
 }
 
 thread_local! {
@@ -86,6 +88,10 @@ fn query_param(query: &str, name: &str) -> Option<String> {
 
 fn parse_bookmark_action(url: &str) -> Option<BookmarkAction> {
     let rest = url.strip_prefix("bookmark://")?;
+    let rest = rest.strip_prefix("go/").unwrap_or(rest);
+    if rest == "import-browse" || rest == "import" {
+        return Some(BookmarkAction::ImportBrowse);
+    }
     if let Some(index) = rest.strip_prefix("open/") {
         return index.parse().ok().map(BookmarkAction::Open);
     }
