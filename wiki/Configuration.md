@@ -56,4 +56,4 @@ SPATIAL_BROWSER_GPU=high SPATIAL_BROWSER_OSR=cpu ./scripts/run.sh compositor
 
 ## CEF binaries
 
-Build/runtime CEF distribution path: `CEF_PATH` (default `~/.local/share/cef` via `.cargo/config.toml`). Must match the `cef` crate version — see [[Building-and-Releasing]].
+Build/runtime CEF distribution path: `CEF_PATH` (typically `~/.local/share/cef`). Set via local `.cargo/config.toml` (from `config.toml.example`) or the environment. Must match the `cef` crate version — see [[Building-and-Releasing]].

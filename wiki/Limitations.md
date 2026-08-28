@@ -40,13 +40,11 @@ Official CEF binaries used here are **`minimal`** and ship **without proprietary
 
 `Proprietary codecs not enabled in this Chromium build`
 
-Twitch live video typically needs **H.264 + AAC**, so the player surfaces **Error #4000** (“not supported in this browser”). GPU choice / VAAPI / adblock do not fix this — the codecs were never compiled in.
+Twitch live video typically needs **H.264 + AAC**, so the player surfaces **Error #4000** (“not supported in this browser”). GPU choice / VAAPI / adblock do not fix this — the codecs were never compiled in. Hardware VAAPI decode is disabled in CEF flags to avoid `vaEndPicture` spam on hybrid GPUs; that does not restore Twitch playback.
 
 Open codecs that *are* present (VP8/VP9/AV1) do not help when the site only offers H.264.
 
-**Workaround:** open Twitch (and similar) in system Chrome/Firefox. Enabling codecs requires a **custom CEF/Chromium build** (`proprietary_codecs=true`, `ffmpeg_branding=Chrome`) plus awareness of patent/licensing constraints when redistributing.
-
-A throwaway Qt WebEngine probe lives at `tools/qt_webengine_twitch_smoke.py` — the PySide6 wheel on this machine also reports `NO` for `avc1` / `mp4a.40.2` (same class of problem unless you install distro `qt6-webengine` built with openh264).
+**Workaround:** open Twitch (and similar) in system Chrome/Firefox. Enabling codecs requires a **custom CEF/Chromium build** (`proprietary_codecs=true`, `ffmpeg_branding=Chrome`) plus awareness of patent/licensing constraints when redistributing. PyPI Qt WebEngine wheels have the same codec gap unless the distro build includes openh264.
 
 ## Security-related switches
 

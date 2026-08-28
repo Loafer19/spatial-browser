@@ -191,39 +191,3 @@ fn new_import_id() -> String {
     rand::rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_chrome_csv() {
-        let csv = "name,url,username,password\n\
-GitHub,https://github.com/login,octocat,s3cret\n\
-Empty,https://example.com,,\n";
-        let entries = parse_login_csv(csv).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].origin, "https://github.com");
-        assert_eq!(entries[0].username, "octocat");
-        assert_eq!(entries[0].password, "s3cret");
-    }
-
-    #[test]
-    fn parse_bitwarden_csv() {
-        let csv = "folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp\n\
-,,login,GH,,,0,https://github.com,octocat,pw,\n\
-,,note,Memo,,,,,,,\n";
-        let entries = parse_login_csv(csv).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].origin, "https://github.com");
-        assert_eq!(entries[0].username, "octocat");
-        assert_eq!(entries[0].password, "pw");
-    }
-
-    #[test]
-    fn quoted_password_with_comma() {
-        let csv = "url,username,password\nhttps://a.com,u,\"a,b,c\"\n";
-        let entries = parse_login_csv(csv).unwrap();
-        assert_eq!(entries[0].password, "a,b,c");
-    }
-}

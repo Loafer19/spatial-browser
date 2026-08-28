@@ -18,7 +18,7 @@ tar xzf spatial-browser-linux-x86_64.tar.gz
 ./scripts/run.sh compositor
 ```
 
-Latest release: [v0.5.0](https://github.com/Loafer19/spatial-browser/releases/tag/v0.5.0)
+Releases: [GitHub Releases](https://github.com/Loafer19/spatial-browser/releases)
 
 ## Wiki map
 

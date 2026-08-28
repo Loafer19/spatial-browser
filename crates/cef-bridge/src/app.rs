@@ -62,18 +62,21 @@ wrap_app! {
             // and didn't help.) Reading Mode is browser-chrome UI a
             // windowless app can't surface anyway, so this costs nothing.
             //
-            // Prefer software decode over broken VAAPI paths on Linux
-            // (`vaEndPicture failed` in logs). Do **not** also set
-            // disable-accelerated-video-decode: some CEF builds only
-            // expose H.264/AAC via the accelerated path, and killing
-            // that entirely makes Twitch report Error #4000.
+            // Linux VAAPI is unreliable in this OSR/hybrid-GPU setup
+            // (`vaEndPicture failed, VA error: internal decoding error`).
+            // Feature flags alone are not enough — Chromium still opens
+            // libva. Force software decode. (Twitch H.264 is already
+            // unavailable in our minimal CEF build; HW decode does not
+            // help there.)
             command_line.append_switch_with_value(
                 Some(&"disable-features".into()),
                 Some(
-                    &"ImmersiveReadAnything,VaapiVideoDecoder,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder"
+                    &"ImmersiveReadAnything,VaapiVideoDecoder,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder,VaapiIgnoreDriverChecks,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL"
                         .into(),
                 ),
             );
+            command_line.append_switch(Some(&"disable-accelerated-video-decode".into()));
+            command_line.append_switch(Some(&"disable-accelerated-video-encode".into()));
             // Embedded OSR has no reliable "user gesture" for media;
             // without this, sites that gate MSE/autoplay can refuse play.
             command_line.append_switch_with_value(
@@ -136,14 +139,16 @@ wrap_browser_process_handler! {
             command_line.append_switch(Some(&"ignore-certificate-errors".into()));
             command_line.append_switch(Some(&"ignore-ssl-errors".into()));
             // GPU/renderer children need the same media flags as the
-            // browser process — otherwise Twitch still hits broken HW decode.
+            // browser process — VAAPI errors come from the GPU process.
             command_line.append_switch_with_value(
                 Some(&"disable-features".into()),
                 Some(
-                    &"ImmersiveReadAnything,VaapiVideoDecoder,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder"
+                    &"ImmersiveReadAnything,VaapiVideoDecoder,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder,VaapiIgnoreDriverChecks,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL"
                         .into(),
                 ),
             );
+            command_line.append_switch(Some(&"disable-accelerated-video-decode".into()));
+            command_line.append_switch(Some(&"disable-accelerated-video-encode".into()));
             command_line.append_switch_with_value(
                 Some(&"autoplay-policy".into()),
                 Some(&"no-user-gesture-required".into()),

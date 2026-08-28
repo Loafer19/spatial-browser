@@ -1,4 +1,4 @@
 /target
 
-# Local experiments (Qt WebEngine smoke, venvs)
-scratch/
+# Machine-local CEF path + rustflags (see config.toml.example)
+.cargo/config.toml

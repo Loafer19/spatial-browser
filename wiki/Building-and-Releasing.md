@@ -9,7 +9,7 @@ Keep these in sync:
 - `.github/workflows/ci.yml` / `release.yml` → `CEF_VERSION`
 - README / `scripts/bundle.sh` comments for `cargo install cef --version …`
 
-Current (v0.7): **151.8.0+151.3.24**.
+Pinned CEF: **151.8.0+151.3.24**.
 
 Refresh local binaries after a bump:
 
@@ -34,11 +34,11 @@ cargo install export-cef-dir --version "$CEF_VERSION" --locked --root ~/.local/s
 Pushing a version tag triggers GitHub Actions:
 
 ```sh
-git tag v0.7.0
-git push origin v0.7.0
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
-Workflow builds, bundles, and attaches `spatial-browser-linux-x86_64.tar.gz` to the GitHub Release. Edit the release body afterward if auto-notes are too thin (match the style of prior tags).
+Workflow builds, bundles, and attaches `spatial-browser-linux-x86_64.tar.gz` to the GitHub Release. App version is the **git tag**, not `Cargo.toml` (`0.1.0` crates). Edit the release body afterward if auto-notes are too thin (match the style of prior tags).
 
 ## License
 

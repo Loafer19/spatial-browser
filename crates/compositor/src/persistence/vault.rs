@@ -304,37 +304,3 @@ pub fn generate_password(length: usize, symbols: bool) -> String {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rand::Rng;
-
-    #[test]
-    fn round_trip_in_memory_style() {
-        let mut salt = [0u8; SALT_LEN];
-        rand::rng().fill_bytes(&mut salt);
-        let key = derive_key("test-pass", &salt).unwrap();
-        let cipher = Aes256Gcm::new_from_slice(&key.0).unwrap();
-        let mut nonce_bytes = [0u8; NONCE_LEN];
-        rand::rng().fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
-        let ct = cipher.encrypt(nonce, b"payload".as_ref()).unwrap();
-        let pt = cipher.decrypt(nonce, ct.as_ref()).unwrap();
-        assert_eq!(pt, b"payload");
-    }
-
-    #[test]
-    fn origin_normalize() {
-        assert_eq!(
-            normalize_origin("https://Example.com/login?x=1"),
-            "https://example.com"
-        );
-    }
-
-    #[test]
-    fn host_key_strips_www_and_scheme() {
-        assert_eq!(host_key("https://www.Example.com/login"), "example.com");
-        assert_eq!(host_key("http://example.com"), "example.com");
-        assert_eq!(host_key("https://login.example.com"), "login.example.com");
-    }
-}

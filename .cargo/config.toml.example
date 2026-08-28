@@ -1,0 +1,13 @@
+# Copy to config.toml (gitignored) and adjust CEF_PATH for your machine:
+#   cp .cargo/config.toml.example .cargo/config.toml
+#
+# CEF_PATH is required at build time by cef-dll-sys (see README /
+# export-cef-dir). Without it, export CEF_PATH before every cargo build.
+
+[env]
+CEF_PATH = { value = "/home/YOU/.local/share/cef", force = true }
+
+# libcef.so next to the binary ($ORIGIN) — works for target/debug and
+# the bundled target/bundle layout.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-args=-Wl,-rpath,$ORIGIN"]
