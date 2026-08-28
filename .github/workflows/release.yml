@@ -32,28 +32,28 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # Speeds up the ordinary cargo registry/target-dir side of the
-      # build. Separate from the CEF caching below — this is standard
-      # Rust build-artifact caching, unrelated to CEF's own binary
-      # distribution.
+      # Restore-only on tags. Saving here would create a tag-scoped cache
+      # that no future run can reuse (GH caches don't cross tags) — that
+      # is what piled up duplicate rust/CEF entries. Master CI seeds the
+      # shared default-branch caches; releases only read them.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: "false"
 
       # cef-dll-sys's build.rs auto-downloads the CEF binary
       # distribution into CEF_PATH the first time it's missing (the
       # same thing that happens on a fresh local `cargo build` — see
       # README's Build section) — no export-cef-dir step needed here,
-      # just give it somewhere to land and cache that somewhere.
-      # bundle-cef-app (installed below) reads the same CEF_PATH to
-      # find the files it copies into target/bundle/, so one download
-      # serves both steps.
-      - name: Cache CEF distribution
-        uses: actions/cache@v5
+      # just give it somewhere to land. bundle-cef-app reads the same
+      # CEF_PATH. Restore-only: see rust-cache comment above.
+      - name: Restore CEF distribution
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.CEF_PATH }}
           key: cef-${{ env.CEF_VERSION }}-${{ runner.os }}
 
-      - name: Cache bundle-cef-app
-        uses: actions/cache@v5
+      - name: Restore bundle-cef-app
+        uses: actions/cache/restore@v5
         with:
           path: ~/.local/share/cargo-cef-tools
           key: cargo-cef-tools-${{ env.CEF_VERSION }}-${{ runner.os }}

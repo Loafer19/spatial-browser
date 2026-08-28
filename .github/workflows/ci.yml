@@ -1,14 +1,9 @@
 name: CI
 
-# Runs the same build + cache steps as release.yml, but on every push to
-# master instead of a version tag. Purely to seed a default-branch-scoped
-# cache: GitHub Actions caches are only visible to the ref that created
-# them, plus (as a fallback) whatever's scoped to the repo's default
-# branch — never to *other* tags. Since release.yml only ever runs on a
-# tag push, every release was building an isolated, one-off cache that no
-# future release could ever reach, silently accumulating duplicate cache
-# entries release after release. This workflow gives release.yml
-# something on the default branch to fall back to.
+# Seeds default-branch caches for release.yml. GitHub Actions caches are
+# only writable on the creating ref (+ readable as fallback from the
+# default branch). Release runs on tags with restore-only so they do not
+# accumulate one-off rust/CEF caches per tag.
 on:
   push:
     branches:
@@ -30,6 +25,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Only master should write rust caches (this workflow is
+          # master-only already; keep the guard explicit).
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Cache CEF distribution
         uses: actions/cache@v5
