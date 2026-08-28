@@ -28,7 +28,7 @@ CEF’s own clipboard does not work in this OSR embedding. Copy/paste are reimpl
 
 ## Missing “browser chrome” features
 
-Password manager is **local-only** (see [[Password-Manager]]); no cloud sync, CSV import, TOTP, or passkeys yet. No DevTools panel in the canvas, no built-in PDF chrome beyond what CEF gives, no full-text history search.
+Password manager is **local-only** (see [[Password-Manager]]); CSV import from Chrome/Bitwarden works, but no cloud sync, TOTP, or passkeys yet. No DevTools panel in the canvas, no built-in PDF chrome beyond what CEF gives, no full-text history search.
 
 ## Platform
 

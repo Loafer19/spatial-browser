@@ -73,7 +73,7 @@ Userscripts (`.js`) and userstyles (`.css`). Built-in UI pages can be styled wit
 
 ## Passwords (`Ctrl+Shift+P`)
 
-Encrypted local vault, autofill, multi-account picker, save prompts, generator, never-save list — see [[Password-Manager]].
+Encrypted local vault, fill suggestions on focus, Chrome/Bitwarden CSV import, save prompts, generator, never-save list — see [[Password-Manager]].
 
 ## Single instance
 

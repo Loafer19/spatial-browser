@@ -511,7 +511,7 @@ pub(crate) fn open_passwords(
     vault: Option<&VaultSession>,
 ) {
     let size = gpu.window.inner_size();
-    let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
+    let w = (size.width as f32 * 0.52).clamp(420.0, 720.0);
     let h = (size.height as f32 * 0.75).clamp(420.0, 800.0);
     let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
     let url = match vault {
@@ -520,6 +520,8 @@ pub(crate) fn open_passwords(
             &v.data.entries,
             &v.data.never_save,
             None,
+            None,
+            "saved",
         ),
         None => pages::passwords_list::unlock_url(&session.theme(), !vault::exists(), None),
     };

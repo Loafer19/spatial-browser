@@ -23,6 +23,7 @@ pub mod history;
 pub mod settings;
 pub mod typed_history;
 pub mod vault;
+pub mod vault_csv;
 pub mod workspaces;
 
 use crate::browser;

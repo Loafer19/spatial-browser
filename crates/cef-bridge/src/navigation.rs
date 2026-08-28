@@ -409,6 +409,12 @@ pub enum PasswordAction {
         length: usize,
         symbols: bool,
     },
+    /// Open a native file picker and import Chrome/Bitwarden CSV.
+    ImportBrowse,
+    /// Switch passwords UI tab (`saved` / `add` / `generator` / `never`).
+    Tab {
+        id: String,
+    },
     /// Open the passwords list after a successful unlock.
     OpenList,
 }
@@ -475,9 +481,23 @@ fn parse_context_action(url: &str) -> Option<ContextAction> {
     })
 }
 
+/// `action?…` or CEF-canonicalized `action/?…`.
+fn password_action_query<'a>(rest: &'a str, action: &str) -> Option<&'a str> {
+    let with_q = format!("{action}?");
+    let with_slash_q = format!("{action}/?");
+    rest.strip_prefix(&with_q)
+        .or_else(|| rest.strip_prefix(&with_slash_q))
+}
+
 fn parse_password_action(url: &str) -> Option<PasswordAction> {
     let rest = url.strip_prefix("password://")?;
-    if let Some(query) = rest.strip_prefix("unlock?") {
+    // Prefer `password://go/<action>?…` — a real path under a dummy host —
+    // so CEF does not canonicalize `password://query?…` into
+    // `password://query/?…` (which used to break focus autofill).
+    // Also accept legacy `password://<action>?…` forms.
+    let rest = rest.strip_prefix("go/").unwrap_or(rest);
+    let rest = rest.strip_prefix('/').unwrap_or(rest);
+    if let Some(query) = password_action_query(rest, "unlock") {
         let password = query_param(query, "password")?;
         let create = query_param(query, "create").as_deref() == Some("1");
         let confirm = query_param(query, "confirm");
@@ -487,24 +507,24 @@ fn parse_password_action(url: &str) -> Option<PasswordAction> {
             confirm,
         });
     }
-    if let Some(query) = rest.strip_prefix("query?") {
+    if let Some(query) = password_action_query(rest, "query") {
         return Some(PasswordAction::Query {
             origin: query_param(query, "origin")?,
         });
     }
-    if let Some(query) = rest.strip_prefix("fill?") {
+    if let Some(query) = password_action_query(rest, "fill") {
         return Some(PasswordAction::Fill {
             id: query_param(query, "id")?,
         });
     }
-    if let Some(query) = rest.strip_prefix("save-offer?") {
+    if let Some(query) = password_action_query(rest, "save-offer") {
         return Some(PasswordAction::SaveOffer {
             origin: query_param(query, "origin").unwrap_or_default(),
             username: query_param(query, "username").unwrap_or_default(),
             password: query_param(query, "password").unwrap_or_default(),
         });
     }
-    if let Some(query) = rest.strip_prefix("save?") {
+    if let Some(query) = password_action_query(rest, "save") {
         let id = query_param(query, "id").filter(|s| !s.is_empty());
         return Some(PasswordAction::Save {
             origin: query_param(query, "origin").unwrap_or_default(),
@@ -513,17 +533,17 @@ fn parse_password_action(url: &str) -> Option<PasswordAction> {
             id,
         });
     }
-    if let Some(query) = rest.strip_prefix("never?") {
+    if let Some(query) = password_action_query(rest, "never") {
         return Some(PasswordAction::Never {
             origin: query_param(query, "origin")?,
         });
     }
-    if let Some(query) = rest.strip_prefix("delete?") {
+    if let Some(query) = password_action_query(rest, "delete") {
         return Some(PasswordAction::Delete {
             id: query_param(query, "id")?,
         });
     }
-    if let Some(query) = rest.strip_prefix("upsert?") {
+    if let Some(query) = password_action_query(rest, "upsert") {
         return Some(PasswordAction::Upsert {
             id: query_param(query, "id").filter(|s| !s.is_empty()),
             origin: query_param(query, "origin").unwrap_or_default(),
@@ -532,17 +552,25 @@ fn parse_password_action(url: &str) -> Option<PasswordAction> {
             email: query_param(query, "email").filter(|s| !s.is_empty()),
         });
     }
-    if let Some(query) = rest.strip_prefix("remove-never?") {
+    if let Some(query) = password_action_query(rest, "remove-never") {
         return Some(PasswordAction::RemoveNever {
             origin: query_param(query, "origin")?,
         });
     }
-    if let Some(query) = rest.strip_prefix("generate?") {
+    if let Some(query) = password_action_query(rest, "generate") {
         let length = query_param(query, "length")
             .and_then(|s| s.parse().ok())
             .unwrap_or(20);
         let symbols = query_param(query, "symbols").as_deref() != Some("0");
         return Some(PasswordAction::Generate { length, symbols });
+    }
+    if rest == "import-browse" || rest == "import" {
+        return Some(PasswordAction::ImportBrowse);
+    }
+    if let Some(id) = rest.strip_prefix("tab/") {
+        return Some(PasswordAction::Tab {
+            id: id.to_string(),
+        });
     }
     if rest == "open-list" {
         return Some(PasswordAction::OpenList);

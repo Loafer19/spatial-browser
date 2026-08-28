@@ -23,6 +23,7 @@ use crate::persistence::{
     settings::{self, AppSettings},
     typed_history,
     vault::{self, VaultEntry, VaultSession},
+    vault_csv,
     workspaces::{self, WorkspaceRuntime, WorkspaceStore},
 };
 use crate::session::Session;
@@ -875,38 +876,12 @@ fn handle_context_action(
                     if let Some(v) = vault.as_ref() {
                         let matches = v.entries_for_origin(&origin);
                         if let Some(frame) = page.browser.main_frame() {
-                            match matches.len() {
-                                0 => {}
-                                1 => {
-                                    let js = fill_entry_js(matches[0]);
-                                    frame.execute_java_script(
-                                        Some(&js.as_str().into()),
-                                        Some(&"".into()),
-                                        0,
-                                    );
-                                }
-                                _ => {
-                                    let items: Vec<String> = matches
-                                        .iter()
-                                        .map(|e| {
-                                            format!(
-                                                "{{id:{},username:{}}}",
-                                                serde_json::to_string(&e.id).unwrap_or_default(),
-                                                serde_json::to_string(&e.username)
-                                                    .unwrap_or_default()
-                                            )
-                                        })
-                                        .collect();
-                                    let js = format!(
-                                        "window.__spatialAutofillShowPicker && window.__spatialAutofillShowPicker([{}]);",
-                                        items.join(",")
-                                    );
-                                    frame.execute_java_script(
-                                        Some(&js.as_str().into()),
-                                        Some(&"".into()),
-                                        0,
-                                    );
-                                }
+                            if let Some(js) = suggest_fill_js(&matches) {
+                                frame.execute_java_script(
+                                    Some(&js.as_str().into()),
+                                    Some(&"".into()),
+                                    0,
+                                );
                             }
                         }
                     }
@@ -1008,8 +983,9 @@ fn handle_password_action(
             hotkeys::open_passwords(session, gpu, vault.as_ref());
         }
         PasswordAction::Query { origin } => {
+            // Focus queries: stay silent if locked (don't yank open unlock UI).
+            // Context-menu Fill still opens the vault via FillPassword.
             let Some(v) = vault.as_ref() else {
-                hotkeys::open_passwords(session, gpu, None);
                 return;
             };
             let matches = v.entries_for_origin(&origin);
@@ -1019,29 +995,8 @@ fn handle_password_action(
                 .find(|p| p.browser.identifier() == browser_id)
             {
                 if let Some(frame) = page.browser.main_frame() {
-                    match matches.len() {
-                        0 => {}
-                        1 => {
-                            let js = fill_entry_js(matches[0]);
-                            frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
-                        }
-                        _ => {
-                            let items: Vec<String> = matches
-                                .iter()
-                                .map(|e| {
-                                    format!(
-                                        "{{id:{},username:{}}}",
-                                        serde_json::to_string(&e.id).unwrap_or_default(),
-                                        serde_json::to_string(&e.username).unwrap_or_default()
-                                    )
-                                })
-                                .collect();
-                            let js = format!(
-                                "window.__spatialAutofillShowPicker && window.__spatialAutofillShowPicker([{}]);",
-                                items.join(",")
-                            );
-                            frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
-                        }
+                    if let Some(js) = suggest_fill_js(&matches) {
+                        frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
                     }
                 }
             }
@@ -1078,16 +1033,18 @@ fn handle_password_action(
                 return;
             }
             let existing = v.entries_for_origin(&origin);
+            // Same credentials already stored → no prompt (also covers empty
+            // username when the only distinguishing field is the password).
+            if existing.iter().any(|e| {
+                e.password == password && (username.is_empty() || e.username == username)
+            }) {
+                return;
+            }
             let id = existing
                 .iter()
                 .find(|e| e.username == username)
                 .map(|e| e.id.clone())
                 .unwrap_or_default();
-            if let Some(same) = existing.iter().find(|e| e.username == username) {
-                if same.password == password {
-                    return;
-                }
-            }
             // Keep across the login navigation; also try to show now (SPA).
             *pending_save_offer = Some(PendingSaveOffer {
                 origin: origin.clone(),
@@ -1152,7 +1109,15 @@ fn handle_password_action(
             if let Some(v) = vault.as_mut() {
                 let _ = v.remove(&id);
             }
-            refresh_passwords_page(session, gpu, vault.as_ref(), generated_password.as_deref(), browser_id);
+            refresh_passwords_page(
+                session,
+                gpu,
+                vault.as_ref(),
+                generated_password.as_deref(),
+                None,
+                "saved",
+                browser_id,
+            );
         }
         PasswordAction::Upsert {
             id,
@@ -1177,19 +1142,119 @@ fn handle_password_action(
                 };
                 let _ = v.upsert(entry);
             }
-            refresh_passwords_page(session, gpu, vault.as_ref(), generated_password.as_deref(), browser_id);
+            refresh_passwords_page(
+                session,
+                gpu,
+                vault.as_ref(),
+                generated_password.as_deref(),
+                None,
+                "saved",
+                browser_id,
+            );
         }
         PasswordAction::RemoveNever { origin } => {
             if let Some(v) = vault.as_mut() {
                 let _ = v.remove_never_save(&origin);
             }
-            refresh_passwords_page(session, gpu, vault.as_ref(), generated_password.as_deref(), browser_id);
+            refresh_passwords_page(
+                session,
+                gpu,
+                vault.as_ref(),
+                generated_password.as_deref(),
+                None,
+                "never",
+                browser_id,
+            );
         }
         PasswordAction::Generate { length, symbols } => {
             *generated_password = Some(vault::generate_password(length, symbols));
-            refresh_passwords_page(session, gpu, vault.as_ref(), generated_password.as_deref(), browser_id);
+            refresh_passwords_page(
+                session,
+                gpu,
+                vault.as_ref(),
+                generated_password.as_deref(),
+                None,
+                "generator",
+                browser_id,
+            );
+        }
+        PasswordAction::ImportBrowse => {
+            let status = match vault.as_mut() {
+                None => "Unlock the vault first".to_string(),
+                Some(v) => match pick_and_import_csv(v, gpu) {
+                    Ok(None) => "Import cancelled".to_string(),
+                    Ok(Some(stats)) => format!(
+                        "Import done: {} added, {} updated, {} skipped",
+                        stats.added, stats.updated, stats.skipped
+                    ),
+                    Err(e) => format!("Import failed: {e}"),
+                },
+            };
+            refresh_passwords_page(
+                session,
+                gpu,
+                vault.as_ref(),
+                generated_password.as_deref(),
+                Some(&status),
+                "add",
+                browser_id,
+            );
+        }
+        PasswordAction::Tab { id } => {
+            refresh_passwords_page(
+                session,
+                gpu,
+                vault.as_ref(),
+                generated_password.as_deref(),
+                None,
+                pages::passwords_list::normalize_tab(&id),
+                browser_id,
+            );
         }
     }
+}
+
+fn pick_and_import_csv(
+    vault: &mut VaultSession,
+    gpu: &GpuState,
+) -> Result<Option<vault_csv::ImportStats>, String> {
+    let downloads = std::env::var_os("HOME")
+        .map(|h| std::path::PathBuf::from(h).join("Downloads"))
+        .filter(|p| p.is_dir());
+    let mut dialog = rfd::FileDialog::new()
+        .set_title("Import passwords CSV")
+        .add_filter("CSV", &["csv"])
+        .add_filter("All files", &["*"])
+        .set_parent(gpu.window.as_ref());
+    if let Some(dir) = downloads {
+        dialog = dialog.set_directory(dir);
+    }
+    let Some(path) = dialog.pick_file() else {
+        return Ok(None);
+    };
+    let path_str = path.to_string_lossy();
+    vault_csv::import_path(vault, path_str.as_ref()).map(Some)
+}
+
+/// Always suggest (picker) — never silent-fill — when ≥1 match.
+fn suggest_fill_js(matches: &[&VaultEntry]) -> Option<String> {
+    if matches.is_empty() {
+        return None;
+    }
+    let items: Vec<String> = matches
+        .iter()
+        .map(|e| {
+            format!(
+                "{{id:{},username:{}}}",
+                serde_json::to_string(&e.id).unwrap_or_default(),
+                serde_json::to_string(&e.username).unwrap_or_default()
+            )
+        })
+        .collect();
+    Some(format!(
+        "window.__spatialAutofillShowPicker && window.__spatialAutofillShowPicker([{}]);",
+        items.join(",")
+    ))
 }
 
 fn fill_entry_js(entry: &VaultEntry) -> String {
@@ -1246,6 +1311,8 @@ fn refresh_passwords_page(
     gpu: &GpuState,
     vault: Option<&VaultSession>,
     generated: Option<&str>,
+    status: Option<&str>,
+    active_tab: &str,
     browser_id: i32,
 ) {
     let Some(index) = session
@@ -1261,9 +1328,14 @@ fn refresh_passwords_page(
         return;
     };
     let url = match vault {
-        Some(v) => {
-            pages::passwords_list::page_url(&session.theme(), &v.data.entries, &v.data.never_save, generated)
-        }
+        Some(v) => pages::passwords_list::page_url(
+            &session.theme(),
+            &v.data.entries,
+            &v.data.never_save,
+            generated,
+            status,
+            active_tab,
+        ),
         None => pages::passwords_list::unlock_url(&session.theme(), !vault::exists(), None),
     };
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));

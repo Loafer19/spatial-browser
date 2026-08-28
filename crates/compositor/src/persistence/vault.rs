@@ -189,11 +189,11 @@ impl VaultSession {
     }
 
     pub fn entries_for_origin(&self, origin: &str) -> Vec<&VaultEntry> {
-        let origin = normalize_origin(origin);
+        let key = host_key(origin);
         self.data
             .entries
             .iter()
-            .filter(|e| normalize_origin(&e.origin) == origin)
+            .filter(|e| host_key(&e.origin) == key)
             .collect()
     }
 
@@ -271,6 +271,20 @@ pub fn normalize_origin(url_or_origin: &str) -> String {
     format!("{scheme}://{}", hostport.to_ascii_lowercase())
 }
 
+/// Match key for autofill: hostname without leading `www.`, ignoring scheme.
+/// So `https://www.example.com` and `http://example.com` share a vault entry.
+pub fn host_key(url_or_origin: &str) -> String {
+    let origin = normalize_origin(url_or_origin);
+    let hostport = origin
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(origin.as_str());
+    hostport
+        .strip_prefix("www.")
+        .unwrap_or(hostport)
+        .to_ascii_lowercase()
+}
+
 pub fn generate_password(length: usize, symbols: bool) -> String {
     const ALPHA: &[u8] = b"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     const SYM: &[u8] = b"!@#$%^&*-_=+?";
@@ -315,5 +329,12 @@ mod tests {
             normalize_origin("https://Example.com/login?x=1"),
             "https://example.com"
         );
+    }
+
+    #[test]
+    fn host_key_strips_www_and_scheme() {
+        assert_eq!(host_key("https://www.Example.com/login"), "example.com");
+        assert_eq!(host_key("http://example.com"), "example.com");
+        assert_eq!(host_key("https://login.example.com"), "login.example.com");
     }
 }

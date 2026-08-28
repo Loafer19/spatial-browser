@@ -21,7 +21,12 @@ pub fn script(theme: &Theme) -> String {
     format!(
         r#"
 (function() {{
-  if (window.__spatialAutofillBridge__) return;
+  // Re-running the bridge after vault unlock must kick a fresh query:
+  // the login field is often already focused, so no new focusin fires.
+  if (window.__spatialAutofillBridge__) {{
+    try {{ window.__spatialAutofillKick && window.__spatialAutofillKick(); }} catch (e) {{}}
+    return;
+  }}
   window.__spatialAutofillBridge__ = true;
 
   var UI = {{
@@ -47,7 +52,7 @@ pub fn script(theme: &Theme) -> String {
   }}
 
   function originOf() {{
-    try {{ return location.origin; }} catch (e) {{ return ''; }}
+    try {{ return location.origin || (location.protocol + '//' + location.host); }} catch (e) {{ return ''; }}
   }}
 
   function setNativeValue(el, value) {{
@@ -118,12 +123,14 @@ pub fn script(theme: &Theme) -> String {
 
   window.__spatialAutofillShowPicker = function(items) {{
     hidePicker();
+    hideSave();
     if (!items || !items.length) return;
     var box = document.createElement('div');
     box.id = '__spatial_pw_picker';
-    box.style.cssText = 'position:fixed;z-index:2147483647;right:16px;bottom:16px;max-width:320px;background:'+UI.bg+';color:'+UI.fg+';border:1px solid '+UI.border+';border-radius:'+UI.radius+';padding:10px 12px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.45)';
+    // Same corner as the save banner (left) — not opposite sides.
+    box.style.cssText = 'position:fixed;z-index:2147483647;left:16px;bottom:16px;max-width:320px;background:'+UI.bg+';color:'+UI.fg+';border:1px solid '+UI.border+';border-radius:'+UI.radius+';padding:10px 12px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.45)';
     var title = document.createElement('div');
-    title.textContent = 'Saved logins';
+    title.textContent = items.length === 1 ? 'Use saved login?' : 'Use saved login';
     title.style.cssText = 'font-weight:600;margin-bottom:8px;opacity:.9';
     box.appendChild(title);
     items.forEach(function(it) {{
@@ -133,13 +140,13 @@ pub fn script(theme: &Theme) -> String {
       btn.style.cssText = 'display:block;width:100%;text-align:left;margin:4px 0;padding:8px 10px;border-radius:'+UI.radiusInner+';border:1px solid '+UI.border+';background:'+UI.card+';color:'+UI.fg+';cursor:pointer';
       btn.onclick = function(ev) {{
         ev.preventDefault();
-        signal('password://fill?id=' + encodeURIComponent(it.id));
+        signal('password://go/fill?id=' + encodeURIComponent(it.id));
       }};
       box.appendChild(btn);
     }});
     var dismiss = document.createElement('button');
     dismiss.type = 'button';
-    dismiss.textContent = 'Dismiss';
+    dismiss.textContent = 'Not now';
     dismiss.style.cssText = 'margin-top:8px;background:transparent;border:none;color:'+UI.accent+';cursor:pointer;padding:4px 0';
     dismiss.onclick = hidePicker;
     box.appendChild(dismiss);
@@ -153,6 +160,7 @@ pub fn script(theme: &Theme) -> String {
 
   window.__spatialAutofillShowSave = function(payload) {{
     hideSave();
+    hidePicker();
     var box = document.createElement('div');
     box.id = '__spatial_pw_save';
     box.style.cssText = 'position:fixed;z-index:2147483647;left:16px;bottom:16px;max-width:360px;background:'+UI.bg+';color:'+UI.fg+';border:1px solid '+UI.border+';border-radius:'+UI.radius+';padding:12px 14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.45)';
@@ -181,8 +189,8 @@ pub fn script(theme: &Theme) -> String {
       '&username=' + encodeURIComponent(payload.username || '') +
       '&password=' + encodeURIComponent(payload.password || '') +
       '&id=' + encodeURIComponent(payload.id || '');
-    box.appendChild(btn('Save', 'password://save?' + q, true));
-    box.appendChild(btn('Never for site', 'password://never?origin=' + encodeURIComponent(payload.origin || ''), false));
+    box.appendChild(btn('Save', 'password://go/save?' + q, true));
+    box.appendChild(btn('Never for site', 'password://go/never?origin=' + encodeURIComponent(payload.origin || ''), false));
     box.appendChild(btn('Not now', '', false));
     document.documentElement.appendChild(box);
   }};
@@ -190,18 +198,34 @@ pub fn script(theme: &Theme) -> String {
   function requestQuery() {{
     var o = originOf();
     if (!o || o === 'null' || o.indexOf('data:') === 0) return;
-    signal('password://query?origin=' + encodeURIComponent(o));
+    // Path-style host (`go`) avoids CEF turning `password://query?…` into
+    // `password://query/?…` and breaking parse_password_action.
+    signal('password://go/query?origin=' + encodeURIComponent(o));
   }}
 
-  document.addEventListener('focusin', function(ev) {{
-    var t = ev.target;
+  // Re-query on each login-field focus (debounced). The old once-per-page
+  // flag meant: first focus while vault locked → never suggest again;
+  // context-menu Fill was the only path that still worked.
+  var lastQueryAt = 0;
+  function maybeQueryFromFocus(t) {{
     if (!t || !t.tagName || t.tagName !== 'INPUT') return;
     if (t.type === 'password' || scoreUsername(t) > 0) {{
-      if (!window.__spatialAutofillQueried) {{
-        window.__spatialAutofillQueried = true;
-        setTimeout(requestQuery, 50);
-      }}
+      var now = Date.now();
+      if (now - lastQueryAt < 400) return;
+      lastQueryAt = now;
+      setTimeout(requestQuery, 50);
     }}
+  }}
+  window.__spatialAutofillKick = function() {{
+    lastQueryAt = 0;
+    setTimeout(requestQuery, 30);
+  }};
+  document.addEventListener('focusin', function(ev) {{
+    maybeQueryFromFocus(ev.target);
+  }}, true);
+  // Some sites move focus before our bridge loads; also catch click into fields.
+  document.addEventListener('pointerdown', function(ev) {{
+    maybeQueryFromFocus(ev.target);
   }}, true);
 
   document.addEventListener('submit', function(ev) {{
@@ -211,19 +235,12 @@ pub fn script(theme: &Theme) -> String {
     if (!o) return;
     var user = (fields.username && fields.username.value) || '';
     var pass = fields.password.value;
-    var url = 'password://save-offer?origin=' + encodeURIComponent(o) +
+    // Only signal Rust — do NOT show a local fallback banner. Rust skips
+    // identical username+password; a JS fallback ignored that and always
+    // popped "Save password?" after autofill + submit.
+    signal('password://go/save-offer?origin=' + encodeURIComponent(o) +
       '&username=' + encodeURIComponent(user) +
-      '&password=' + encodeURIComponent(pass);
-    signal(url);
-    setTimeout(function() {{
-      if (document.getElementById('__spatial_pw_save')) return;
-      window.__spatialAutofillShowSave({{
-        origin: o,
-        username: user,
-        password: pass,
-        id: ''
-      }});
-    }}, 50);
+      '&password=' + encodeURIComponent(pass));
   }}, true);
 
   // Right-click hit-test: compositor calls this with DIP coords, then
