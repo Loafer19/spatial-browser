@@ -24,20 +24,21 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      # checkout/cache v5+ run on Node 24 (v4 warned as Node 20 deprecated).
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Cache CEF distribution
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CEF_PATH }}
           key: cef-${{ env.CEF_VERSION }}-${{ runner.os }}
 
       - name: Cache bundle-cef-app
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.local/share/cargo-cef-tools
           key: cargo-cef-tools-${{ env.CEF_VERSION }}-${{ runner.os }}

@@ -26,7 +26,9 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      # checkout/cache v5+ and action-gh-release v3 run on Node 24
+      # (older majors warned as Node 20 deprecated on GH runners).
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -45,13 +47,13 @@ jobs:
       # find the files it copies into target/bundle/, so one download
       # serves both steps.
       - name: Cache CEF distribution
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CEF_PATH }}
           key: cef-${{ env.CEF_VERSION }}-${{ runner.os }}
 
       - name: Cache bundle-cef-app
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.local/share/cargo-cef-tools
           key: cargo-cef-tools-${{ env.CEF_VERSION }}-${{ runner.os }}
@@ -68,7 +70,7 @@ jobs:
         run: tar czf spatial-browser-linux-x86_64.tar.gz -C target/bundle .
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: spatial-browser-linux-x86_64.tar.gz
           generate_release_notes: true
