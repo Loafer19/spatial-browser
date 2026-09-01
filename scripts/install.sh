@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
-# Installs (or updates) a desktop-launcher entry for the app-grid/launcher
-# (Super -> Apps, wofi, rofi, ...) pointing at *this* checkout — regenerated
-# every run so moving the repo and re-running this script fixes the path.
-# Desktop Entry Exec/Icon keys don't expand `~` or env vars, so both need
-# to be absolute paths baked in at install time; that's why this is a
-# script and not a static .desktop file shipped in the repo.
+# Write a .desktop entry for this checkout (Exec/Icon need absolute paths).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"

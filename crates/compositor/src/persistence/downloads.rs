@@ -1,15 +1,8 @@
-// Persisted download history — what got saved to disk and where, for
-// the Ctrl+J downloads-list page. Its own downloads.json, separate
-// from bookmarks.json/history.json: a download record isn't a bookmark
-// (it's a file, not a page) and isn't typed input (it's something CEF's
-// DownloadHandler told cef-bridge about, not the user).
+// downloads.json — completed CEF downloads for the Ctrl+J list.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-// Caps the file's growth — old entries fall off the end. Downloads are
-// frequent enough (unlike bookmarks) that an unbounded list would grow
-// forever.
 const MAX_DOWNLOADS: usize = 200;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -37,10 +30,7 @@ pub fn load() -> Vec<DownloadRecord> {
         .unwrap_or_default()
 }
 
-/// Records a newly completed download as the most recent entry and
-/// saves immediately — downloads finish rarely enough (relative to,
-/// say, a canvas drag) that there's no need for the debounce the
-/// canvas session itself uses.
+/// Record completed download at front and save immediately.
 pub fn record(downloads: &mut Vec<DownloadRecord>, entry: DownloadRecord) {
     downloads.insert(0, entry);
     downloads.truncate(MAX_DOWNLOADS);

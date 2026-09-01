@@ -1,20 +1,10 @@
-// The Ctrl+K page switcher: a filterable list of open pages, typed
-// search rather than positional (Ctrl+1/2/3-style) selection — a
-// page's position in the list is its z-order, which changes on every
-// click (Session::bring_to_front), so a stable "page 3" the way a
-// browser's tab bar has one doesn't exist here. See cef-bridge's
-// OsrRequestHandler / app.rs's PENDING_SWITCH for how a row click or
-// Enter here gets handled.
+// Ctrl+K switcher — filter open pages (`switcher://go` → PENDING_SWITCH).
 
 use super::html_escape;
 use crate::output::Theme;
 use crate::persistence::bookmarks::host_of;
 
-/// Not run through `format!` (see omnibox.rs's SCRIPT for why) — plain
-/// substring filtering, with ArrowUp/ArrowDown moving a single
-/// `.switch-active` row among whatever's currently visible (typing
-/// resets it back to the top match) so Enter always jumps to whichever
-/// row is highlighted, not just the first one.
+/// Plain const (not format!) so JS `{`/`}` need no escaping.
 const SCRIPT: &str = r#"<script>
 let activeIndex = 0;
 function visibleRows() {

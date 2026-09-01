@@ -1,8 +1,4 @@
-// Canvas background: a dot grid at a fixed *world*-space spacing, so it
-// pans/zooms exactly like the pages sitting on top of it — a spatial
-// reference grid, not a static wallpaper. Drawn as a single fullscreen
-// triangle (no vertex buffer) before any page quad, so it only shows
-// through wherever no page covers it.
+// World-space dot grid (pans/zooms with pages); fullscreen triangle under quads.
 
 @vertex
 fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {

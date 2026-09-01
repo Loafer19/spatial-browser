@@ -1,17 +1,13 @@
 name: CI
 
-# Seeds default-branch caches for release.yml. GitHub Actions caches are
-# only writable on the creating ref (+ readable as fallback from the
-# default branch). Release runs on tags with restore-only so they do not
-# accumulate one-off rust/CEF caches per tag.
+# Seed default-branch caches for release.yml (tags are restore-only).
 on:
   push:
     branches:
       - master
 
 env:
-  # Keep in sync with release.yml's CEF_VERSION and the `cef = { version
-  # = "..." }` line in crates/*/Cargo.toml.
+  # Keep in sync with release.yml and crates/*/Cargo.toml cef version.
   CEF_VERSION: 151.8.0+151.3.24
   CEF_PATH: ${{ github.workspace }}/.cef-cache
 
@@ -19,15 +15,13 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      # checkout/cache v5+ run on Node 24 (v4 warned as Node 20 deprecated).
       - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
         with:
-          # Only master should write rust caches (this workflow is
-          # master-only already; keep the guard explicit).
+          # Only master writes rust caches (tags restore-only in release.yml).
           save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Cache CEF distribution

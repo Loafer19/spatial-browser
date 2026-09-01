@@ -1,7 +1,4 @@
-// Ties every handler in this crate together into the one `cef::Client`
-// CEF hands each spawned browser. `render_handler` is per-page (built
-// from the `OsrRenderHandler` browser.rs constructs for that specific
-// page's texture slot); every other handler is stateless and shared.
+// Assembles per-page Client: render_handler is per-page; others shared.
 
 use crate::display::{DisplayHandlerBuilder, OsrDisplayHandler};
 use crate::download::{DownloadHandlerBuilder, OsrDownloadHandler};

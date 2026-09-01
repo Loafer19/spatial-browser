@@ -1,15 +1,8 @@
-// Persisted omnibox input history — what was actually *typed* into the
-// new-page prompt (pages::omnibox), not the URL it resolved to. Its own
-// typed_history.json, separate from bookmarks.json/the canvas session
-// and (deliberately named apart) from history.rs — real visited-page
-// history: different concern, different shape (a capped, deduped list
-// of raw typed strings vs. a log of actual navigations).
+// typed_history.json — raw omnibox input (not resolved URLs / visit log).
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-// How many entries to keep, and to show as quick-repeat chips on the
-// omnibox page.
 const MAX_TYPED_HISTORY: usize = 50;
 
 #[derive(Default, Serialize, Deserialize)]
@@ -31,10 +24,7 @@ pub fn load() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Records `raw` as the most recent entry (moving it to the front if it
-/// was already present, rather than duplicating it) and saves
-/// immediately — entries are deliberate, infrequent actions (one
-/// omnibox submission), not something that needs debouncing.
+/// Move `raw` to front (dedupe) and save immediately.
 pub fn record(typed_history: &mut Vec<String>, raw: &str) {
     typed_history.retain(|entry| entry != raw);
     typed_history.insert(0, raw.to_string());

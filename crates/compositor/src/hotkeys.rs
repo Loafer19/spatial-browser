@@ -1,16 +1,5 @@
-// Canvas-level keyboard shortcuts — closing/opening/reloading a page,
-// cycling focus, zooming, back/forward navigation, theme switching, the
-// canvas-view reset, auto-layout, the page switcher, bookmarks,
-// downloads, history, workspaces, settings, and the F1 help page —
-// that must never reach a page's own content (unlike everything routed
-// through input::KeyboardInput, which forwards to whichever CEF
-// browser is active). Kept separate from that module for exactly that
-// reason: this is about the canvas, not about one page's text input.
-// Canvas pan/zoom itself is mouse-driven (middle-drag / Ctrl+scroll,
-// see app.rs) — only its keyboard reset lives here. The HTML/CSS/JS for
-// the pages some of these open (F1 help, bookmarks/downloads/history/
-// workspace/settings lists, omnibox, switcher) lives in pages/, not
-// here — this file is only "what does each shortcut do".
+// Canvas-level shortcuts (never forwarded to page content). HTML for list
+// pages lives in pages/; pan/zoom mouse gestures are in app.rs.
 
 use crate::browser;
 use crate::clipboard_bridge;
@@ -30,9 +19,7 @@ use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 use winit::event::ElementState;
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 
-/// Recognizes the canvas-level shortcuts and applies them. Returns `true`
-/// if `event` was one of them (the caller should *not* also forward it to
-/// the active page), `false` otherwise.
+/// Handle canvas shortcuts; `true` = do not forward to the page.
 pub fn handle(
     event: &winit::event::KeyEvent,
     modifiers: ModifiersState,
@@ -53,16 +40,12 @@ pub fn handle(
         return false;
     }
 
-    // F1 works with no modifier — it's a dedicated function key, not a
-    // letter that could be someone typing into a page.
     if event.physical_key == PhysicalKey::Code(KeyCode::F1) {
         open_help(session, gpu);
         return true;
     }
 
-    // Alt+Left/Right for back/forward (standard browser convention),
-    // checked separately from the Ctrl+ bindings below since it's a
-    // different modifier.
+    // Alt+Left/Right back/forward (separate from Ctrl+ bindings).
     if modifiers.alt_key() && !modifiers.control_key() {
         match event.physical_key {
             PhysicalKey::Code(KeyCode::ArrowLeft) => {
@@ -91,9 +74,7 @@ pub fn handle(
             }
             true
         }
-        // Ctrl+Shift+W (Lists group: workspace list) shares this
-        // physical key with plain Ctrl+W (close page) — same situation
-        // as Digit0/Space above.
+        // Ctrl+W close / Ctrl+Shift+W workspaces.
         PhysicalKey::Code(KeyCode::KeyW) => {
             if modifiers.shift_key() {
                 open_workspaces(session, gpu, workspaces);
@@ -140,9 +121,7 @@ pub fn handle(
             }
             true
         }
-        // Ctrl+Shift+R (reader mode) shares this physical key with plain
-        // Ctrl+R (reload) — same Shift-disambiguates-a-second-action
-        // convention as KeyC/KeyW/Digit0/Space in this match.
+        // Ctrl+R reload / Ctrl+Shift+R reader mode.
         PhysicalKey::Code(KeyCode::KeyR) => {
             if modifiers.shift_key() {
                 toggle_reader_mode(session, settings);
@@ -155,11 +134,7 @@ pub fn handle(
             paste_into_focused(session);
             true
         }
-        // Plain Ctrl+C is deliberately left unhandled (falls through to
-        // the page itself) — it's already how in-page text selection
-        // gets copied, via clipboard_bridge's injected 'copy' listener.
-        // Shift disambiguates a *different* action on the same physical
-        // key, same convention as every other Shift-shared binding here.
+        // Ctrl+C falls through to page copy-bridge; Ctrl+Shift+C = copy URL.
         PhysicalKey::Code(KeyCode::KeyC) => {
             if modifiers.shift_key() {
                 copy_focused_url(session);
@@ -168,10 +143,7 @@ pub fn handle(
                 false
             }
         }
-        // Page content zoom (CEF's own zoom_level), distinct from
-        // Ctrl+Space's canvas-rect zoom below. Equal shares its physical
-        // key with `+` on a US layout, matching every browser's Ctrl+=
-        // convention for zoom in.
+        // Page content zoom (CEF zoom_level), not Ctrl+Space canvas zoom.
         PhysicalKey::Code(KeyCode::Equal) => {
             page_zoom(session, cef::ZoomCommand::IN);
             true
@@ -180,9 +152,7 @@ pub fn handle(
             page_zoom(session, cef::ZoomCommand::OUT);
             true
         }
-        // Ctrl+Shift+0 (Canvas group: reset canvas view) shares this
-        // physical key with plain Ctrl+0 (reset page zoom) — one match
-        // arm, not a missing group.
+        // Ctrl+0 reset page zoom / Ctrl+Shift+0 reset canvas view.
         PhysicalKey::Code(KeyCode::Digit0) => {
             if modifiers.shift_key() {
                 session.reset_viewport();
@@ -213,28 +183,21 @@ pub fn handle(
             open_switcher(session, gpu);
             true
         }
-        // Alias for F1 — Ctrl+/ is the "show shortcuts" convention in
-        // Linear/Slack/Notion/GitHub, and doesn't need the function-key
-        // row (behind an Fn layer on a lot of laptops).
         PhysicalKey::Code(KeyCode::Slash) => {
             open_help(session, gpu);
             true
         }
-        // Ctrl+, is the cross-app Preferences convention (Chrome,
-        // VSCode, Slack).
         PhysicalKey::Code(KeyCode::Comma) => {
             open_settings(session, gpu, settings);
             true
         }
-        // Ctrl+Shift+U — userscripts + userstyles list (opening always
-        // re-reads disk so a just-dropped file shows up without restart).
+        // Opening reloads from disk so new files appear without restart.
         PhysicalKey::Code(KeyCode::KeyU) if modifiers.shift_key() => {
             userscripts::reload(userscripts);
             userstyles::reload(userstyles);
             open_userscripts(session, gpu, userscripts, userstyles);
             true
         }
-        // Ctrl+Shift+P — password vault list (unlock/create if needed).
         PhysicalKey::Code(KeyCode::KeyP) if modifiers.shift_key() => {
             open_passwords(session, gpu, vault.as_ref());
             true
@@ -246,15 +209,10 @@ pub fn handle(
             true
         }
         PhysicalKey::Code(KeyCode::Tab) => {
-            // Focus == topmost (last), so cycling focus is just rotating
-            // z-order: rotate_left brings the front page to the back,
-            // making the *next* page topmost/focused each press.
             session.rotate_focus(modifiers.shift_key());
             true
         }
-        // Ctrl+Shift+Space (Other group: cycle theme) shares this
-        // physical key with plain Ctrl+Space (zoom to canvas) — same
-        // situation as Digit0 above.
+        // Ctrl+Space zoom-to-canvas / Ctrl+Shift+Space cycle theme.
         PhysicalKey::Code(KeyCode::Space) => {
             if modifiers.shift_key() {
                 session.cycle_theme();
@@ -274,11 +232,7 @@ pub fn handle(
 
 // --- Pages ---
 
-/// Opens the omnibox page (type-to-search-or-navigate) rather than a
-/// fixed URL directly — ephemeral like F1/bookmarks, since submitting it
-/// immediately closes and replaces it with a real page for the resolved
-/// destination (see app.rs's PENDING_OMNIBOX handling); if left
-/// untouched there's nothing worth freezing into session.json either.
+/// Open ephemeral omnibox (submit closes+respawns at destination).
 pub(crate) fn open_new(
     session: &mut Session,
     gpu: &GpuState,
@@ -295,8 +249,7 @@ pub(crate) fn open_new(
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
-/// Reopens the most recently closed page (if any) at its former rect,
-/// bringing it to front.
+/// Reopen most recently closed page at its former rect.
 fn reopen_closed(session: &mut Session, gpu: &GpuState) {
     if let Some((rect, url)) = session.pop_closed() {
         session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, false));
@@ -309,14 +262,7 @@ fn reload_focused(session: &Session) {
     }
 }
 
-/// Reads the system clipboard directly (via `wl-paste`) and inserts it
-/// at the cursor/selection of whatever's focused inside the topmost
-/// page, bypassing CEF's own (non-functional in this windowless/OSR
-/// embedding — see clipboard_bridge.rs) paste handling entirely rather
-/// than forwarding Ctrl+V to it at all. `execCommand('insertText', ...)`
-/// — not setting `.value` directly — because it fires the same events a
-/// real paste would and works in both plain inputs/textareas and
-/// contenteditable elements.
+/// Ctrl+V: wl-paste + execCommand('insertText') (OSR has no CEF clipboard).
 fn paste_into_focused(session: &Session) {
     let Some(page) = session.pages().last() else {
         return;
@@ -343,13 +289,7 @@ fn paste_into_focused(session: &Session) {
     }
 }
 
-/// Ctrl+Shift+C: copies the focused (topmost) page's current URL to the
-/// system clipboard — there's no address bar to select it from at all
-/// (see the Settings page's title/URL label toggle for the other half
-/// of that gap), so this is the only way to grab it without going
-/// through the page's own UI. Same `wl-copy` mechanism as
-/// clipboard_bridge's in-page copy bridge, just triggered from the
-/// canvas instead of a page's own 'copy' event.
+/// Ctrl+Shift+C: copy focused page URL via wl-copy.
 fn copy_focused_url(session: &Session) {
     let Some(page) = session.pages().last() else {
         return;
@@ -360,10 +300,7 @@ fn copy_focused_url(session: &Session) {
     }
 }
 
-/// Ctrl+Shift+R: toggles the focused (topmost) page's reader mode —
-/// see reader_mode.rs for the extraction script and browser::Page's
-/// `reader_mode` field for why toggling off just reloads instead of
-/// reversing the rewrite in place.
+/// Ctrl+Shift+R: toggle reader mode (off = reload).
 pub(crate) fn toggle_reader_mode(session: &Session, settings: &AppSettings) {
     let Some(page) = session.pages().last() else {
         return;
@@ -412,10 +349,7 @@ fn page_zoom(session: &Session, command: cef::ZoomCommand) {
 
 // --- Lists ---
 
-/// Bookmarks the focused page's current URL, if it isn't already saved.
-/// Refuses on an ephemeral page (F1 help, the bookmarks list itself) —
-/// otherwise Ctrl+D on one of those saves its entire generated HTML as a
-/// "URL".
+/// Bookmark focused page URL (refuses ephemeral data: pages).
 fn bookmark_focused(session: &Session, bookmarks: &mut Vec<Bookmark>) {
     let Some(page) = session.pages().last() else {
         return;
@@ -528,9 +462,7 @@ pub(crate) fn open_passwords(
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
-/// Opens the Ctrl+K page switcher: a filterable list of every open,
-/// non-ephemeral page. Ephemeral pages (F1 help, bookmarks list, and
-/// this switcher itself) are excluded — see pages::switcher::page_url.
+/// Open Ctrl+K switcher (non-ephemeral pages only).
 fn open_switcher(session: &mut Session, gpu: &GpuState) {
     let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
@@ -548,8 +480,7 @@ fn open_switcher(session: &mut Session, gpu: &GpuState) {
 
 // --- Canvas ---
 
-/// Rearranges every open page into a grid filling the current window —
-/// see `Session::auto_layout`.
+/// Grid-layout open pages to fill the window.
 fn auto_layout(session: &mut Session, gpu: &GpuState) {
     let size = gpu.window.inner_size();
     session.auto_layout(

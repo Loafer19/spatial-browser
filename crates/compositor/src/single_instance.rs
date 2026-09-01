@@ -1,10 +1,5 @@
-// Ensures only one spatial-browser window runs at once. The product is
-// one canvas + one session (see session.rs / persistence.rs), not a
-// multi-window/profile browser — a second launch should focus the
-// existing window, not start a second independent canvas and CEF
-// instance (which would also race the first one over the same
-// session.json and the same CEF user-data-dir/root_cache_path CEF's own
-// startup warning already flags as unsupported).
+// Single-instance: one canvas/session. Second launch focuses the existing window
+// (avoids racing session.json / CEF cache_path).
 
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;

@@ -1,26 +1,13 @@
-// Custom-scheme interception: every generated list page (bookmarks,
-// omnibox, the page switcher, downloads, history, workspaces,
-// settings) signals an action back to the compositor by navigating to
-// a fake `whatever://...` URL rather than a real one —
-// `OsrRequestHandler::on_before_browse` cancels that navigation and
-// parses it into one of the types below, left in a thread_local for
-// the compositor's redraw handler to act on (same shape for six of
-// them: `RefCell<Option<(browser_id, Action)>>`, read+cleared once per
-// frame — `clipboard://copy` is the exception, acted on immediately
-// right here since it needs no canvas/Session state at all). Grouped
-// into one file, unlike the other handlers here (one file each),
-// because these aren't separate CEF interfaces — they're all
-// `RequestHandler::on_before_browse`, dispatching on a URL prefix —
-// and the whole point of a shared file is that dispatch living next to
-// every action it dispatches to.
+// Custom-scheme intercepts (`bookmark://`, `omnibox://`, …): cancel in
+// on_before_browse, stash in PENDING_* for the compositor (clipboard://copy
+// is handled immediately — no Session needed).
 
 use crate::blocklist::{OsrResourceRequestHandler, ResourceRequestHandlerBuilder};
 use crate::clean_urls;
 use cef::{self, rc::Rc, *};
 use std::cell::RefCell;
 
-/// What the bookmarks-list page (compositor::hotkeys) asked for, parsed
-/// from a `bookmark://...` link/form it navigated to.
+/// Action from a `bookmark://...` navigation.
 pub enum BookmarkAction {
     Open(usize),
     Delete(usize),
@@ -31,21 +18,11 @@ pub enum BookmarkAction {
 }
 
 thread_local! {
-    // Set by `OsrRequestHandler::on_before_browse` when a page navigates
-    // to a `bookmark://...` link or form (only the generated
-    // bookmarks-list page ever produces one — see compositor::hotkeys —
-    // so a global slot is safe: no other page's real navigation can
-    // collide with it). The browser identifier (CEF's own per-instance
-    // id) tags *which* page asked, so the compositor can reload that
-    // exact bookmarks-list page in place after a delete/rename rather
-    // than guessing. Read once per frame by the compositor's redraw
-    // handler.
+    // (browser_id, action); drained once per frame by the compositor.
     pub static PENDING_BOOKMARK: RefCell<Option<(i32, BookmarkAction)>> = const { RefCell::new(None) };
 }
 
-/// Minimal `application/x-www-form-urlencoded` decode (`+` -> space,
-/// `%XX` -> byte) — just enough for the rename form's `title`/`folder`
-/// values, without pulling in a URL crate for it.
+/// Minimal form-urlencoded decode for rename form fields.
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -78,7 +55,7 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Pulls a query parameter's decoded value out of `a=1&b=2`-style text.
+/// Decoded value of `name` from `a=1&b=2`-style query text.
 fn query_param(query: &str, name: &str) -> Option<String> {
     query.split('&').find_map(|pair| {
         let (key, value) = pair.split_once('=')?;
@@ -108,19 +85,13 @@ fn parse_bookmark_action(url: &str) -> Option<BookmarkAction> {
     None
 }
 
-/// What the omnibox page (compositor::hotkeys::omnibox_page_url) asked
-/// for, parsed from an `omnibox://go?q=...&url=...` navigation it made.
-/// `raw` is exactly what the user typed (for history); `url` is what the
-/// page's own JS already resolved it to (URL detection / @prefix search
-/// engines / default search) — the compositor doesn't need to know that
-/// resolution logic, just where to navigate.
+/// Omnibox submit: `raw` = typed text; `url` = JS-resolved destination.
 pub struct OmniboxSubmit {
     pub raw: String,
     pub url: String,
 }
 
 thread_local! {
-    // Same shape/reasoning as PENDING_BOOKMARK, for the omnibox page.
     pub static PENDING_OMNIBOX: RefCell<Option<(i32, OmniboxSubmit)>> = const { RefCell::new(None) };
 }
 
@@ -133,10 +104,7 @@ fn parse_omnibox_submit(url: &str) -> Option<OmniboxSubmit> {
 }
 
 thread_local! {
-    // Same shape/reasoning as PENDING_BOOKMARK, for the Ctrl+K page
-    // switcher. Holds (switcher page's own browser id, target page's
-    // browser id) — the compositor brings the target to front and pans
-    // to it, then closes the switcher page.
+    // (switcher browser_id, target browser_id)
     pub static PENDING_SWITCH: RefCell<Option<(i32, i32)>> = const { RefCell::new(None) };
 }
 
@@ -144,18 +112,15 @@ fn parse_switch_target(url: &str) -> Option<i32> {
     url.strip_prefix("switcher://go/")?.parse().ok()
 }
 
-/// What the downloads-list page (compositor::hotkeys) asked for, parsed
-/// from a `download://...` link.
+/// Action from a `download://...` navigation.
 pub enum DownloadPageAction {
-    /// Opens the downloaded file with the desktop's default handler.
+    /// Open with the desktop default handler.
     Open(usize),
-    /// Removes the entry from the list (the downloaded file itself is
-    /// left on disk — this only forgets about it).
+    /// Drop list entry only (file stays on disk).
     Remove(usize),
 }
 
 thread_local! {
-    // Same shape/reasoning as PENDING_BOOKMARK, for the downloads-list page.
     pub static PENDING_DOWNLOAD_ACTION: RefCell<Option<(i32, DownloadPageAction)>> =
         const { RefCell::new(None) };
 }
@@ -171,19 +136,14 @@ fn parse_download_action(url: &str) -> Option<DownloadPageAction> {
     None
 }
 
-/// What the history-list page (compositor::hotkeys) asked for, parsed
-/// from a `history://...` link.
+/// Action from a `history://...` navigation.
 pub enum HistoryPageAction {
-    /// Opens the visited URL as a new page on the canvas.
     Open(usize),
-    /// Removes one entry from the list.
     Remove(usize),
-    /// Removes every entry.
     Clear,
 }
 
 thread_local! {
-    // Same shape/reasoning as PENDING_BOOKMARK, for the history-list page.
     pub static PENDING_HISTORY_ACTION: RefCell<Option<(i32, HistoryPageAction)>> =
         const { RefCell::new(None) };
 }
@@ -202,22 +162,15 @@ fn parse_history_action(url: &str) -> Option<HistoryPageAction> {
     None
 }
 
-/// What the workspace-list page (compositor::hotkeys) asked for,
-/// parsed from a `workspace://...` link/form.
+/// Action from a `workspace://...` navigation.
 pub enum WorkspacePageAction {
-    /// Replaces every currently open page with the ones saved in this
-    /// workspace.
     Load(usize),
-    /// New display name.
     Rename(usize, String),
     Delete(usize),
-    /// Snapshots the current canvas (pages/viewport/theme) as a new
-    /// workspace entry.
     SaveNew,
 }
 
 thread_local! {
-    // Same shape/reasoning as PENDING_BOOKMARK, for the workspace-list page.
     pub static PENDING_WORKSPACE_ACTION: RefCell<Option<(i32, WorkspacePageAction)>> =
         const { RefCell::new(None) };
 }
@@ -242,34 +195,28 @@ fn parse_workspace_action(url: &str) -> Option<WorkspacePageAction> {
     None
 }
 
-/// What the settings page (compositor::hotkeys) asked for, parsed from
-/// a `settings://...` link/form.
+/// Action from a `settings://...` navigation.
 pub enum SettingsPageAction {
     ToggleAdBlock,
     ToggleCleanUrls,
     ToggleFilterNetwork,
     ToggleFilterCosmetic,
     ToggleFilterScriptlets,
-    /// Built-in list id: `peter_lowe` | `easylist` | `easyprivacy`.
+    /// `peter_lowe` | `easylist` | `easyprivacy`.
     ToggleFilterList(String),
-    /// Persist which Settings tab is shown after refresh.
     SetTab(String),
-    /// A full search URL template (e.g. `https://www.bing.com/search?q=`)
-    /// — one of the settings page's own fixed choices, not free text.
+    /// Fixed search URL template from Settings (not free text).
     SetSearchEngine(String),
     SetTheme(usize),
-    /// Index into compositor::reader_mode::READER_THEMES — which of
-    /// reader mode's Light/Sepia/Dark colors Ctrl+Shift+R uses.
+    /// Index into `reader_mode::READER_THEMES`.
     SetReaderTheme(usize),
     AddBlockedHost(String),
     RemoveBlockedHost(usize),
-    /// One of the settings page's own fixed choices (60/90/120), not
-    /// free text — see compositor::browser::set_target_frame_rate.
+    /// 60 / 90 / 120 — see `browser::set_target_frame_rate`.
     SetFrameRate(u32),
 }
 
 thread_local! {
-    // Same shape/reasoning as PENDING_BOOKMARK, for the settings page.
     pub static PENDING_SETTINGS_ACTION: RefCell<Option<(i32, SettingsPageAction)>> =
         const { RefCell::new(None) };
 }
@@ -325,8 +272,7 @@ fn parse_settings_action(url: &str) -> Option<SettingsPageAction> {
     None
 }
 
-/// What the userscripts list page asked for, parsed from a
-/// `userscripts://...` link.
+/// Action from a `userscripts://...` navigation.
 pub enum UserscriptsPageAction {
     Reload,
     OpenDir,
@@ -369,8 +315,7 @@ fn parse_userscripts_action(url: &str) -> Option<UserscriptsPageAction> {
     None
 }
 
-/// Password vault / autofill actions from `password://...` links
-/// (autofill bridge + passwords list UI).
+/// Vault / autofill actions from `password://...`.
 pub enum PasswordAction {
     /// Master password for unlock or create (confirm also set for create).
     Unlock {
@@ -430,7 +375,7 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
-/// Right-click context menu actions (`context://...`).
+/// Context-menu actions (`context://...`).
 pub enum ContextAction {
     /// Element hit-test result from a page (async after right-click).
     Hit {
@@ -487,7 +432,7 @@ fn parse_context_action(url: &str) -> Option<ContextAction> {
     })
 }
 
-/// `action?…` or CEF-canonicalized `action/?…`.
+/// Accept `action?…` or CEF-canonicalized `action/?…`.
 fn password_action_query<'a>(rest: &'a str, action: &str) -> Option<&'a str> {
     let with_q = format!("{action}?");
     let with_slash_q = format!("{action}/?");
@@ -497,10 +442,8 @@ fn password_action_query<'a>(rest: &'a str, action: &str) -> Option<&'a str> {
 
 fn parse_password_action(url: &str) -> Option<PasswordAction> {
     let rest = url.strip_prefix("password://")?;
-    // Prefer `password://go/<action>?…` — a real path under a dummy host —
-    // so CEF does not canonicalize `password://query?…` into
-    // `password://query/?…` (which used to break focus autofill).
-    // Also accept legacy `password://<action>?…` forms.
+    // Prefer `password://go/<action>?…` so CEF does not turn `query?…` into
+    // `query/?…`. Legacy `password://<action>?…` still accepted.
     let rest = rest.strip_prefix("go/").unwrap_or(rest);
     let rest = rest.strip_prefix('/').unwrap_or(rest);
     if let Some(query) = password_action_query(rest, "unlock") {
@@ -584,22 +527,13 @@ fn parse_password_action(url: &str) -> Option<PasswordAction> {
     None
 }
 
-/// Parses a `clipboard://copy?text=...` navigation into the copied
-/// text — sent by the copy-bridge script every page has injected into
-/// it (compositor::clipboard_bridge), since CEF's windowless/OSR
-/// Chromium has no real platform surface to write the actual OS
-/// clipboard through itself (confirmed empirically: copied text inside
-/// a page never reached `wl-paste`). Unlike every other action in this
-/// file, this one is acted on immediately, right here — writing to the
-/// clipboard needs no canvas/Session state at all, so there's no
-/// PENDING_* thread_local or compositor round-trip for it.
+/// Parse `clipboard://copy?text=...` (OSR has no OS clipboard surface).
 fn parse_clipboard_copy(url: &str) -> Option<String> {
     let query = url.strip_prefix("clipboard://copy?")?;
     query_param(query, "text")
 }
 
-/// Hands `text` to `wl-copy`, which daemonizes itself to keep serving
-/// paste requests — spawned and left running, not waited on.
+/// Spawn `wl-copy` (daemonizes; do not wait).
 fn write_to_clipboard(text: &str) {
     if let Err(e) = std::process::Command::new("wl-copy").arg(text).spawn() {
         log::warn!("wl-copy failed (system clipboard copy unavailable): {e}");
@@ -628,10 +562,7 @@ wrap_request_handler! {
             };
             let url = cef::CefString::from(&request.url()).to_string();
             let id = browser.identifier();
-            // Only ever rewrites real navigations, never this file's own
-            // fake `whatever://...` action-signaling URLs — those never
-            // carry tracking params anyway, but the scheme check keeps
-            // this from even looking.
+            // Skip fake action schemes; they never carry tracking params.
             if url.starts_with("http://") || url.starts_with("https://") {
                 if let Some(cleaned) = clean_urls::clean(&url) {
                     if let Some(frame) = frame {
@@ -664,7 +595,7 @@ wrap_request_handler! {
                 PENDING_WORKSPACE_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
                 return true as _;
             }
-                    if let Some(action) = parse_settings_action(&url) {
+            if let Some(action) = parse_settings_action(&url) {
                 PENDING_SETTINGS_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
                 return true as _;
             }
@@ -687,10 +618,7 @@ wrap_request_handler! {
             false as _
         }
 
-        // Ad/tracker request blocking (see blocklist.rs) — every
-        // request, not just top-level navigations, needs this same
-        // handler, so it's returned unconditionally rather than only
-        // for some subset.
+        // Blocklist applies to every request, not only top-level navigations.
         fn resource_request_handler(
             &self,
             _browser: Option<&mut Browser>,

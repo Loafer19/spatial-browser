@@ -1,7 +1,5 @@
-// The process-wide CEF `App`/`BrowserProcessHandler`: command-line
-// flags applied to every process (browser and re-exec'd subprocesses
-// alike) and to child processes specifically, plus tracking whether
-// CEF's context has finished initializing.
+// Process-wide CEF App / BrowserProcessHandler: shared command-line flags
+// and context-initialized tracking.
 
 use cef::{self, rc::Rc, *};
 use std::cell::RefCell;
@@ -40,34 +38,9 @@ wrap_app! {
             command_line.append_switch(Some(&"noerrdialogs".into()));
             command_line.append_switch(Some(&"hide-crash-restore-bubble".into()));
             command_line.append_switch(Some(&"use-mock-keychain".into()));
-            // Chromium's soft-navigation tracking (used for SPA Web
-            // Vitals) calls PageLoadTracker::OnSoftNavigation, which
-            // notifies ReadAnythingSoftNavigationObserver. That observer
-            // calls tabs::TabInterface::GetFromContents(), which
-            // dereferences internally before its own `if (!tab) return;`
-            // guard can run — null-derefs on any WebContents that isn't a
-            // real browser tab, i.e. every WebContents in a windowless/
-            // Alloy-style embedding, on any SPA-style client navigation
-            // (confirmed: YouTube, Google Images' lightbox). Upstream:
-            // https://github.com/chromiumembedded/cef/issues/4234 (fixed
-            // for M152; cef-rs has no 152 track yet — we're on 151.8.0).
-            //
-            // The observer is gated solely on
-            // features::IsImmersiveReadAnythingEnabled(), so disabling
-            // that feature skips OnSoftNavigation's body entirely before
-            // it reaches the crashing call. (Two earlier attempts here —
-            // disable-features=ReadAnything,SoftNavigationHeuristics and
-            // disable-blink-features=SoftNavigationHeuristics,
-            // SoftNavigationDetection — targeted the wrong feature names
-            // and didn't help.) Reading Mode is browser-chrome UI a
-            // windowless app can't surface anyway, so this costs nothing.
-            //
-            // Linux VAAPI is unreliable in this OSR/hybrid-GPU setup
-            // (`vaEndPicture failed, VA error: internal decoding error`).
-            // Feature flags alone are not enough — Chromium still opens
-            // libva. Force software decode. (Twitch H.264 is already
-            // unavailable in our minimal CEF build; HW decode does not
-            // help there.)
+            // Disable ImmersiveReadAnything: SPA soft-nav crashes Alloy/OSR
+            // (CEF#4234, fixed M152; we're on 151). Disable VAAPI — unreliable
+            // in this OSR/hybrid-GPU setup; flags alone still open libva.
             command_line.append_switch_with_value(
                 Some(&"disable-features".into()),
                 Some(
@@ -77,8 +50,7 @@ wrap_app! {
             );
             command_line.append_switch(Some(&"disable-accelerated-video-decode".into()));
             command_line.append_switch(Some(&"disable-accelerated-video-encode".into()));
-            // Embedded OSR has no reliable "user gesture" for media;
-            // without this, sites that gate MSE/autoplay can refuse play.
+            // OSR has no reliable user-gesture for media autoplay.
             command_line.append_switch_with_value(
                 Some(&"autoplay-policy".into()),
                 Some(&"no-user-gesture-required".into()),
@@ -138,8 +110,7 @@ wrap_browser_process_handler! {
             command_line.append_switch(Some(&"disable-session-crashed-bubble".into()));
             command_line.append_switch(Some(&"ignore-certificate-errors".into()));
             command_line.append_switch(Some(&"ignore-ssl-errors".into()));
-            // GPU/renderer children need the same media flags as the
-            // browser process — VAAPI errors come from the GPU process.
+            // Same media flags as browser process (VAAPI is in the GPU process).
             command_line.append_switch_with_value(
                 Some(&"disable-features".into()),
                 Some(

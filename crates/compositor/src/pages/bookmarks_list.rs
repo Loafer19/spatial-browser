@@ -1,26 +1,10 @@
-// The Ctrl+B bookmarks-list page: grouped by folder, each row a
-// favicon+label, a click-to-edit rename form, and a delete button. See
-// cef-bridge's OsrRequestHandler / app.rs's PENDING_BOOKMARK for how
-// clicks on this page's `bookmark://...` links get handled.
+// Ctrl+B bookmarks list (`bookmark://…` → PENDING_BOOKMARK).
 
 use super::{html_escape, CHECKMARK_SVG_PATH, LIST_NAV_SCRIPT, TRASH_SVG_PATH};
 use crate::output::Theme;
 use crate::persistence::bookmarks::{self, Bookmark};
 
-/// Builds the bookmarks-list page's `data:` URL — grouped by folder
-/// (ungrouped entries first, then each named folder in order of first
-/// appearance). Each row is a real `<a href="bookmark://open/{index}">`
-/// plus a delete link and a rename form; all three are normal
-/// navigations that CEF's `on_before_browse` (cef-bridge) intercepts and
-/// cancels, signaling the action back to the compositor
-/// (`app.rs`'s `PENDING_BOOKMARK` handling) instead of actually loading
-/// `bookmark://...`. `pub(crate)` so app.rs can rebuild this page in
-/// place after a delete/rename.
-///
-/// The favicon is fetched live from the bookmark's own site
-/// (`https://{host}/favicon.ico`) rather than captured/stored ourselves;
-/// a colored initial-letter tile sits underneath it as a fallback that
-/// never needs the network, shown until (or unless) the real icon loads.
+/// Bookmarks `data:` URL (folder groups; `bookmark://` actions).
 pub(crate) fn page_url(theme: &Theme, bookmarks: &[Bookmark], status: Option<&str>) -> String {
     let radius = theme.css_radius();
     let status_html = status

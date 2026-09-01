@@ -1,8 +1,4 @@
-// Touchscreen input: winit `WindowEvent::Touch` → CEF `send_touch_event`
-// (one finger on a page) or canvas pan/pinch (one finger on empty canvas,
-// or two fingers anywhere). Trackpad PinchGesture/PanGesture are
-// macOS/iOS-only in winit; on Linux these Touch-derived gestures are
-// the real multi-touch path.
+// Touch → CEF send_touch_event, or canvas pan/pinch (Linux multi-touch path).
 
 use cef::{BrowserHost, ImplBrowserHost, PointerType, TouchEvent, TouchEventType};
 use std::collections::HashMap;

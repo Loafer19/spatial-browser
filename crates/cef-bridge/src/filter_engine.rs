@@ -1,10 +1,6 @@
-// EasyList / EasyPrivacy via Brave's `adblock` crate: network cancel,
-// cosmetic hide CSS, and optional ##+js scriptlets (classic uBO
-// scriptlets.js assembled with `resource-assembler`).
-//
-// Engine is rebuilt on the UI thread when Settings change; CEF's IO
-// thread only calls `check_request`. Requires adblock without the
-// `single-thread` feature so Engine is Sync.
+// EasyList/EasyPrivacy via Brave `adblock`: network cancel, cosmetic CSS,
+// optional ##+js. Rebuild on UI thread; IO thread only check_request.
+// Needs adblock without `single-thread` so Engine is Sync.
 
 use adblock::lists::{FilterFormat, FilterSet, ParseOptions};
 use adblock::request::Request;
@@ -27,8 +23,7 @@ pub struct FilterEngineConfig {
     pub filters_dir: PathBuf,
 }
 
-/// Rebuild the shared Engine from disk. Safe to call from the UI thread;
-/// IO-thread checks see the new engine after the lock is released.
+/// Rebuild Engine from disk (UI thread); IO checks see it after unlock.
 pub fn rebuild(config: &FilterEngineConfig) {
     let mut set = FilterSet::new(false);
     let mut loaded = 0u32;
@@ -193,8 +188,7 @@ pub fn cosmetic_hide_css(url: &str) -> Option<String> {
     Some(css)
 }
 
-/// Hosts where ##+js injection is known to break the main player
-/// (Twitch Error #4000, similar MSE players). Cosmetic hide still runs.
+/// Skip ##+js on Twitch/YouTube/Kick (breaks MSE players); cosmetic hide still runs.
 fn scriptlet_denied(url: &str) -> bool {
     let host = url
         .split_once("://")

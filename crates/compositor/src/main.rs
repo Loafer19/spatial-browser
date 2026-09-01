@@ -1,20 +1,11 @@
-// Compositor: owns the window, the GPU surface, and the spatial canvas.
-// Multiple CEF pages, each off-screen rendered (CPU path — see
-// browser.rs) into its own textured quad, placed side by side in canvas
-// space. See viewport.rs for the world<->screen mapping (pan/zoom) and
-// app.rs for the hit-testing/z-order/drag logic that makes it a canvas
-// rather than just two fixed windows.
-//
-// CEF's multi-process model means this same binary is re-exec'd as the
-// renderer/gpu/utility helper processes, so the CEF bootstrap (execute_process
-// / initialize) has to run at the very top of main(), before any window or
-// wgpu setup, and the winit loop has to cooperatively pump CEF's message
-// loop (do_message_loop_work) instead of blocking in `run_app`.
+// Window + wgpu + spatial canvas of CEF OSR pages. CEF re-execs this binary
+// as helper processes — bootstrap before window/wgpu; pump do_message_loop_work.
 
 mod app;
 mod autofill_bridge;
 mod browser;
 mod clipboard_bridge;
+mod file_dialog;
 mod hotkeys;
 mod hud;
 mod input;
@@ -65,26 +56,12 @@ fn main() -> ExitCode {
         return ExitCode::from(0);
     }
 
-    // Checked only for the actual browser process, never a re-exec'd
-    // subprocess above (which would otherwise collide with the running
-    // instance's own lock and abort CEF entirely). A conflict here means
-    // we're done before paying for CEF's initialize() below.
+    // Browser process only — subprocesses would collide with the instance lock.
     if single_instance::acquire_or_notify() {
         return ExitCode::from(0);
     }
 
-    // Both under our own config dir (same place session.json/
-    // bookmarks.json/etc. already live) rather than CEF's
-    // platform-default (~/.config/cef_user_data) — that default prints
-    // a startup warning every launch ("customize root_cache_path...")
-    // and, more importantly, leaving cache_path empty puts every
-    // browser in "incognito mode": in-memory-only storage, wiped on
-    // every restart (including scripts/run.sh's auto-restart on the
-    // known SPA-navigation crash — every recovery was silently logging
-    // the user out of everything). See browser.rs: pages now pass
-    // `None` for their request_context, so they all share this one
-    // persistent global context instead of getting one fresh, isolated,
-    // non-persistent context each.
+    // Own config dir (not CEF default): empty cache_path = incognito, wiped on restart.
     let home = std::env::var_os("HOME").expect("HOME not set");
     let cef_data_path: CefString = std::path::Path::new(&home)
         .join(".config/spatial-browser/cef_data")
@@ -119,12 +96,7 @@ fn main() -> ExitCode {
             PumpStatus::Exit(code) => break ExitCode::from(code as u8),
             PumpStatus::Continue => {}
         }
-        // Read live, not cached at startup: this is one of two places
-        // (the other is browser::set_target_frame_rate, which caps how
-        // often CEF itself produces a new frame) that used to hardcode
-        // 60 regardless of the Settings page's frame-rate choice — this
-        // loop's own pacing was a second, independent 60fps ceiling on
-        // top of CEF's, unrelated to CPU-vs-GPU OSR rendering.
+        // Live Settings fps — don't hardcode 60 on top of CEF's own cap.
         sleep(Duration::from_millis(1000 / app.target_fps() as u64));
     };
 

@@ -1,32 +1,20 @@
-// Downloads: accept every one (the default is to cancel — see the
-// comments below), save under ~/Downloads with a collision-safe name,
-// no native save-as dialog, and queue completions for the compositor
-// to record + notify on.
+// Accept downloads (CEF default cancels), save under ~/Downloads with unique
+// names, queue completions for the compositor.
 
 use cef::{self, rc::Rc, *};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-/// One completed download, queued for the compositor to record into
-/// downloads.json and surface as a desktop notification.
+/// Completed download for downloads.json + desktop notification.
 pub struct CompletedDownload {
     pub url: String,
     pub path: String,
 }
 
 thread_local! {
-    // Appended by OsrDownloadHandler::on_download_updated the first time
-    // a given download reports complete; drained once per frame by the
-    // compositor's redraw handler. A queue, not a single slot like
-    // PENDING_BOOKMARK/PENDING_OMNIBOX/PENDING_SWITCH: downloads finish
-    // on their own schedule rather than in response to one user gesture,
-    // and more than one can complete inside the same frame.
     pub static PENDING_DOWNLOADS: RefCell<Vec<CompletedDownload>> = const { RefCell::new(Vec::new()) };
-    // CEF calls on_download_updated repeatedly, including after a
-    // download is already complete — this tracks which download ids
-    // already got queued into PENDING_DOWNLOADS so they don't get
-    // queued (and so double-notified/double-logged) again.
+    // on_download_updated repeats after complete — dedupe by download id.
     static NOTIFIED_DOWNLOADS: RefCell<HashSet<u32>> = RefCell::new(HashSet::new());
 }
 
@@ -37,9 +25,7 @@ fn downloads_dir() -> PathBuf {
     dir
 }
 
-/// Picks a non-colliding path for `suggested_name` inside `dir` —
-/// `name.pdf`, then `name (1).pdf`, `name (2).pdf`, ... — so a second
-/// download of the same filename never silently overwrites the first.
+/// `name.pdf`, then `name (1).pdf`, … — never overwrite an existing file.
 fn unique_download_path(dir: &Path, suggested_name: &str) -> PathBuf {
     let suggested = Path::new(suggested_name);
     let stem = suggested
@@ -69,8 +55,7 @@ wrap_download_handler! {
     }
 
     impl DownloadHandler {
-        // Default (unimplemented) behavior cancels every download — this
-        // is the "yes, allow it" half of that default.
+        // Unimplemented default cancels every download.
         fn can_download(
             &self,
             _browser: Option<&mut Browser>,

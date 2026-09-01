@@ -1,6 +1,4 @@
-// The F1 help page: a static list of canvas-level shortcuts, grouped
-// by what they act on (mirrors hotkeys.rs's own grouping), styled to
-// match whichever theme is active.
+// F1 help — shortcut list styled to the active Theme.
 
 use crate::output::Theme;
 
@@ -64,10 +62,7 @@ pub const HELP_GROUPS: &[(&str, &[(&str, &str)])] = &[
     ),
 ];
 
-/// Builds the F1 help page's `data:` URL from `theme`'s palette, so it's
-/// never out of sync with what's actually on screen. Built at runtime
-/// (not a `concat!`-based const like the fixed entry list could be)
-/// because the theme is chosen at runtime.
+/// F1 help `data:` URL using `theme` palette.
 pub fn page_url(theme: &Theme) -> String {
     let mut rows = String::new();
     for (group, entries) in HELP_GROUPS {

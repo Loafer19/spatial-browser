@@ -1,10 +1,5 @@
-// World-space <-> screen-space mapping for the 2D canvas. Page rects
-// (browser.rs::Page::rect) live in world space and drive CEF's actual
-// backing resolution — zooming the viewport never re-renders a page at
-// a different resolution, it only changes where/how large its quad is
-// drawn and hit-tested. `offset` is the world-space point that currently
-// maps to screen origin (0,0); pan and zoom-to-cursor both just solve
-// for a new offset that keeps some reference point fixed on screen.
+// World ↔ screen mapping. Page rects stay world-sized (CEF resolution);
+// viewport zoom only changes draw/hit-test size. `offset` = world point at screen (0,0).
 
 use crate::output::Rect;
 use serde::{Deserialize, Serialize};

@@ -1,12 +1,5 @@
-// Spawning a CEF browser instance for one page of the spatial canvas:
-// its own render handler (own texture + own logical size, independent of
-// every other page), its own GPU quad, and its own canvas-space rect.
-// Deliberately no request_context of its own — passing `None` for one
-// (see spawn, below) makes CEF use the single global context every
-// page shares, so cookies/logins are shared across pages and persist
-// across restarts (see main.rs's `cache_path`/`root_cache_path`)
-// instead of every page getting its own fresh, isolated, in-memory-only
-// one.
+// One canvas page: own CEF browser, texture, quad, world rect.
+// request_context None → shared persistent global (cookies/logins across pages).
 
 use crate::output::{GpuState, PageQuad, Rect};
 use cef_bridge::{ClientBuilder, OsrRenderHandler};
@@ -15,23 +8,13 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use winit::window::Window;
 
-// Comfortably under wgpu's default 8192 max_texture_dimension_2d (see
-// Rect::clamp_size) — no single floating page plausibly needs more.
+// Under wgpu's default 8192 max_texture_dimension_2d.
 const MAX_PAGE_DIMENSION: f32 = 4096.0;
 
-// The Settings page's frame-rate choice (60/90/120 — see
-// pages::settings_list), read by every future `spawn()` and pushed live
-// into every currently-open page's CEF host
-// (pending_actions.rs's SettingsPageAction::SetFrameRate). A plain
-// static, not threaded through every one of spawn()'s dozen-plus call
-// sites: this is the same "runtime state many scattered callers need to
-// read without changing every signature" shape as blocklist.rs's
-// ENABLED/CUSTOM_HOSTS, just on this crate's own UI thread instead of
-// across the UI/IO-thread split those have to handle.
+// Settings fps (60/90/120); read by spawn + pushed live to open hosts.
 static TARGET_FRAME_RATE: AtomicU32 = AtomicU32::new(60);
 
-/// Called once at startup (from the loaded settings.json) and again on
-/// every Settings-page frame-rate change.
+/// Startup + every Settings frame-rate change.
 pub fn set_target_frame_rate(fps: u32) {
     TARGET_FRAME_RATE.store(fps, Ordering::Relaxed);
 }
@@ -40,55 +23,33 @@ pub struct Page {
     pub browser: cef::Browser,
     pub rect: Rect,
     pub quad: PageQuad,
-    // CEF's own logical (DIP) view size, kept in sync with `rect` (scaled
-    // by the window's device_scale_factor) whenever the page is moved or
-    // resized on the canvas.
+    // CEF DIP size; synced from `rect` / scale_factor on move/resize.
     size: Rc<RefCell<winit::dpi::LogicalSize<f32>>>,
     texture: Rc<RefCell<Option<wgpu::BindGroup>>>,
-    // The rect this page had before the zoom-toggle hotkey (Ctrl+Space)
-    // enlarged it — `Some` while zoomed in, restored and cleared on
-    // toggling back out. Persistence must save this, not the temporary
-    // fullscreen `rect`, or restarts leave pages stuck at canvas size.
+    // Pre-Ctrl+Space rect while zoomed; persistence must save this, not `rect`.
     pub zoomed_from: Option<Rect>,
-    // True for generated utility pages (F1 help, the bookmarks list) —
-    // persistence.rs skips these when saving. Without this, a bookmarks-
-    // list page opened once gets frozen into session.json and reopens on
-    // every future launch as a stale snapshot: outdated content, and
-    // bookmark:// indices inside it that no longer match the current
-    // bookmarks list.
+    // Utility pages — skipped by session/workspace save (stale snapshot otherwise).
     pub ephemeral: bool,
-    // Set by hotkeys::toggle_reader_mode (Ctrl+Shift+R) when this page's
-    // DOM has been replaced in-place with an extracted-article view —
-    // toggling it back off reloads the page (the reliable way to fully
-    // restore the original DOM/scripts) rather than trying to reverse
-    // the in-page rewrite, so this only needs to remember *whether* to
-    // reload, not what to restore. A `Cell`, like `size`/`texture`
-    // above, since hotkeys only ever sees `&Session`/`&Page`.
+    // Runtime-only (not persisted). Cleared on real navigation; toggle-off reloads.
     pub reader_mode: std::cell::Cell<bool>,
-    /// Top-edge load bar: CEF `on_loading_progress_change` (0..1).
+    /// Top-edge load bar progress (0..1). Runtime-only; not persisted.
     pub load_progress: std::cell::Cell<f32>,
-    /// True while CEF reports the page is loading (state + progress).
+    /// True while CEF reports loading. Runtime-only; not persisted.
     pub load_active: std::cell::Cell<bool>,
 }
 
 impl Page {
     pub fn texture(&self) -> Option<wgpu::BindGroup> {
-        // wgpu::BindGroup is cheap to clone (it's a ref-counted handle),
-        // so callers can hold this independent of the page's own borrow.
         self.texture.borrow().clone()
     }
 
-    /// Reads this page's *current* URL straight from CEF rather than
-    /// tracking it ourselves, so in-page navigation (a clicked link,
-    /// back/forward) is reflected too, not just the URL it was spawned
-    /// with.
+    /// Current URL from CEF (includes in-page navigations).
     pub fn url(&self) -> String {
         cef::ImplBrowser::main_frame(&self.browser)
             .map(|frame| cef::CefString::from(&cef::ImplFrame::url(&frame)).to_string())
             .unwrap_or_default()
     }
 
-    /// Update this page's canvas rect and let CEF know its view resized.
     /// World rect to persist (pre-Ctrl+Space size while zoomed-to-canvas).
     pub fn layout_rect(&self) -> Rect {
         self.zoomed_from.unwrap_or(self.rect)
@@ -107,13 +68,7 @@ impl Page {
 
 pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect, ephemeral: bool) -> Page {
     let rect = rect.clamp_size(MAX_PAGE_DIMENSION);
-    // Shared-texture (GPU) OSR needs the CEF GPU process's DMA-BUF export
-    // and our wgpu Vulkan import on the same physical GPU. Default wgpu
-    // preference is LowPower (iGPU) to match Chromium's typical choice on
-    // hybrid laptops — see output::osr_shared_texture_enabled /
-    // gpu_power_preference. Override with SPATIAL_BROWSER_OSR=cpu to force
-    // the CPU on_paint path, or SPATIAL_BROWSER_GPU=high (+ usually OSR=cpu)
-    // for the discrete GPU.
+    // Shared-texture needs CEF GPU + wgpu on the same device (see output::).
     let shared_texture = crate::output::osr_shared_texture_enabled();
     let window_info = cef::WindowInfo {
         windowless_rendering_enabled: true as _,
@@ -146,7 +101,7 @@ pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect, ephemeral: 
         Some(&url.into()),
         Some(&browser_settings),
         None,
-        None, // global request context — see this file's header comment
+        None, // shared persistent global request context
     )
     .expect("failed to create CEF browser");
 

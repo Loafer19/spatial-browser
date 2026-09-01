@@ -1,17 +1,10 @@
-// Drains and acts on every `PENDING_*` queue cef-bridge's CEF callbacks
-// filled since the last frame — clicks on the bookmarks/downloads/
-// history/workspace list pages' generated links, omnibox/switcher
-// submissions, completed downloads/popups/visits — refreshing whichever
-// generated list page needs to reflect the change afterward. Split out
-// of app.rs's `RedrawRequested` arm: routing raw window/input events
-// (app.rs's actual job) and draining cef-bridge's action queues are
-// different concerns that happen to both need to run once a frame, and
-// together they'd made that file the largest in the crate by far.
+// Drain cef-bridge PENDING_* queues each frame and refresh list pages.
 
 use crate::app::{ContextMenuState, PendingSaveOffer};
 use crate::autofill_bridge;
 use crate::browser;
 use crate::clipboard_bridge;
+use crate::file_dialog::{self, PickKind, PickOptions};
 use crate::hotkeys;
 use crate::output::{GpuState, Rect, THEMES};
 use crate::pages;
@@ -40,25 +33,8 @@ use cef_bridge::{
     PENDING_USERSCRIPT_ACTION, PENDING_VISITS, PENDING_WORKSPACE_ACTION,
 };
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::sync::Mutex;
 
-/// File dialog must not block the winit/CEF thread — xdg-desktop-portal
-/// times out (~2s) when the parent app stops pumping Wayland events.
-struct AsyncFilePick {
-    browser_id: i32,
-    rx: Receiver<Option<PathBuf>>,
-}
-
-static BOOKMARK_FILE_PICK: Mutex<Option<AsyncFilePick>> = Mutex::new(None);
-static CSV_FILE_PICK: Mutex<Option<AsyncFilePick>> = Mutex::new(None);
-
-/// Pushes the current ad-block toggle/custom-hosts into cef-bridge's
-/// own live state (a thread_local, not part of `AppSettings` itself) —
-/// called once at startup (app.rs's `Default::default`) and again after
-/// every settings change that touches either field, since
-/// `on_before_resource_load` (cef-bridge) reads that thread_local
-/// directly, not `AppSettings`.
+/// Push blocklist/filter settings into cef-bridge live state (IO-thread statics).
 pub(crate) fn sync_blocklist_settings(settings: &AppSettings) {
     let master = settings.ad_block_enabled;
     let network_on = master && settings.filter_network_enabled;
@@ -82,8 +58,7 @@ pub(crate) fn sync_blocklist_settings(settings: &AppSettings) {
     });
 }
 
-/// Prefer `~/.config/spatial-browser/filters/`; seed from bundle or repo
-/// `data/filters` on first run.
+/// Prefer `~/.config/spatial-browser/filters/`; seed from bundle/repo on first run.
 fn ensure_filter_lists_dir() -> std::path::PathBuf {
     let home = std::env::var_os("HOME").expect("HOME not set");
     let dest = std::path::PathBuf::from(home).join(".config/spatial-browser/filters");
@@ -129,8 +104,7 @@ fn ensure_filter_lists_dir() -> std::path::PathBuf {
     dest
 }
 
-/// Drains and acts on every pending action queued since the last frame.
-/// Called once per `RedrawRequested`, before rendering.
+/// Drain PENDING_* once per RedrawRequested, before rendering.
 pub fn apply(
     session: &mut Session,
     gpu: &GpuState,
@@ -149,11 +123,11 @@ pub fn apply(
     context_menu: &mut Option<ContextMenuState>,
     pending_context_hit: &mut Option<(i32, (f32, f32))>,
 ) {
-    // Finish any file dialogs started on a background thread.
+    // Complete background file dialogs.
     poll_bookmark_file_pick(session, gpu, bookmarks);
     poll_csv_file_pick(session, gpu, vault, generated_password);
 
-    // Load progress / state → per-page top-edge bar (skip ephemeral chrome).
+    // Load progress → top-edge bar (skip ephemeral).
     let load_states = PENDING_LOAD_STATE.with_borrow_mut(std::mem::take);
     for (browser_id, is_loading) in load_states {
         if let Some(page) = session
@@ -193,13 +167,7 @@ pub fn apply(
         }
     }
 
-    // Set by cef-bridge's OsrRequestHandler when a click or form submit
-    // inside the bookmarks-list page (hotkeys::open_bookmarks) hits one
-    // of its `bookmark://...` links — that navigation was already
-    // canceled there; act on it here instead. `browser_id` identifies
-    // exactly which bookmarks-list page asked, so delete/rename can
-    // reload that same page in place rather than guessing which open
-    // page (if any) it was.
+    // bookmark://… → act; refresh the requesting list page in place.
     if let Some((browser_id, action)) = PENDING_BOOKMARK.with_borrow_mut(|pending| pending.take()) {
         match action {
             BookmarkAction::Open(index) => {
@@ -225,21 +193,13 @@ pub fn apply(
                 refresh_bookmarks_page(session, gpu, bookmarks, None, browser_id);
             }
             BookmarkAction::ImportBrowse => {
-                // Keep the same page open so browser_id stays valid while the
-                // dialog runs on a background thread (portal needs the app
-                // event loop alive — blocking here dies in ~2s).
+                // Keep page open (browser_id); dialog is off-thread for portal.
                 start_bookmark_file_dialog(browser_id);
             }
         }
     }
 
-    // Set by cef-bridge's OsrRequestHandler when the omnibox page
-    // (hotkeys::open_new / omnibox_page_url) submits an
-    // `omnibox://go?q=...&url=...` — that navigation was already
-    // canceled there. Log the raw typed text, then replace the omnibox
-    // page with a real one at the resolved destination (close+respawn
-    // rather than `load_url` in place, same reliability reason as
-    // refresh_bookmarks_page).
+    // omnibox://go → log typed text; close+respawn at resolved URL.
     if let Some((browser_id, submit)) = PENDING_OMNIBOX.with_borrow_mut(|pending| pending.take()) {
         typed_history::record(typed_history, &submit.raw);
         if let Some(index) = session
@@ -253,14 +213,7 @@ pub fn apply(
         }
     }
 
-    // Set by cef-bridge's OsrRequestHandler when a row click or Enter
-    // inside the switcher page (hotkeys::open_switcher) hits a
-    // `switcher://go/{id}` link — that navigation was already canceled
-    // there. Bring the target page to front and pan it to screen center
-    // (kept at the current zoom level), then close the switcher page —
-    // a permanent close, not through the closed-page undo stack
-    // (pop_closed): this isn't a user-initiated close of *their*
-    // content.
+    // switcher://go/{id} → front+pan target; close switcher (not undo stack).
     if let Some((switcher_id, target_id)) = PENDING_SWITCH.with_borrow_mut(|pending| pending.take())
     {
         if let Some(target_index) = session
@@ -292,12 +245,7 @@ pub fn apply(
         }
     }
 
-    // Appended by cef-bridge's OsrDownloadHandler the first time a
-    // download reports complete. Record each into downloads.json and
-    // fire a desktop notification — there's no in-canvas download UI
-    // (progress bar, toast): a system notification is visible
-    // regardless of window focus/workspace, and needs no native GPU
-    // text rendering the way an in-canvas toast would.
+    // Completed downloads → downloads.json + desktop notification.
     let completed = PENDING_DOWNLOADS.with_borrow_mut(std::mem::take);
     for download in completed {
         let filename = std::path::Path::new(&download.path)
@@ -321,10 +269,7 @@ pub fn apply(
         }
     }
 
-    // Set by cef-bridge's OsrRequestHandler when a click inside the
-    // downloads-list page (hotkeys::open_downloads) hits a
-    // `download://...` link — that navigation was already canceled
-    // there.
+    // download://…
     if let Some((browser_id, action)) =
         PENDING_DOWNLOAD_ACTION.with_borrow_mut(|pending| pending.take())
     {
@@ -349,11 +294,7 @@ pub fn apply(
         }
     }
 
-    // Appended by cef-bridge's OsrLifeSpanHandler when a page tries to
-    // open a link in a new tab/window (target="_blank", window.open,
-    // middle-click) — canceled there so CEF doesn't spawn its own
-    // native popup window outside the canvas. Spawn a regular Page
-    // instead, cascaded from the opener's rect if it's still open.
+    // Canceled popups → spawn canvas Page (cascaded from opener rect).
     let popups = PENDING_POPUPS.with_borrow_mut(std::mem::take);
     for (opener_id, url) in popups {
         let opener_rect = session
@@ -374,8 +315,7 @@ pub fn apply(
         session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, false));
     }
 
-    // document-start userscripts — fired from OsrLoadHandler::on_load_start
-    // so they run before the page's own scripts when CEF allows it.
+    // document-start inject (before page scripts when CEF allows).
     let load_starts = PENDING_LOAD_START.with_borrow_mut(std::mem::take);
     for (browser_id, url) in load_starts {
         if let Some(page) = session
@@ -383,6 +323,8 @@ pub fn apply(
             .iter()
             .find(|p| p.browser.identifier() == browser_id)
         {
+            // Reader mode rewrites the DOM; a real navigation replaces it.
+            page.reader_mode.set(false);
             if !page.ephemeral {
                 page.load_active.set(true);
                 page.load_progress.set(0.0);
@@ -399,8 +341,7 @@ pub fn apply(
                         frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
                     }
                 }
-                // Both styles and scripts honor `@match spatial-ui` for
-                // ephemeral chrome pages (bookmarks, settings, …).
+                // `@match spatial-ui` covers ephemeral chrome pages.
                 for js in userstyles::matching_inject_js(&url, page.ephemeral, userstyles) {
                     frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
                 }
@@ -416,15 +357,8 @@ pub fn apply(
         }
     }
 
-    // Appended by cef-bridge's OsrLoadHandler for every completed
-    // top-level navigation. Three things happen for each: the
-    // copy-bridge script gets (re-)injected, since a full navigation
-    // wipes whatever a previous injection put in the page's DOM (see
-    // clipboard_bridge.rs — CEF's own clipboard integration doesn't
-    // work at all in this windowless/OSR embedding, confirmed
-    // empirically); any document-end/idle userscript / userstyle whose
-    // `@match` fits (including `spatial-ui` for ephemeral chrome) gets
-    // injected; history is still skipped for ephemeral pages.
+    // load-end: re-inject copy bridge + document-end/idle scripts/styles;
+    // record history (skip ephemeral).
     let visits = PENDING_VISITS.with_borrow_mut(std::mem::take);
     for (browser_id, url) in visits {
         if let Some(page) = session
@@ -468,8 +402,7 @@ pub fn apply(
                         }
                     }
                 }
-                // Styles again on load-end (covers navigations that
-                // skipped start, and re-applies after full document swap).
+                // Styles again (missed start / full document swap).
                 for js in userstyles::matching_inject_js(&url, page.ephemeral, userstyles) {
                     frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
                 }
@@ -548,9 +481,7 @@ pub fn apply(
     }
     // typed_history is &mut above — fine for open_new which only reads.
 
-    // Set by cef-bridge's OsrRequestHandler when a click inside the
-    // history-list page (hotkeys::open_history) hits a `history://...`
-    // link — that navigation was already canceled there.
+    // history://…
     if let Some((browser_id, action)) =
         PENDING_HISTORY_ACTION.with_borrow_mut(|pending| pending.take())
     {
@@ -577,10 +508,7 @@ pub fn apply(
         }
     }
 
-    // Set by cef-bridge's OsrRequestHandler when a click inside the
-    // workspace-list page (hotkeys::open_workspaces) hits a
-    // `workspace://...` link — that navigation was already canceled
-    // there.
+    // workspace://…
     if let Some((browser_id, action)) =
         PENDING_WORKSPACE_ACTION.with_borrow_mut(|pending| pending.take())
     {
@@ -625,9 +553,7 @@ pub fn apply(
         }
     }
 
-    // Set by cef-bridge's OsrRequestHandler when a click inside the
-    // settings page (hotkeys::open_settings) hits a `settings://...`
-    // link — that navigation was already canceled there.
+    // settings://…
     if let Some((browser_id, action)) =
         PENDING_SETTINGS_ACTION.with_borrow_mut(|pending| pending.take())
     {
@@ -736,12 +662,7 @@ pub fn apply(
                 settings.settings_tab = "general".into();
                 settings::save(settings);
                 browser::set_target_frame_rate(fps);
-                // Applied immediately to every currently-open page's own
-                // CEF host, not just future spawns — same reasoning as
-                // the (now-removed) page-label toggle had: a setting a
-                // user can visibly judge (does it feel smoother?) left
-                // stale until next launch would be a much more
-                // noticeable inconsistency than most settings here.
+                // Apply live to every open host, not only future spawns.
                 for page in session.pages() {
                     if let Some(host) = page.browser.host() {
                         host.set_windowless_frame_rate(fps as _);
@@ -753,13 +674,7 @@ pub fn apply(
     }
 }
 
-/// Replaces the bookmarks-list page identified by `browser_id` (CEF's
-/// own per-browser id) with a fresh one at the same rect, if it's still
-/// open — used after a delete/rename so the list reflects the change
-/// without the user having to close and reopen it themselves. Closes
-/// and respawns rather than `load_url` in place: a navigation issued
-/// right after CEF just canceled one on that same frame isn't
-/// reliable.
+/// Close+respawn bookmarks list at same rect (load_url after cancel is unreliable).
 pub(crate) fn dismiss_context_menu(
     session: &mut Session,
     context_menu: &mut Option<ContextMenuState>,
@@ -1233,23 +1148,16 @@ fn handle_password_action(
 
 fn start_bookmark_file_dialog(browser_id: i32) {
     let (start_dir, file_name) = bookmarks_chrome::dialog_start();
-    let (tx, rx) = mpsc::channel();
-    if let Ok(mut slot) = BOOKMARK_FILE_PICK.lock() {
-        *slot = Some(AsyncFilePick { browser_id, rx });
-    }
-    let _ = std::thread::Builder::new()
-        .name("bookmark-file-dialog".into())
-        .spawn(move || {
-            let mut dialog = rfd::FileDialog::new()
-                .set_title("Import bookmarks (Chrome / Chromium / Brave / Edge)");
-            if let Some(dir) = start_dir.filter(|p| p.is_dir()) {
-                dialog = dialog.set_directory(dir);
-            }
-            if let Some(name) = file_name {
-                dialog = dialog.set_file_name(name);
-            }
-            let _ = tx.send(dialog.pick_file());
-        });
+    file_dialog::start(
+        PickKind::Bookmarks,
+        browser_id,
+        PickOptions {
+            title: "Import bookmarks (Chrome / Chromium / Brave / Edge)".into(),
+            start_dir,
+            file_name,
+            filters: Vec::new(),
+        },
+    );
 }
 
 fn poll_bookmark_file_pick(
@@ -1257,29 +1165,9 @@ fn poll_bookmark_file_pick(
     gpu: &GpuState,
     bookmarks: &mut Vec<Bookmark>,
 ) {
-    let path = {
-        let mut slot = match BOOKMARK_FILE_PICK.lock() {
-            Ok(g) => g,
-            Err(_) => return,
-        };
-        let Some(pending) = slot.as_ref() else {
-            return;
-        };
-        match pending.rx.try_recv() {
-            Ok(p) => {
-                let browser_id = pending.browser_id;
-                *slot = None;
-                drop(slot);
-                (browser_id, p)
-            }
-            Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => {
-                *slot = None;
-                return;
-            }
-        }
+    let Some((browser_id, path)) = file_dialog::poll(PickKind::Bookmarks) else {
+        return;
     };
-    let (browser_id, path) = path;
 
     let status = match path {
         None => "Import cancelled".to_string(),
@@ -1315,21 +1203,16 @@ fn start_csv_file_dialog(browser_id: i32) {
     let downloads = std::env::var_os("HOME")
         .map(|h| PathBuf::from(h).join("Downloads"))
         .filter(|p| p.is_dir());
-    let (tx, rx) = mpsc::channel();
-    if let Ok(mut slot) = CSV_FILE_PICK.lock() {
-        *slot = Some(AsyncFilePick { browser_id, rx });
-    }
-    let _ = std::thread::Builder::new()
-        .name("csv-file-dialog".into())
-        .spawn(move || {
-            let mut dialog = rfd::FileDialog::new().set_title("Import passwords CSV");
-            // Keep CSV filter — those files have extensions. No set_parent.
-            dialog = dialog.add_filter("CSV", &["csv"]);
-            if let Some(dir) = downloads {
-                dialog = dialog.set_directory(dir);
-            }
-            let _ = tx.send(dialog.pick_file());
-        });
+    file_dialog::start(
+        PickKind::PasswordsCsv,
+        browser_id,
+        PickOptions {
+            title: "Import passwords CSV".into(),
+            start_dir: downloads,
+            file_name: None,
+            filters: vec![("CSV".into(), vec!["csv".into()])],
+        },
+    );
 }
 
 fn poll_csv_file_pick(
@@ -1338,27 +1221,8 @@ fn poll_csv_file_pick(
     vault: &mut Option<VaultSession>,
     generated_password: &mut Option<String>,
 ) {
-    let (browser_id, path) = {
-        let mut slot = match CSV_FILE_PICK.lock() {
-            Ok(g) => g,
-            Err(_) => return,
-        };
-        let Some(pending) = slot.as_ref() else {
-            return;
-        };
-        match pending.rx.try_recv() {
-            Ok(p) => {
-                let browser_id = pending.browser_id;
-                *slot = None;
-                drop(slot);
-                (browser_id, p)
-            }
-            Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => {
-                *slot = None;
-                return;
-            }
-        }
+    let Some((browser_id, path)) = file_dialog::poll(PickKind::PasswordsCsv) else {
+        return;
     };
 
     let status = match (path, vault.as_mut()) {
@@ -1509,8 +1373,7 @@ fn refresh_bookmarks_page(
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
-/// Same as `refresh_bookmarks_page`, for the downloads-list page after
-/// a remove.
+/// Like `refresh_bookmarks_page`, for downloads.
 fn refresh_downloads_page(
     session: &mut Session,
     gpu: &GpuState,
@@ -1531,8 +1394,7 @@ fn refresh_downloads_page(
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
-/// Same as `refresh_bookmarks_page`, for the history-list page after a
-/// remove/clear.
+/// Like `refresh_bookmarks_page`, for history.
 fn refresh_history_page(
     session: &mut Session,
     gpu: &GpuState,
@@ -1553,10 +1415,7 @@ fn refresh_history_page(
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
-/// Same as `refresh_bookmarks_page`, for the workspace-list page after
-/// a save/rename/delete. Not used for `Load`: that closes this page
-/// along with everything else on the canvas rather than refreshing it
-/// in place.
+/// Like `refresh_bookmarks_page`, for workspaces (not used for Load).
 fn refresh_workspaces_page(
     session: &mut Session,
     gpu: &GpuState,
@@ -1577,10 +1436,7 @@ fn refresh_workspaces_page(
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
-/// Same as `refresh_bookmarks_page`, for the settings page after any
-/// change — every `SettingsPageAction` refreshes it, since every one
-/// changes something the page displays (the ad-block state, which
-/// engine/theme is checked, the custom-hosts list).
+/// Like `refresh_bookmarks_page`, for settings.
 fn refresh_settings_page(
     session: &mut Session,
     gpu: &GpuState,
@@ -1622,10 +1478,6 @@ fn refresh_userscripts_page(
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
-/// Seconds since the Unix epoch, UTC — used to stamp a new history
-/// entry. `UNIX_EPOCH` is always in the past on any correctly set
-/// clock, so the `unwrap` only panics on a system clock set before
-/// 1970.
 fn now_unix_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

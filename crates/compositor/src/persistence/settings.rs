@@ -1,4 +1,4 @@
-// User-editable preferences. One JSON object in settings.json.
+// settings.json — user preferences.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -25,8 +25,7 @@ impl Default for FilterLists {
     }
 }
 
-// `#[serde(default)]` at the container level: a field added later falls
-// back instead of failing to parse older settings.json files.
+// Container-level default: new fields don't break older settings.json.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {

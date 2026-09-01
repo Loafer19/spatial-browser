@@ -17,11 +17,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     return output;
 }
 
-// Fragment shader: samples the page's CEF texture, clips it to a
-// rounded rect, dims it when unfocused, and blends in a border near the
-// edge — a brighter/thicker accent ring when focused, a thin neutral one
-// otherwise so an unfocused page never fully blends into a
-// same-colored canvas background.
+// Sample CEF texture; rounded clip; dim unfocused; focus/neutral border.
 @group(0) @binding(0) var tex0: texture_2d<f32>;
 @group(0) @binding(1) var samp0: sampler;
 

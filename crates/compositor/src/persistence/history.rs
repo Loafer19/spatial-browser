@@ -1,21 +1,14 @@
-// Persisted browsing history — actual page visits (cef-bridge's
-// OsrLoadHandler::on_load_end, one entry per completed top-level
-// navigation), not what was typed into the omnibox (typed_history.rs)
-// and not bookmarks. Its own history.json.
+// history.json — completed top-level visits (not omnibox typed_history).
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-// Caps the file's growth — old entries fall off the end. Real visits
-// happen far more often than deliberate bookmark edits, so an
-// unbounded list would grow forever.
 const MAX_HISTORY: usize = 200;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub url: String,
-    // Unix seconds, UTC — display formatting (local time, grouping by
-    // day) happens client-side in pages::history_list's JS, not here.
+    // Unix seconds UTC; local display/grouping is client-side JS.
     pub visited_at: i64,
 }
 
@@ -38,11 +31,7 @@ pub fn load() -> Vec<HistoryEntry> {
         .unwrap_or_default()
 }
 
-/// Records a page visit as the most recent entry and saves
-/// immediately. If the same URL is already the most recent entry (a
-/// refresh, or a SPA's repeated soft-navigation to the same URL) its
-/// timestamp is just refreshed in place instead of spamming the list
-/// with duplicates.
+/// Record visit at front; refresh timestamp if same URL is already top.
 pub fn record(history: &mut Vec<HistoryEntry>, url: &str, visited_at: i64) {
     match history.first_mut() {
         Some(top) if top.url == url => top.visited_at = visited_at,

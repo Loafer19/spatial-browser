@@ -1,19 +1,5 @@
-// Generated `data:` utility pages shown on the canvas — F1 help, the
-// bookmarks list, and the new-page omnibox. Kept separate from
-// hotkeys.rs (which only dispatches canvas-level keyboard shortcuts) so
-// that file doesn't end up half HTML/CSS/JS generation, half input
-// handling.
-//
-// Every page's URL starts `data:text/html;charset=utf-8,` — the
-// `;charset=utf-8` isn't optional decoration: without it, a `data:` URL
-// with no charset falls back to Latin-1 for anything outside ASCII, so
-// any non-ASCII text (a bookmark title, a typed search query, anything
-// a user actually typed in Cyrillic or otherwise) rendered as mojibake
-// instead of the real characters. Confirmed empirically. The other
-// `data:` URL hazard already well-documented across these files — an
-// unescaped `#` starting a fragment and silently truncating the rest of
-// the document — is unrelated to this one; both need watching whenever
-// a new page template is added here.
+// Generated data: chrome pages. Always use `data:text/html;charset=utf-8,`
+// (no charset → Latin-1 mojibake) and escape `#` (otherwise starts a fragment).
 
 use crate::output::Theme;
 
@@ -36,26 +22,13 @@ pub(crate) fn html_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// A JS single-quoted string literal for `s`, safe to embed inside a
-/// double-quoted HTML attribute (e.g. `onclick="go({this})"`). JS-escapes
-/// first (backslash, single quote), then HTML-attribute-escapes the
-/// result — the two passes don't interfere: JS escaping only introduces
-/// backslashes and `\'`, neither of which `html_escape` touches.
+/// JS single-quoted literal safe inside a double-quoted HTML attribute.
 pub(crate) fn js_string_literal(s: &str) -> String {
     let js_escaped = s.replace('\\', "\\\\").replace('\'', "\\'");
     format!("'{}'", html_escape(&js_escaped))
 }
 
-/// Shared ArrowUp/ArrowDown/Enter row navigation for the bookmarks/
-/// downloads/history/workspaces list pages — matching switcher.rs's own
-/// row-highlight behavior so every list page's keyboard handling is
-/// consistent. A page opts in by marking each row `class="list-row"`
-/// with a `data-open="<url>"` attribute holding whatever its primary
-/// action is (the same URL its main click handler already navigates
-/// to); Enter on the highlighted row navigates there. Typing into a
-/// rename `<input>` (bookmarks/workspaces) is left alone — the guard
-/// below only acts when the focused element isn't one, so the input's
-/// own native Enter-submits-the-form behavior is untouched.
+/// ArrowUp/Down/Enter for `.list-row[data-open]`; skips focused `<input>`.
 pub(crate) const LIST_NAV_SCRIPT: &str = r#"<script>
 let listActiveIndex = 0;
 function listRows() {
@@ -91,11 +64,6 @@ document.addEventListener('mouseover', (event) => {
 window.addEventListener('load', () => setListActive(0));
 </script>"#;
 
-// The shared "card" look every generated page uses for its body — same
-// margin/padding/colors/font everywhere except omnibox.rs (bigger
-// padding, no rows to align with). `extra_attrs` covers the two pages
-// that need a body-level event handler (switcher's `onload`, history's
-// `onload`) without a third parameter for everyone else.
 pub(crate) fn body_open(theme: &Theme, extra_attrs: &str) -> String {
     format!(
         "<body {extra_attrs} style=\"margin:0;padding:32px;background:{bg};color:{fg};\
@@ -105,9 +73,7 @@ pub(crate) fn body_open(theme: &Theme, extra_attrs: &str) -> String {
     )
 }
 
-/// A muted placeholder line for a list page with nothing in it yet
-/// (`text` may contain markup, e.g. `&mdash;` — it's always static,
-/// app-authored copy, never user data, so this doesn't escape it).
+/// Empty-list placeholder (`text` is app-authored markup, not escaped).
 pub(crate) fn empty_state(theme: &Theme, text: &str) -> String {
     format!(
         "<p style=\"color:{fg};opacity:0.7\">{text}</p>",
@@ -115,12 +81,7 @@ pub(crate) fn empty_state(theme: &Theme, text: &str) -> String {
     )
 }
 
-/// The favicon-with-fallback-letter tile used by every list row that
-/// represents a site (bookmarks/downloads/history/switcher): a colored
-/// initial-letter square underneath, the real `favicon.ico` painted over
-/// it once (if) it loads. `letter` is pre-uppercased by the caller
-/// (`char::to_uppercase()` returns an iterator, not a `char`, so there's
-/// nothing simpler to accept here than an already-formatted string).
+/// Favicon tile with letter fallback (`letter` already uppercased).
 pub(crate) fn favicon_tile(host: &str, letter: &str, theme: &Theme) -> String {
     format!(
         "<span style=\"position:relative;width:20px;height:20px;flex-shrink:0\">\
@@ -135,21 +96,12 @@ pub(crate) fn favicon_tile(host: &str, letter: &str, theme: &Theme) -> String {
     )
 }
 
-/// Trash-can SVG path shared by every list page's "remove this entry"
-/// button.
 pub(crate) const TRASH_SVG_PATH: &str =
     "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z";
 
-/// Checkmark SVG path shared by bookmarks/workspaces' inline-rename
-/// "save" button.
 pub(crate) const CHECKMARK_SVG_PATH: &str = "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z";
 
-/// The small square icon button every list row uses for a navigating
-/// per-row action (delete, load, ...) — an `<a href>` through the same
-/// custom-scheme interception every other list-page link uses.
-/// `extra_attrs` covers the one thing that varies: a row-click-to-open
-/// handler needs `onclick="event.stopPropagation()"` on its own
-/// delete link so that click doesn't also open the row.
+/// Per-row icon `<a href>` (`extra_attrs` e.g. stopPropagation on delete).
 pub(crate) fn icon_link_button(
     href: &str,
     title: &str,
@@ -169,8 +121,7 @@ pub(crate) fn icon_link_button(
     )
 }
 
-/// Same shape as `icon_link_button`, for the one case that's a form
-/// submit instead of a navigation (bookmarks/workspaces' rename-save).
+/// Like `icon_link_button`, but a form submit (rename-save).
 pub(crate) fn icon_submit_button(title: &str, svg_path: &str, theme: &Theme) -> String {
     format!(
         "<button type=\"submit\" title=\"{title}\" class=\"bm-icon-btn\" style=\"flex-shrink:0;\
@@ -184,10 +135,7 @@ pub(crate) fn icon_submit_button(title: &str, svg_path: &str, theme: &Theme) -> 
     )
 }
 
-/// Shared `.bm-icon-btn:hover` rule every list page's `<style>` block
-/// includes — a `<style>...</style>` block, not just the rule body, so
-/// callers can splice it straight into their own style block via
-/// string concatenation without needing to know its innards.
+/// `.bm-icon-btn:hover` rule body for splicing into page `<style>`.
 pub(crate) fn icon_button_hover_css(theme: &Theme) -> String {
     format!(
         ".bm-icon-btn:hover{{background:{key_bg}!important;color:{key_fg}!important;\

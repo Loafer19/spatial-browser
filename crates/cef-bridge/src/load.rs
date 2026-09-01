@@ -1,24 +1,12 @@
-// Visit tracking + userscript inject hooks: every top-level load start
-// and load end gets queued for the compositor (document-start /
-// document-end userscripts, history recording).
+// Queue top-level load start/end for history + userscript inject timing.
 
 use cef::{self, rc::Rc, *};
 use std::cell::RefCell;
 
 thread_local! {
-    // Appended by OsrLoadHandler::on_load_end for every completed
-    // main-frame navigation — drained once per frame by the compositor
-    // to record real browsing history (persistence::history, distinct
-    // from typed_history.rs — what was actually typed into the
-    // omnibox) and to inject document-end / document-idle userscripts.
-    // A queue, not a single slot: more than one page can finish loading
-    // within the same frame.
     pub static PENDING_VISITS: RefCell<Vec<(i32, String)>> = const { RefCell::new(Vec::new()) };
-
-    // Same shape for on_load_start — document-start userscripts need to
-    // run before the page's own scripts; on_load_end is too late for that.
+    // document-start must run before page scripts; on_load_end is too late.
     pub static PENDING_LOAD_START: RefCell<Vec<(i32, String)>> = const { RefCell::new(Vec::new()) };
-
     // (browser_id, is_loading) — fallback when progress events are sparse.
     pub static PENDING_LOAD_STATE: RefCell<Vec<(i32, bool)>> = const { RefCell::new(Vec::new()) };
 }

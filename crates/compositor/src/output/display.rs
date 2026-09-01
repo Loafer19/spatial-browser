@@ -1,7 +1,4 @@
-// The wgpu side of the compositor: window surface, render pipeline, and
-// per-page textured quads. Each page owns its own `PageQuad` (small
-// vertex buffer) and CEF texture bind group; `GpuState::render` draws
-// whichever ones it's handed, back-to-front.
+// wgpu surface/pipeline and per-page quads; render draws back-to-front.
 
 use super::theme::Theme;
 use serde::{Deserialize, Serialize};
@@ -29,10 +26,7 @@ impl Vertex {
     }
 }
 
-/// A page's position and size, origin top-left, y-down — the same
-/// convention as window/mouse coordinates. Lives in world space (see
-/// viewport.rs for the pan/zoom mapping to screen space); `GpuState::render`
-/// is handed already screen-space rects.
+/// World-space page rect (top-left, y-down). Render gets screen-space rects.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Rect {
     pub x: f32,
@@ -61,10 +55,7 @@ impl Rect {
     }
 }
 
-// Layout must match `PageStyle` in shader.wgsl field-for-field: every
-// field is a plain [f32; 4] specifically so there's no ambiguity around
-// WGSL's std140-ish uniform alignment rules (vec2/f32 mixed in would
-// need manual padding to hit the same layout naga expects).
+// Must match shader.wgsl PageStyle; all [f32;4] avoids WGSL alignment pitfalls.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct PageStyleUniform {
@@ -81,12 +72,7 @@ struct PageStyleUniform {
     load: [f32; 4],
 }
 
-/// One page's on-GPU quad geometry and chrome style (rounded corners,
-/// focus ring): its own small vertex buffer and style uniform buffer,
-/// rather than one shared buffer rewritten per page per frame. wgpu's
-/// queue writes aren't ordered against this frame's draw calls that way —
-/// with one shared buffer, the last page's `write_buffer` would win for
-/// every draw call in the same submission, not just its own.
+/// Per-page vertex + style buffers (shared buffer would clobber earlier draws).
 pub struct PageQuad {
     vertex_buffer: wgpu::Buffer,
     style_buffer: wgpu::Buffer,
@@ -203,9 +189,7 @@ impl PageQuad {
     }
 }
 
-/// One page's draw call for a single frame: where it goes (`rect`) and
-/// what to paint into it (`texture` — `None` while CEF hasn't produced a
-/// first frame yet, in which case the page is skipped for this draw).
+/// One page draw: screen `rect` + optional CEF `texture` (None = skip).
 pub struct PageDraw<'a> {
     pub rect: Rect,
     pub quad: &'a PageQuad,
@@ -720,13 +704,8 @@ pub enum FrameOutcome {
     Fatal,
 }
 
-/// wgpu power preference for CEF shared-texture compatibility.
-///
-/// Default is `LowPower` so hybrid laptops pick the iGPU Chromium's GPU
-/// process also tends to use. `SPATIAL_BROWSER_GPU=high` / `discrete`
-/// forces `HighPerformance` (usually the dGPU) — pair with
-/// `SPATIAL_BROWSER_OSR=cpu` unless both processes are forced onto that
-/// same device some other way.
+/// Default LowPower (iGPU, matches Chromium). `SPATIAL_BROWSER_GPU=high` → dGPU;
+/// pair with `SPATIAL_BROWSER_OSR=cpu` unless both stay on the same device.
 fn gpu_power_preference() -> wgpu::PowerPreference {
     match std::env::var("SPATIAL_BROWSER_GPU").ok().as_deref() {
         Some("high" | "discrete" | "dgpu") => wgpu::PowerPreference::HighPerformance,
@@ -739,14 +718,8 @@ fn gpu_power_preference() -> wgpu::PowerPreference {
     }
 }
 
-/// Whether new CEF browsers should request GPU shared-texture OSR.
-///
-/// On when the `accelerated_osr` feature is compiled in, unless
-/// `SPATIAL_BROWSER_OSR=cpu` forces the CPU `on_paint` path. Also auto-
-/// disables when the user asked for the discrete GPU via
-/// `SPATIAL_BROWSER_GPU=high` without also setting `SPATIAL_BROWSER_OSR=gpu`,
-/// because cross-device DMA-BUF import is what made shared texture unusable
-/// on hybrid laptops in the first place.
+/// Shared-texture OSR when `accelerated_osr` is on, unless OSR=cpu or
+/// GPU=high without OSR=gpu (cross-device DMA-BUF breaks import).
 pub fn osr_shared_texture_enabled() -> bool {
     #[cfg(not(feature = "accelerated_osr"))]
     {

@@ -1,29 +1,15 @@
-// The Ctrl+T new-page page: a single input for a URL or search query,
-// `@prefix` shortcuts for specific search engines, and recent-input
-// chips. See cef-bridge's OsrRequestHandler / app.rs's PENDING_OMNIBOX
-// for how this page's submission gets handled.
+// Ctrl+T omnibox (`omnibox://go` → PENDING_OMNIBOX).
 
 use super::{html_escape, js_string_literal};
 use crate::output::Theme;
 
-/// A `<script>` reassigning `SCRIPT`'s `DEFAULT_ENGINE` — kept as a tiny
-/// separate tag run right after `SCRIPT` (script tags execute in
-/// document order) rather than templating it into `SCRIPT` itself,
-/// since `SCRIPT` is a plain constant specifically so its `{`/`}` don't
-/// need doubling for `format!` (see `SCRIPT`'s own doc comment).
-/// `js_string_literal` isn't used here — it HTML-attribute-escapes on
-/// top of the JS escaping (meant for embedding inside e.g.
-/// `onclick="..."`), which would be wrong inside a `<script>` text
-/// node; a plain JS single-quote escape is all this needs.
+/// Separate script after SCRIPT to set DEFAULT_ENGINE (keeps SCRIPT a plain const).
 fn default_engine_override(default_engine: &str) -> String {
     let js_escaped = default_engine.replace('\\', "\\\\").replace('\'', "\\'");
     format!("<script>DEFAULT_ENGINE = '{js_escaped}';</script>")
 }
 
-/// Not run through `format!` (it's a plain constant, substituted whole
-/// into `page_url`'s template as one value) specifically so its own
-/// `{`/`}` — everywhere in ordinary JS — don't need doubling up as
-/// `{{`/`}}` to survive Rust's format-string escaping.
+/// Plain const (not format!) so JS braces need no `{{` escaping.
 const SCRIPT: &str = r#"<script>
 const PREFIXES = {
   '@g': 'https://www.google.com/search?q=',
@@ -32,9 +18,7 @@ const PREFIXES = {
   '@bing': 'https://www.bing.com/search?q=',
   '@wiki': 'https://en.wikipedia.org/w/index.php?search='
 };
-// `var`, not `const`: page_url() below reassigns this to whatever the
-// settings page's default-search-engine choice currently is, via a
-// tiny separate <script> tag placed right after this one.
+// `var`: a following script reassigns DEFAULT_ENGINE from Settings.
 var DEFAULT_ENGINE = 'https://www.google.com/search?q=';
 function resolve(raw) {
   const trimmed = raw.trim();
@@ -54,16 +38,7 @@ function go(raw) {
 }
 </script>"#;
 
-/// Builds the omnibox (new-page) page's `data:` URL: a single input for
-/// a URL or search query, `@prefix` shortcuts for specific search
-/// engines (`@g`, `@y`, `@ddg`, `@bing`, `@wiki` — one short form each,
-/// no aliases — bare text with no prefix falls back to
-/// `default_search_engine`, the settings page's choice), and
-/// recent-input chips below it. All resolution happens in `SCRIPT`;
-/// submitting navigates to `omnibox://go?q=...&url=...`, which
-/// cef-bridge's `on_before_browse` intercepts and cancels, handing the
-/// raw text and resolved destination back to the compositor (app.rs's
-/// PENDING_OMNIBOX) to log and actually navigate to.
+/// Omnibox `data:` URL (URL/search, @prefix engines, recent chips).
 pub fn page_url(theme: &Theme, typed_history: &[String], default_search_engine: &str) -> String {
     let mut chips = String::new();
     for entry in typed_history.iter().take(10) {

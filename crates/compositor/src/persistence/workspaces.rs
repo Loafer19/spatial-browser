@@ -1,15 +1,5 @@
-// Live workspace slots: always one active, lazy-loaded, autosaved.
-// Default three virgin slots (1–3). Ctrl+N / HUD chips switch:
-// save current → load target (empty canvas if never visited). `+` adds
-// a fresh empty slot and switches to it.
-//
-// Within one process run, pages of a visited slot stay alive in
-// `WorkspaceRuntime` when you leave it — switching back restores the
-// same CEF browsers (no reload). Disk still stores URL/rect snapshots
-// for the next launch.
-//
-// File: ~/.config/spatial-browser/workspaces.json (version 2).
-// Legacy version-1 `{entries:[…]}` snapshots migrate into visited slots.
+// Live workspace slots (workspaces.json v2). Switch parks browsers in RAM;
+// disk holds URL/rect for next launch. Legacy v1 snapshots migrate in.
 
 use crate::browser::Page;
 use crate::output::{Rect, Theme, THEMES};

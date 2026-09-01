@@ -1,6 +1,4 @@
-// Ctrl+, settings: tabbed General / Blocking / Appearance.
-// Tab clicks use settings://tab/… so the active tab survives refresh
-// after toggles. See PENDING_SETTINGS_ACTION.
+// Ctrl+, settings; settings://tab/… keeps active tab across refresh.
 
 use super::{html_escape, CHECKMARK_SVG_PATH, LIST_NAV_SCRIPT, TRASH_SVG_PATH};
 use crate::output::{Theme, THEMES};

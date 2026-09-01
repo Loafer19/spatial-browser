@@ -1,10 +1,4 @@
-// Switchable UI chrome themes: canvas background, page-corner rounding,
-// focus ring, and the matching palette for the F1 help page
-// (hotkeys::open_help) — kept as one struct so nothing (dimensions
-// included, not just colors) can drift out of sync between what's
-// rendered and what the help page describes. Cycled at runtime via
-// Ctrl+Shift+Space (hotkeys::cycle_theme); page *content* is whatever
-// CEF rendered and has no theme applied to it.
+// UI chrome themes (canvas, corners, focus ring, help palette). Ctrl+Shift+Space cycles.
 
 #[derive(Clone, Copy)]
 pub struct Theme {
@@ -56,9 +50,7 @@ impl Theme {
     }
 }
 
-// This machine's actual active Omarchy theme (Tokyo Night), colors read
-// from /usr/share/omarchy/themes/tokyo-night/colors.toml. Sharp corners,
-// not rounded — Omarchy/Quattro's own chrome doesn't round them either.
+// Tokyo Night (Omarchy colors.toml); sharp corners like Omarchy chrome.
 pub const TOKYO_NIGHT: Theme = Theme {
     name: "Tokyo Night",
     canvas_background: wgpu::Color {
@@ -86,9 +78,7 @@ pub const TOKYO_NIGHT: Theme = Theme {
     help_danger: "rgb(247,118,142)",
 };
 
-// Terminal look: near-black background, sharp corners (a character grid
-// doesn't round), a thin border (terminal box-drawing rules are 1px),
-// and a bright orange accent instead of Tokyo Night's blue.
+// Terminal look: near-black, sharp corners, thin border, orange accent.
 pub const ANSI_TERMINAL: Theme = Theme {
     name: "ANSI Terminal",
     canvas_background: wgpu::Color {

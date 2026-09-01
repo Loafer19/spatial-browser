@@ -1,13 +1,5 @@
-// Routes winit window events to the right page: hit-tests the cursor
-// against the canvas (topmost page first), forwards mouse/keyboard input
-// to that page's CEF browser in its own local coordinates, and drives
-// per-page dragging (Alt+Left-drag moves a page — same convention as
-// borderless-window drag in most Linux window managers, including
-// Hyprland's own `bindm ... movewindow`) and resizing (dragging a page's
-// bottom-right corner). Page rects live in world space; see viewport.rs
-// for the pan/zoom mapping to screen space that hit-testing and drawing
-// convert through. Canvas state itself (pages/viewport/theme) lives in
-// session.rs, persisted via persistence/mod.rs.
+// Route winit events: hit-test → CEF input; Alt+Left-drag moves pages;
+// bottom-right corner resizes. Page rects are world-space (see viewport.rs).
 
 use crate::browser::{self, Page};
 use crate::hotkeys;
@@ -61,100 +53,59 @@ use winit::{
     window::{CursorIcon, WindowAttributes, WindowId},
 };
 
-// Debounced: a save happens at most this often, however many mutations
-// land in between (a drag/resize/zoom-drag calls a Session method on
-// every mouse-move frame).
+// Debounce session saves (drags call Session every mouse-move frame).
 const SAVE_DEBOUNCE: Duration = Duration::from_secs(1);
 
 pub struct App {
     state: Option<GpuState>,
     session: Session,
-    // Loaded once at startup from bookmarks.json, saved immediately on
-    // every change (Ctrl+D) — unlike session state, bookmark edits are
-    // rare and deliberate, so there's no need for the debounce below.
+    // Saved immediately on edit (no session debounce).
     bookmarks: Vec<Bookmark>,
-    // Loaded once at startup from typed_history.json, saved immediately
-    // on every omnibox submission (see PENDING_OMNIBOX handling below).
     typed_history: Vec<String>,
-    // Loaded once at startup from downloads.json, saved immediately on
-    // every completed download (see PENDING_DOWNLOADS handling below).
     downloads: Vec<DownloadRecord>,
-    // Loaded once at startup from history.json, saved immediately on
-    // every completed page visit (see PENDING_VISITS handling below).
     history: Vec<HistoryEntry>,
-    // Live workspace slots (workspaces.json v2). Active slot mirrors
-    // the canvas; captured on switch and on the session save debounce.
     workspaces: WorkspaceStore,
-    // In-process parked browsers for non-active slots (no reload on switch).
+    // Parked browsers for non-active slots (no reload on switch).
     workspace_runtime: WorkspaceRuntime,
-    // Top chip strip — created with the GPU device in `resumed`.
     hud: Option<Hud>,
     minimap: Option<Minimap>,
-    /// Dragging the minimap viewfinder: (cursor at press, viewport offset at press).
+    /// Minimap viewfinder drag: (cursor at press, viewport offset at press).
     minimap_drag: Option<((f32, f32), (f32, f32))>,
-    // Loaded once at startup from settings.json, saved immediately on
-    // every change (see PENDING_SETTINGS_ACTION handling below).
-    // cef-bridge's own live ad-block state (blocklist::ENABLED/
-    // CUSTOM_HOSTS) is kept in sync with this at startup and on every
-    // change — see `sync_blocklist_settings` below — since that's what
-    // `on_before_resource_load` actually reads from, not this struct.
+    // Synced into cef-bridge blocklist/filter statics on change.
     settings: AppSettings,
-    // Loaded at startup from ~/.config/spatial-browser/userscripts/
-    // and userstyles/; Ctrl+Shift+U / Reload re-reads both from disk.
     userscripts: Vec<userscripts::UserScript>,
     userstyles: Vec<userstyles::UserStyle>,
-    /// Unlocked password vault for this process, if any.
     vault: Option<VaultSession>,
-    /// Last generated password shown on the passwords list page.
     generated_password: Option<String>,
-    /// Save-offer captured on form submit; re-shown after the next
-    /// top-level load for that origin (login navigations wipe in-page UI).
+    /// Save-offer; re-shown after next load (login navigations wipe DOM UI).
     pending_save_offer: Option<PendingSaveOffer>,
     context_menu: Option<ContextMenuState>,
-    /// After right-click on a page, wait for context://hit before opening menu.
+    /// Wait for context://hit after right-click before opening menu.
     pending_context_hit: Option<(i32, (f32, f32))>,
     mouse: MouseInput,
     touch: TouchInput,
     keyboard: KeyboardInput,
-    // Raw window-space physical cursor position — updated on every
-    // CursorMoved, consulted by MouseInput/MouseWheel events (which don't
-    // carry a position of their own) to re-hit-test and to compute
-    // whichever page's local coordinates.
+    // Physical cursor; MouseInput/Wheel lack position of their own.
     cursor_window: (f32, f32),
     modifiers: ModifiersState,
-    // Current window size (physical pixels) — used for cascade/auto-layout
-    // and minimap, not for mutating saved page world-rects on resize.
+    // Physical window size for layout/minimap (not for mutating world rects).
     canvas_size: (f32, f32),
-    // Offset from the dragged (always-topmost, since dragging brings a
-    // page to front) page's rect origin (world space) to the cursor, set
-    // at drag start.
+    // World-space cursor offset from page origin at drag start.
     dragging: Option<(f32, f32)>,
-    // (screen-space cursor position, viewport offset) at the start of a
-    // middle-button canvas pan.
+    // Middle-button pan: (cursor, viewport offset) at press.
     panning: Option<((f32, f32), (f32, f32))>,
-    // Set while the topmost page's bottom-right corner (see
-    // resize_hit_test) is being dragged to resize it. Its top-left stays
-    // fixed; only the corner under the cursor moves.
+    // Bottom-right resize; top-left stays fixed.
     resizing: bool,
-    // True whenever the cursor is over a resize corner (or actively
-    // resizing) — overrides whatever cursor shape CEF asked for so the
-    // resize affordance is visible before the user commits to a drag.
+    // Override CEF cursor while over/dragging the resize corner.
     resize_hover: bool,
-    // Most recent icon CEF asked for via on_cursor_change (cef_bridge::
-    // CURSOR) — CEF only fires that callback on an actual change, so this
-    // has to be cached and re-applied every frame rather than only when
-    // a fresh event arrives; otherwise, once resize_hover's override
-    // takes the cursor, there's no later CEF event to hand it back.
+    // Cached CEF cursor — on_cursor_change only fires on change; re-apply
+    // each frame so resize_hover override can be cleared.
     cef_cursor: CursorIcon,
-    // Last time `persistence::save` ran — gates the debounce above.
     last_save: Instant,
 }
 
 impl App {
-    /// Read by main.rs's own event-loop pacing (the other half of the
-    /// frame-rate setting, alongside browser::set_target_frame_rate) —
-    /// live, not cached at startup, so turning it up/down in Settings
-    /// takes effect on the very next loop iteration.
+    /// Live Settings fps for main.rs event-loop pacing.
     pub fn target_fps(&self) -> u32 {
         self.settings.target_fps
     }
@@ -202,15 +153,11 @@ impl Default for App {
     }
 }
 
-/// Screen-space size (regardless of zoom, like a scrollbar grip) of the
-/// invisible grab region at a page's bottom-right corner used to resize
-/// it — no modifier needed, distinguished from an ordinary click purely
-/// by proximity to the corner.
+/// Screen-space resize grab size at the bottom-right corner.
 const RESIZE_HANDLE: f32 = 18.0;
 const MIN_PAGE_SIZE: f32 = 160.0;
 
-/// Topmost page (last in z-order) whose bottom-right corner (screen
-/// space) is within `RESIZE_HANDLE` of the cursor, if any.
+/// Topmost page whose bottom-right corner is within `RESIZE_HANDLE`.
 fn resize_hit_test(
     pages: &[Page],
     viewport: &Viewport,
@@ -257,35 +204,23 @@ impl ApplicationHandler for App {
             workspaces::apply_slot_to_session(&mut self.session, &state, &slot);
         } else {
             self.session = persistence::load(&state, &window).unwrap_or_else(|| {
+                // Single starter page (not the old side-by-side Google + demo).
                 let size = window.inner_size();
-                let margin = 24.0;
-                let gap = 24.0;
-                let page_w = (size.width as f32 - margin * 2.0 - gap) / 2.0;
-                let page_h = size.height as f32 - margin * 2.0;
-                let rects = [
-                    Rect {
-                        x: margin,
-                        y: margin,
-                        w: page_w,
-                        h: page_h,
-                    },
-                    Rect {
-                        x: margin + page_w + gap,
-                        y: margin,
-                        w: page_w,
-                        h: page_h,
-                    },
-                ];
-                let urls = [
+                let margin = 48.0;
+                let rect = Rect {
+                    x: margin,
+                    y: margin,
+                    w: (size.width as f32 - margin * 2.0).max(320.0),
+                    h: (size.height as f32 - margin * 2.0).max(240.0),
+                };
+                let page = browser::spawn(
+                    &state,
+                    &window,
                     "https://www.google.com",
-                    "data:text/html;charset=utf-8,<body style=\"background:rgb(42,106,74);color:rgb(255,255,255);font-family:sans-serif;font-size:48px;display:flex;align-items:center;justify-content:center;height:100vh;margin:0\">Page 2</body>",
-                ];
-                let pages = rects
-                    .into_iter()
-                    .zip(urls)
-                    .map(|(rect, url)| browser::spawn(&state, &window, url, rect, false))
-                    .collect();
-                Session::new(pages, Viewport::default(), THEMES[0])
+                    rect,
+                    false,
+                );
+                Session::new(vec![page], Viewport::default(), THEMES[0])
             });
             self.workspaces
                 .capture_active_from_session(&self.session);

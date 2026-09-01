@@ -1,20 +1,5 @@
-// Keyboard input forwarding into CEF: winit key events -> CEF host
-// send_key_event.
-//
-// CEF (like every Chromium embedding, on every platform) identifies keys
-// by a Windows VKEY code in `KeyEvent::windows_key_code` — that's not a
-// Linux-specific wart, it's how the cross-platform key-event plumbing
-// inside Chromium itself works. winit's `PhysicalKey` is layout-independent
-// (it names the physical key position, not what it types), so mapping it
-// to VKEYs is mostly exact for letters/digits/control keys and only an
-// approximation for punctuation (VKEY_OEM_* codes assume a US/QWERTY
-// physical layout — good enough for now, wrong on e.g. AZERTY).
-//
-// Each physical key press/release sends one RAWKEYDOWN/KEYUP event (so
-// the page sees keydown/keyup, arrow keys, Enter-as-a-key work, etc.);
-// when winit also reports produced text (`KeyEvent::text`, layout- and
-// modifier-aware), that additionally sends one CHAR event per UTF-16 code
-// unit so the page actually receives typed characters.
+// winit keys → CEF send_key_event. Chromium wants Windows VKEYs;
+// punctuation OEM_* assumes US/QWERTY. RAWKEYDOWN/KEYUP + CHAR from KeyEvent::text.
 
 use cef::{BrowserHost, ImplBrowserHost, KeyEvent as CefKeyEvent, KeyEventType};
 use winit::event::ElementState;
@@ -89,10 +74,7 @@ impl KeyboardInput {
     }
 }
 
-/// winit `PhysicalKey` -> Windows VKEY code. Covers letters, digits,
-/// editing/navigation keys, function keys, modifiers, and standard-US-
-/// layout punctuation. Anything not covered (e.g. media keys, IME
-/// composition) is dropped rather than guessed at.
+/// PhysicalKey → Windows VKEY; uncovered keys (media/IME) dropped.
 fn physical_key_to_vkey(key: PhysicalKey) -> Option<i32> {
     let PhysicalKey::Code(code) = key else {
         return None;

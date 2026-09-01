@@ -1,21 +1,5 @@
-// Everything that reads/writes a JSON file under
-// ~/.config/spatial-browser/: this module is the canvas session itself
-// (save/load below); bookmarks.rs, history.rs, typed_history.rs,
-// downloads.rs, and workspaces.rs are their own separate files/concerns
-// (bookmarks change rarely and deliberately, history.rs is a log of
-// actual page visits, typed_history.rs is a flat list of typed omnibox
-// input — a deliberately different name so the two don't get confused —
-// downloads is a log of completed CEF downloads, workspaces is live slots
-// named canvas snapshots distinct from the live session below,
-// settings.rs is the one user-editable preferences object) grouped
-// here because they share the same shape of problem, not because they
-// share data.
-//
-// Canvas session: active theme, viewport pan/zoom, and each page's
-// URL/rect (z-order = list order). One JSON file — the whole point of a
-// spatial canvas is one session, not per-window profiles (see
-// single_instance.rs) — written debounced on change and once more on
-// clean exit (see app.rs).
+// JSON under ~/.config/spatial-browser/: session (theme/viewport/page rects)
+// plus sibling modules for bookmarks, history, downloads, workspaces, settings.
 
 pub mod bookmarks;
 pub mod bookmarks_chrome;
@@ -54,13 +38,11 @@ fn path() -> PathBuf {
 }
 
 pub fn save(session: &Session) {
+    // Persists: theme, pre-zoom viewport, non-ephemeral page URL+layout_rect.
+    // Not persisted: ephemeral overlays, reader_mode, load_*/progress, zoomed live rect.
     let data = SessionFile {
         theme: session.theme().name.to_string(),
-        // Use pre-Ctrl+Space viewport/rects so a zoomed-to-canvas page
-        // doesn't permanently overwrite the real layout on disk.
         viewport: session.layout_viewport(),
-        // Skips ephemeral pages (F1 help, bookmarks list): they're
-        // regenerated fresh from current data whenever reopened.
         pages: session
             .pages()
             .iter()
@@ -89,9 +71,7 @@ pub fn save(session: &Session) {
     }
 }
 
-/// Loads the saved session and spawns its pages, or `None` if there's no
-/// save file yet or it fails to parse — the caller falls back to a
-/// default layout either way.
+/// Load session and spawn pages, or `None` → caller uses default layout.
 pub fn load(gpu: &GpuState, window: &Window) -> Option<Session> {
     let bytes = std::fs::read(path()).ok()?;
     let data: SessionFile = serde_json::from_slice(&bytes).ok()?;

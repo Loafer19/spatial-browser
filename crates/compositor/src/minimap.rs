@@ -1,6 +1,4 @@
-// Screen-space overview when the canvas is zoomed out. Small corner panel
-// with page rects + a viewfinder; drag the viewfinder (or click the map)
-// to pan. Reuses the HUD shader / solid-quad style.
+// Zoomed-out overview: page rects + viewfinder; drag/click to pan.
 
 use crate::browser::Page;
 use crate::output::{Rect, Theme};

@@ -1,10 +1,4 @@
-// The Ctrl+J downloads-list page: most-recent-first, each row a
-// favicon+filename+source-host, click to open the file with the
-// desktop's default handler, an "x" to forget the entry (the file
-// itself stays on disk — this only edits the list). See cef-bridge's
-// OsrRequestHandler / app.rs's PENDING_DOWNLOAD_ACTION for how a row
-// click here gets handled, and cef-bridge's OsrDownloadHandler for how
-// a download lands under ~/Downloads in the first place.
+// Ctrl+J downloads list (`download://…` → PENDING_DOWNLOAD_ACTION).
 
 use super::{html_escape, LIST_NAV_SCRIPT, TRASH_SVG_PATH};
 use crate::output::Theme;

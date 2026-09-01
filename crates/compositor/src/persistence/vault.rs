@@ -1,6 +1,4 @@
-// Encrypted local password vault (`~/.config/spatial-browser/vault.enc`).
-// Argon2id → AES-256-GCM. Unlocked plaintext lives in memory only while
-// the process holds a VaultSession (until exit — see passwords.rs).
+// Encrypted vault (`vault.enc`): Argon2id → AES-256-GCM; plaintext only while unlocked.
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};

@@ -1,6 +1,4 @@
-// Ctrl+Shift+P passwords UI: unlock/create vault, tabbed list/import/
-// generator/never-save. Actions via `password://...`.
-// Chrome (radius, colors) comes from Theme — same as canvas tiles.
+// Ctrl+Shift+P vault UI (`password://…`); chrome from Theme.
 
 use super::{html_escape, LIST_NAV_SCRIPT};
 use crate::output::Theme;

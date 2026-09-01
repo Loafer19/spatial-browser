@@ -1,35 +1,7 @@
-// A Tampermonkey/Greasemonkey-style userscript runner — not real Chrome
-// extensions (CEF's Alloy/windowless bootstrap exposes no extension-
-// loading API at all, confirmed empirically: zero of ~5900 bound
-// functions touch it), just the one slice of what extensions are
-// commonly used for that's already exactly what this codebase's own
-// clipboard_bridge.rs/blocklist.rs do by hand: inject JS into pages
-// whose URL matches a pattern.
-//
-// Each `.js` file under `~/.config/spatial-browser/userscripts/` is one
-// script. Metadata lines anywhere in the file (Tampermonkey-style):
-//
-//   // @name   My script
-//   // @match  *://*.example.com/*
-//   // @exclude *://*.example.com/admin/*
-//   // @run-at document-end
-//
-// `@match` / `@exclude` are plain wildcard globs against the full URL
-// (`*` = anything), plus the special tokens `spatial-ui` / `spatial:*`
-// for built-in ephemeral chrome pages (bookmarks, settings, …) — same
-// as userstyles. `@run-at` is `document-start`, `document-end`
-// (default), or `document-idle`. A script with no `@match` is skipped.
-// Disabled filenames are tracked in `userscripts_state.json` next to
-// the scripts dir — toggling in the Ctrl+Shift+U list flips that, not
-// the file on disk.
-//
-// A small GM_* prelude is prepended on inject (`GM_addStyle`,
-// `GM_getValue`, `GM_setValue` backed by localStorage) so common
-// GreasyFork scripts work without a full Violentmonkey API.
-//
-// `reload()` re-reads the directory (and state file) without restarting
-// the browser — the userscripts list page's Reload button and the
-// Ctrl+Shift+U open-or-reload path both call it.
+// Tampermonkey-style userscripts from ~/.config/spatial-browser/userscripts/
+// (@match/@exclude/@run-at; spatial-ui for chrome pages). Not Chrome extensions
+// (Alloy/OSR has no extension API). Disabled basenames in userscripts_state.json.
+// GM_* prelude (localStorage-backed) prepended on inject. reload() re-reads disk.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -92,8 +64,7 @@ fn save_state(state: &StateFile) {
     }
 }
 
-/// Reads every `.js` file in the userscripts directory. Missing
-/// directory or unreadable/matchless files are skipped, not errors.
+/// Load `.js` scripts; missing/unreadable/matchless files are skipped.
 pub fn load() -> Vec<UserScript> {
     let state = load_state();
     let Ok(entries) = std::fs::read_dir(scripts_dir()) else {
@@ -196,9 +167,7 @@ fn is_spatial_ui_token(pattern: &str) -> bool {
     )
 }
 
-/// Wildcard glob (`*` = anything) against the full URL, with the
-/// `*.example.com` apex-domain special case (see header), plus
-/// `spatial-ui` / `spatial:*` for ephemeral built-in pages.
+/// Glob match; `spatial-ui`/`spatial:*` for ephemeral chrome; `*.` apex case.
 fn matches_pattern(pattern: &str, url: &str, ephemeral: bool) -> bool {
     if is_spatial_ui_token(pattern) {
         return ephemeral;
@@ -276,9 +245,7 @@ const GM_PRELUDE: &str = r#"(function(){
   };
 })();"#;
 
-/// Code to inject for `url` at the given run-at timing, each entry
-/// already wrapped with the GM prelude. `ephemeral` enables `@match
-/// spatial-ui` (built-in chrome pages).
+/// Matching scripts for `url` at `run_at`, each with GM prelude.
 pub fn matching_code(
     url: &str,
     ephemeral: bool,

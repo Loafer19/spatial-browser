@@ -1,6 +1,4 @@
-// Screen-space workspace chip strip (top). Hidden by default; revealed
-// when the cursor enters a thin top hit-band, auto-hides after leave.
-// Digits / '+' from font8x8; colors from Theme.
+// Top workspace chip strip: reveal on top hit-band, auto-hide on leave.
 
 use crate::output::Theme;
 use crate::persistence::workspaces::WorkspaceStore;

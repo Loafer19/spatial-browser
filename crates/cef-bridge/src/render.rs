@@ -1,10 +1,4 @@
-// The paint path: CEF hands over either a shared GPU texture handle
-// (`on_accelerated_paint`, feature-gated — see main README's Status for
-// why it's not the default yet) or a raw CPU pixel buffer
-// (`on_paint`), and either way this turns it into a wgpu texture/bind
-// group the compositor's render pipeline can draw. Each spawned page
-// gets its own `OsrRenderHandler`/texture slot (browser.rs), not a
-// shared one, so pages never race each other for the same buffer.
+// CEF paint → wgpu bind group. Per-page texture slot (GPU shared or CPU path).
 
 use cef::{self, rc::Rc, *};
 use std::cell::RefCell;
@@ -15,22 +9,12 @@ pub struct OsrRenderHandler {
     size: std::rc::Rc<RefCell<winit::dpi::LogicalSize<f32>>>,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    // Bind group layout owned by the compositor's render pipeline. wgpu
-    // matches bind groups to a pipeline by BindGroupLayout identity, not
-    // structure, so the bind group built on each paint must be built
-    // against this exact layout, not a freshly created (if structurally
-    // identical) one.
+    // Must be the compositor pipeline's layout identity, not a lookalike.
     texture_bind_group_layout: wgpu::BindGroupLayout,
-    // This page's own texture slot, read once per frame by the
-    // compositor's render loop for this page's quad specifically.
     texture: std::rc::Rc<RefCell<Option<wgpu::BindGroup>>>,
 }
 
-/// Handles returned alongside an `OsrRenderHandler` for the compositor to
-/// read/update from outside CEF's callbacks: `size` is written by the
-/// compositor (page resize) and read by `view_rect`; `texture` is written
-/// by `on_accelerated_paint`/`on_paint` and read by the compositor's
-/// render loop.
+/// Shared size/texture handles for the compositor outside CEF callbacks.
 pub struct OsrRenderHandles {
     pub size: std::rc::Rc<RefCell<winit::dpi::LogicalSize<f32>>>,
     pub texture: std::rc::Rc<RefCell<Option<wgpu::BindGroup>>>,
@@ -165,15 +149,7 @@ wrap_render_handler! {
             self.handler.texture.borrow_mut().replace(bind_group);
         }
 
-        // CPU/software OSR path: CEF hands over a raw BGRA pixel buffer
-        // instead of a GPU texture handle. Slower and costs a memcpy per
-        // frame, but doesn't depend on the Vulkan external-memory/DMA-BUF
-        // import that `on_accelerated_paint` needs — which requires a
-        // dedicated device memory allocation that can fail under GPU
-        // memory pressure (small VRAM budgets, many concurrent GPU
-        // clients) even though there's nothing wrong with the page or the
-        // pipeline. This is the fallback CEF calls when
-        // `shared_texture_enabled` is off in `WindowInfo`.
+        // CPU OSR fallback when shared_texture_enabled is off.
         fn on_paint(
             &self,
             _browser: Option<&mut Browser>,

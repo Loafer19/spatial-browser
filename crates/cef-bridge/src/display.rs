@@ -1,22 +1,14 @@
-// Cursor shape + load progress: CEF doesn't drive the OS cursor itself in
-// windowless/OSR mode, so the embedder applies cursor changes. Load
-// progress (0..1) comes from DisplayHandler, not LoadHandler.
+// OSR: embedder applies cursor (CEF has no native window). Load progress
+// comes from DisplayHandler, not LoadHandler.
 
 use cef::{self, rc::Rc, *};
 use std::cell::RefCell;
 use winit::window::CursorIcon;
 
 thread_local! {
-    // Set by `OsrDisplayHandler::on_cursor_change`, read once per frame by
-    // the compositor's redraw handler. CEF doesn't drive the OS cursor
-    // itself in windowless/OSR mode (it has no native window to do it
-    // through), so the embedder has to apply the shape the page wants.
-    // Global (not per-page) is fine: only the page currently under the
-    // mouse gets cursor-change events, so this naturally tracks whichever
-    // page's cursor should be showing.
+    // Global slot is fine: only the page under the mouse gets cursor events.
     pub static CURSOR: RefCell<Option<CursorIcon>> = const { RefCell::new(None) };
-
-    // (browser_id, progress 0..1) from on_loading_progress_change.
+    // (browser_id, progress 0..1)
     pub static PENDING_LOAD_PROGRESS: RefCell<Vec<(i32, f64)>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -62,10 +54,7 @@ impl DisplayHandlerBuilder {
     }
 }
 
-// CEF's CT_* cursor types (include/internal/cef_types.h) mapped to winit's
-// platform-independent CursorIcon. Some CEF distinctions winit doesn't
-// have a dedicated icon for (panning directions, DND variants) fall back
-// to their closest equivalent rather than a 1:1 match.
+// CEF CT_* → winit CursorIcon (closest match when winit has no 1:1 icon).
 fn cef_cursor_to_winit(type_: CursorType) -> CursorIcon {
     match type_ {
         CursorType::POINTER => CursorIcon::Default,

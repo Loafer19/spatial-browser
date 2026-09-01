@@ -1,7 +1,4 @@
-// Mouse input forwarding into CEF: winit mouse events -> CEF host
-// send_mouse_move_event / send_mouse_click_event / send_mouse_wheel_event.
-// CEF's coordinate space is logical/DIP, winit reports physical pixels, so
-// positions get converted using the window's scale factor.
+// winit mouse → CEF host events. Convert physical px → CEF DIP via scale_factor.
 
 use cef::{BrowserHost, ImplBrowserHost, MouseButtonType, MouseEvent};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};

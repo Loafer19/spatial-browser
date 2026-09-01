@@ -1,17 +1,6 @@
 #!/usr/bin/env bash
-# Runs a bundled binary, auto-relaunching it if it crashes or exits
-# non-zero. CEF has a known unresolved crash on SPA-style client-side
-# navigation (TabInterface::GetFromContents returning null inside
-# ReadAnythingSoftNavigationObserver — see cef-bridge's
-# on_before_command_line_processing) that takes down the whole browser
-# process, not just the page that triggered it — there's no per-tab
-# process isolation to fall back on here, since it's a crash in
-# browser-process code reacting to a renderer's IPC message, not a
-# renderer crash. Restarting loses at most the last unsaved second of
-# canvas state (session.json saves debounced ~1/sec), not the session.
-#
-# Not `set -e`: a non-zero/crash exit from the binary is the expected,
-# handled case below, not a script failure.
+# Relaunch on crash (known CEF SPA soft-nav crash; session save ~1s debounce).
+# No `set -e`: non-zero exit is the handled restart path.
 set -uo pipefail
 
 package="${1:?usage: scripts/run.sh <package>}"
@@ -24,10 +13,7 @@ if [ ! -x "$bin" ]; then
     exit 1
 fi
 
-# A crash under this many seconds after launch doesn't fit the known
-# crash above (that one only happens after real browsing) — it's more
-# likely an actually-broken binary (bad build, missing libs), so repeat
-# fast crashes give up instead of spinning forever.
+# Fast post-launch crashes look like a broken binary — give up after N.
 fast_crash_seconds=5
 max_consecutive_fast_crashes=5
 fast_crashes=0

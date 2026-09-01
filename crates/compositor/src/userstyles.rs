@@ -1,22 +1,5 @@
-// Stylus-style user CSS — same inject path as userscripts, but `.css`
-// files under `~/.config/spatial-browser/userstyles/`.
-//
-// Metadata (any of these forms, one tag per line):
-//
-//   /* @name   Dim bookmarks */
-//   /* @match  spatial-ui */
-//   /* @match  *://*.example.com/* */
-//   /* @exclude *://*.example.com/admin/* */
-//
-// Special match tokens for built-in `data:` UI pages (bookmarks, settings,
-// help, omnibox, …) — those URLs are huge `data:text/html…` blobs, so a
-// normal site glob never hits them:
-//
-//   spatial-ui   — any ephemeral chrome page
-//   spatial:*    — same
-//
-// A style with no `@match` is skipped. Disabled basenames live in
-// `userstyles_state.json`. Ctrl+Shift+U lists scripts and styles together.
+// Stylus-style CSS from ~/.config/spatial-browser/userstyles/ (@match/@exclude;
+// spatial-ui / spatial:* for data: chrome pages). Disabled in userstyles_state.json.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;

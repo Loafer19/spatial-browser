@@ -1,10 +1,5 @@
-// Owns the canvas state that gets persisted across restarts — pages
-// (z-order = vec order), viewport, theme — behind methods that each mark
-// the session dirty as part of doing the mutation. Persistence
-// (persistence/mod.rs) only has to poll `dirty()`/`clear_dirty()`;
-// nothing has to remember to flag a save at each call site, so any
-// future feature (page groups, etc.) that mutates state through
-// Session's own methods gets persisted for free.
+// Persisted canvas state (pages/z-order, viewport, theme). Mutations mark dirty;
+// persistence polls dirty()/clear_dirty().
 
 use crate::browser::Page;
 use crate::output::{Rect, Theme, THEMES};

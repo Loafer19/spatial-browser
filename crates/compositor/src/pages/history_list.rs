@@ -1,30 +1,12 @@
-// The Ctrl+H history-list page: most-recent-first, each row a
-// favicon+URL+visited-at timestamp, click to reopen as a new page, an
-// "x" to remove one entry, "Clear all" to wipe the list. A toggle at
-// the top regroups the same rows client-side (Recent / by day / by
-// site) — no round-trip to Rust, since all rows already carry the
-// grouping keys as data attributes and DOM nodes just get moved, not
-// rebuilt. Date/time formatting also happens client-side (JS's `Date`
-// getters, not the UTC getters) so the display is the *user's own*
-// local time/DST-correct — the alternative, computing that in Rust,
-// means either staying in UTC or pulling in a timezone-database crate
-// (`time`'s local-offset support carries a documented soundness caveat,
-// RUSTSEC-2020-0071) just to re-derive what the browser engine we're
-// already running gets right for free. See cef-bridge's
-// OsrRequestHandler / app.rs's PENDING_HISTORY_ACTION for how a click
-// here gets handled, and cef-bridge's OsrLoadHandler for how a visit
-// gets recorded in the first place.
+// Ctrl+H history list. Group/time formatting is client-side (local TZ via JS Date;
+// avoids Rust timezone crates). `history://…` → PENDING_HISTORY_ACTION.
 
 use super::{html_escape, LIST_NAV_SCRIPT, TRASH_SVG_PATH};
 use crate::output::Theme;
 use crate::persistence::bookmarks::host_of;
 use crate::persistence::history::HistoryEntry;
 
-/// Not run through `format!` (see omnibox.rs's SCRIPT for why).
-/// `initTimestamps` fills in each row's date/time text (and its
-/// `data-date` grouping key) from `data-timestamp` using JS's local-
-/// time `Date` getters; `applyGrouping` regroups the existing rows
-/// in place, reading `data-date`/`data-host` set on each row.
+/// Plain const; local-time timestamps + client-side regrouping.
 const SCRIPT: &str = r#"<script>
 function pad(n) { return String(n).padStart(2, '0'); }
 

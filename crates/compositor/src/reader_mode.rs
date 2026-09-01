@@ -1,15 +1,5 @@
-// A lightweight, heuristic reader mode: Ctrl+Shift+R (hotkeys.rs)
-// extracts a page's main content — the candidate element (article/
-// main/div/section) with the highest cumulative <p> text length, the
-// core idea behind Mozilla's Readability algorithm without pulling in
-// the full library — and replaces the document with a plain,
-// single-column article view in one of a few reading themes (Settings
-// page, `reader_theme`). Toggling back off (hotkeys.rs, gated on
-// `browser::Page::reader_mode`) reloads the page rather than trying to
-// reconstruct the original DOM: reader mode already threw away layout
-// and most interactivity on the way in, so there's nothing left worth
-// restoring in place — a reload is the same "give me the real page
-// back" affordance the user already has for any other stuck page.
+// Ctrl+Shift+R reader mode: heuristic main-content extract (max <p> length).
+// Toggle off reloads — DOM rewrite is not reversible in place.
 
 pub struct ReaderTheme {
     pub name: &'static str,
@@ -39,12 +29,7 @@ pub const READER_THEMES: &[ReaderTheme] = &[
     },
 ];
 
-/// The extraction+rewrite script, parameterized by the chosen reading
-/// theme's colors. Strips `<script>`/`<style>`/`<noscript>` out of a
-/// *clone* of the winning candidate before reading its `innerHTML` —
-/// `document.write`, used to replace the whole document further down,
-/// parses and runs any `<script>` it's given, which would double-run
-/// whatever a normal page load already ran once.
+/// Extract+rewrite script. Strip scripts from a clone before document.write.
 pub fn extract_script(theme: &ReaderTheme) -> String {
     format!(
         r#"
@@ -78,15 +63,7 @@ pub fn extract_script(theme: &ReaderTheme) -> String {
     '.spatial-reader{{max-width:680px;margin:0 auto;padding:48px 24px 96px;' +
       'font-family:Georgia,\'Times New Roman\',serif;font-size:19px;line-height:1.7;' +
       'word-wrap:break-word;overflow-x:hidden}}' +
-    // Extracted content brings its own inline styles along (absolute-
-    // positioned leftover header/logo markup, explicit pixel
-    // width/height attributes meant for the original page's much wider
-    // layout) — `max-width:100%!important` on every descendant caps
-    // width regardless of what inline style set it to (max-width still
-    // constrains a wider `width`, inline or not — it's a separate box-
-    // model property, not a cascade fight over the same one), and
-    // resetting position/float keeps a stray `position:absolute` logo
-    // from escaping the column instead of flowing with the text.
+    // Override inline width/absolute leftovers from the source page.
     '.spatial-reader *{{max-width:100%!important;box-sizing:border-box;' +
       'position:static!important;float:none!important}}' +
     '.spatial-reader img,.spatial-reader video,.spatial-reader svg,' +

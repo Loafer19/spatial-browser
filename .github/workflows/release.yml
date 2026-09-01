@@ -1,24 +1,16 @@
 name: Release
 
-# Fires on a version tag push (git tag v0.2.0 && git push --tags) —
-# no workflow_dispatch: pushing a tag is already the manual trigger,
-# a second one would just be a different way to ask the same question
-# (what version is this).
+# On version tag push (v*).
 on:
   push:
     tags:
       - "v*"
 
-# Default GITHUB_TOKEN is read-only on some repo settings; the release
-# step needs to create a release + upload assets.
 permissions:
   contents: write
 
 env:
-  # Keep in sync with the `cef = { version = "..." }` line in
-  # crates/*/Cargo.toml. Not read dynamically from Cargo.lock: this
-  # changes rarely enough that a hardcoded value + this comment is
-  # simpler than a parsing step.
+  # Keep in sync with crates/*/Cargo.toml cef version.
   CEF_VERSION: 151.8.0+151.3.24
   CEF_PATH: ${{ github.workspace }}/.cef-cache
 
@@ -26,26 +18,15 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      # checkout/cache v5+ and action-gh-release v3 run on Node 24
-      # (older majors warned as Node 20 deprecated on GH runners).
       - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # Restore-only on tags. Saving here would create a tag-scoped cache
-      # that no future run can reuse (GH caches don't cross tags) — that
-      # is what piled up duplicate rust/CEF entries. Master CI seeds the
-      # shared default-branch caches; releases only read them.
+      # Restore-only: tag-scoped saves are not reusable across tags.
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: "false"
 
-      # cef-dll-sys's build.rs auto-downloads the CEF binary
-      # distribution into CEF_PATH the first time it's missing (the
-      # same thing that happens on a fresh local `cargo build` — see
-      # README's Build section) — no export-cef-dir step needed here,
-      # just give it somewhere to land. bundle-cef-app reads the same
-      # CEF_PATH. Restore-only: see rust-cache comment above.
       - name: Restore CEF distribution
         uses: actions/cache/restore@v5
         with:

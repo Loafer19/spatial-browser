@@ -1,14 +1,6 @@
-// Injected autofill helper: detects login forms, asks Rust for vault
-// matches via password://, fills fields, offers save after submit.
-//
-// Critical: never assign `location = 'password://…'` on a real site —
-// that starts a main-frame navigation, steals form submits, and blanks
-// the page even when CEF cancels the fake scheme. All signals use a
-// hidden iframe instead (same cancel path, no main-frame side effects).
-//
-// Picker / save-banner chrome colors + radius come from the active
-// Theme so overlays match the rest of the UI (Tokyo Night sharp corners,
-// etc.).
+// Autofill: login forms ↔ password:// via hidden iframe (never assign
+// location on the main frame — even canceled navigations blank the page).
+// Picker/banner colors come from Theme.
 
 use crate::output::Theme;
 
@@ -21,8 +13,7 @@ pub fn script(theme: &Theme) -> String {
     format!(
         r#"
 (function() {{
-  // Re-running the bridge after vault unlock must kick a fresh query:
-  // the login field is often already focused, so no new focusin fires.
+  // Re-inject after unlock: field may already be focused (no new focusin).
   if (window.__spatialAutofillBridge__) {{
     try {{ window.__spatialAutofillKick && window.__spatialAutofillKick(); }} catch (e) {{}}
     return;
