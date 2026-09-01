@@ -17,6 +17,7 @@ Chromium bug: `ReadAnythingSoftNavigationObserver` assumes a real browser tab. W
 - Upstream fix targeted M152; this project is on **CEF 151.x** until cef-rs publishes 152
 - Mitigation: `disable-features=ImmersiveReadAnything` in `cef-bridge`
 - Still: some crashes happen — `scripts/run.sh` **auto-relaunches** and restores the saved canvas (debounced ~1s). Unlike Chrome’s per-tab process isolation, a crash takes down the whole app
+- Each relaunch appends a line to `~/.config/spatial-browser/restarts.log` (`reason=cef_soft_nav` vs `fast_crash`, exit code, elapsed, counts) so CEF/VAAPI changes can be judged from restart rate
 
 ## Clipboard
 

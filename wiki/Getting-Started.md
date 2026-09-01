@@ -10,7 +10,7 @@ tar xzf spatial-browser-linux-x86_64.tar.gz
 ./compositor
 ```
 
-`scripts/run.sh` (from a source checkout) wraps the binary and **auto-relaunches** after the known CEF SPA crash — see [[Limitations]].
+`scripts/run.sh` (from a source checkout) wraps the binary and **auto-relaunches** after the known CEF SPA crash — see [[Limitations]]. Restarts are appended to `~/.config/spatial-browser/restarts.log`.
 
 ## From source
 
