@@ -29,7 +29,8 @@ use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 /// The compositor-shown "Save password?" offer. Kept until Save / Never /
 /// a newer offer: a web `password://save` is only honoured when it matches
 /// this exactly, so a page cannot write arbitrary credentials on its own.
-#[derive(Clone)]
+/// Wiped on drop (it holds a password).
+#[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct PendingSaveOffer {
     pub origin: String,
     pub username: String,

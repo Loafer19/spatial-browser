@@ -31,9 +31,20 @@ pub mod workspace_list;
 /// contains, at ~1.33× size (percent-encoding every unsafe byte is up to
 /// 3×). `charset=utf-8` stays — without it Chromium decodes as Latin-1.
 pub(crate) fn data_url(html: &str) -> String {
-    const PREFIX: &str = "data:text/html;charset=utf-8;base64,";
-    let mut out = String::with_capacity(PREFIX.len() + html.len().div_ceil(3) * 4);
-    out.push_str(PREFIX);
+    encode_data_url("", html)
+}
+
+/// `data_url` with a `;tag=<tag>` media-type parameter the compositor can
+/// spot in the URL CEF reports back (`[a-z-]` only; Chromium ignores it).
+pub(crate) fn tagged_data_url(tag: &str, html: &str) -> String {
+    debug_assert!(tag.bytes().all(|b| b.is_ascii_lowercase() || b == b'-'));
+    encode_data_url(&format!(";tag={tag}"), html)
+}
+
+fn encode_data_url(params: &str, html: &str) -> String {
+    let prefix = format!("data:text/html;charset=utf-8{params};base64,");
+    let mut out = String::with_capacity(prefix.len() + html.len().div_ceil(3) * 4);
+    out.push_str(&prefix);
     base64_encode_into(html.as_bytes(), &mut out);
     out
 }
@@ -233,9 +244,9 @@ pub(crate) mod tests {
 
     /// Decode a `data_url` back to its HTML (test-only base64 decoder).
     pub(crate) fn decode_data_url(url: &str) -> String {
-        let b64 = url
-            .strip_prefix("data:text/html;charset=utf-8;base64,")
-            .expect("data_url prefix");
+        // Media-type params (e.g. `;tag=...`) may sit before `;base64`.
+        let (meta, b64) = url.split_once(";base64,").expect("base64 data URL");
+        assert!(meta.starts_with("data:text/html;charset=utf-8"), "{meta}");
         let val = |c: u8| -> u32 {
             match c {
                 b'A'..=b'Z' => u32::from(c - b'A'),

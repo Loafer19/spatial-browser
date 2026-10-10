@@ -32,7 +32,18 @@ use cef_bridge::{
     PENDING_PASSWORD_ACTION, PENDING_POPUPS, PENDING_SETTINGS_ACTION, PENDING_SWITCH,
     PENDING_USERSCRIPT_ACTION, PENDING_VISITS, PENDING_WORKSPACE_ACTION,
 };
+use std::cell::Cell;
 use std::path::PathBuf;
+use zeroize::{Zeroize, Zeroizing};
+
+thread_local! {
+    /// Set by the Ctrl+Shift+L hotkey; applied at the top of the next `apply`.
+    static VAULT_LOCK_REQUESTED: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(crate) fn request_vault_lock() {
+    VAULT_LOCK_REQUESTED.with(|c| c.set(true));
+}
 
 /// Push blocklist/filter settings into cef-bridge live state (IO-thread statics).
 pub(crate) fn sync_blocklist_settings(settings: &AppSettings) {
@@ -253,6 +264,15 @@ pub fn apply(
     context_menu: &mut Option<ContextMenuState>,
     pending_context_hit: &mut Option<(i32, (f32, f32))>,
 ) {
+    // Lock before anything below can read the vault this frame.
+    let lock_requested = VAULT_LOCK_REQUESTED.with(|c| c.replace(false));
+    let idle = vault
+        .as_ref()
+        .is_some_and(|v| v.idle_for() >= vault::AUTO_LOCK_AFTER);
+    if lock_requested || idle {
+        lock_vault(session, gpu, vault, generated_password, pending_save_offer, None);
+    }
+
     // Complete background file dialogs and Ctrl+V clipboard reads.
     poll_bookmark_file_pick(session, gpu, bookmarks);
     poll_csv_file_pick(session, gpu, vault, generated_password);
@@ -982,6 +1002,7 @@ fn handle_context_action(
                 {
                     let origin = vault::normalize_origin(&page.url());
                     if let Some(v) = vault.as_ref() {
+                        v.touch();
                         let matches = v.entries_for_origin(&origin);
                         if let Some(frame) = page.browser.main_frame() {
                             if let Some(js) = suggest_fill_js(&matches) {
@@ -1124,14 +1145,30 @@ fn handle_password_action(
             }
         }
     };
+    // Idle timer: built-in page actions and user clicks on web autofill UI
+    // count as use; focus queries and save offers fire on their own.
+    if let Some(v) = vault.as_ref() {
+        if internal
+            || matches!(
+                action,
+                PasswordAction::Fill { .. } | PasswordAction::Save { .. } | PasswordAction::Never { .. }
+            )
+        {
+            v.touch();
+        }
+    }
     match action {
         PasswordAction::Unlock {
             password,
             create,
             confirm,
         } => {
+            // Scrubbed on drop, on every path out of this arm. The URL CEF
+            // parsed this from is beyond reach.
+            let password = Zeroizing::new(password);
+            let confirm = confirm.map(Zeroizing::new);
             let result = if create {
-                if confirm.as_deref() != Some(password.as_str()) {
+                if confirm.as_deref().map(String::as_str) != Some(password.as_str()) {
                     Err("Passwords do not match".into())
                 } else if password.len() < 8 {
                     Err("Use at least 8 characters".into())
@@ -1163,6 +1200,16 @@ fn handle_password_action(
         }
         PasswordAction::OpenList => {
             hotkeys::open_passwords(session, gpu, vault.as_ref());
+        }
+        PasswordAction::Lock => {
+            lock_vault(
+                session,
+                gpu,
+                vault,
+                generated_password,
+                pending_save_offer,
+                Some(browser_id),
+            );
         }
         PasswordAction::Query { origin } => {
             // Focus queries: stay silent if locked (don't yank open unlock UI).
@@ -1366,7 +1413,11 @@ fn handle_password_action(
             );
         }
         PasswordAction::Generate { length, symbols } => {
-            *generated_password = Some(vault::generate_password(length, symbols));
+            if let Some(mut old) =
+                generated_password.replace(vault::generate_password(length, symbols))
+            {
+                old.zeroize();
+            }
             refresh_passwords_page(
                 session,
                 gpu,
@@ -1592,6 +1643,38 @@ fn refresh_unlock_page(
     };
     let url = pages::passwords_list::unlock_url(&session.theme(), create, error);
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
+/// Drop the unlocked vault (key and entries zeroize on drop) and the secrets
+/// cached beside it, then swap every open passwords list — plus `sender`, the
+/// page that asked — for the unlock form.
+fn lock_vault(
+    session: &mut Session,
+    gpu: &GpuState,
+    vault: &mut Option<VaultSession>,
+    generated_password: &mut Option<String>,
+    pending_save_offer: &mut Option<PendingSaveOffer>,
+    sender: Option<i32>,
+) {
+    if vault.take().is_some() {
+        log::info!("vault locked");
+    }
+    if let Some(mut pw) = generated_password.take() {
+        pw.zeroize();
+    }
+    *pending_save_offer = None;
+    let mut list_pages: Vec<i32> = session
+        .pages()
+        .iter()
+        .filter(|p| p.ephemeral && pages::passwords_list::is_list_url(&p.url()))
+        .map(|p| p.browser.identifier())
+        .collect();
+    if let Some(id) = sender.filter(|id| !list_pages.contains(id)) {
+        list_pages.push(id);
+    }
+    for id in list_pages {
+        refresh_passwords_page(session, gpu, None, None, None, "saved", id);
+    }
 }
 
 fn refresh_passwords_page(
@@ -1904,6 +1987,7 @@ mod tests {
             PasswordAction::Generate { length: 20, symbols: true },
             PasswordAction::ImportBrowse,
             PasswordAction::OpenList,
+            PasswordAction::Lock,
         ];
         for action in denied {
             assert!(web(Some(&v), action).is_none());

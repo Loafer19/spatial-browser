@@ -230,6 +230,11 @@ pub fn handle(
             open_passwords(session, gpu, vault.as_ref());
             true
         }
+        // Applied next frame, where the save-offer/generator secrets are in reach.
+        PhysicalKey::Code(KeyCode::KeyL) if modifiers.shift_key() => {
+            crate::pending_actions::request_vault_lock();
+            true
+        }
 
         // --- Canvas ---
         PhysicalKey::Code(KeyCode::KeyG) => {
@@ -487,14 +492,17 @@ pub(crate) fn open_passwords(
     let h = (size.height as f32 * 0.75).clamp(420.0, 800.0);
     let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
     let url = match vault {
-        Some(v) => pages::passwords_list::page_url(
-            &session.theme(),
-            &v.data.entries,
-            &v.data.never_save,
-            None,
-            None,
-            "saved",
-        ),
+        Some(v) => {
+            v.touch();
+            pages::passwords_list::page_url(
+                &session.theme(),
+                &v.data.entries,
+                &v.data.never_save,
+                None,
+                None,
+                "saved",
+            )
+        }
         None => pages::passwords_list::unlock_url(&session.theme(), !vault::exists(), None),
     };
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
