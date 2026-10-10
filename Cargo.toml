@@ -4,3 +4,9 @@ members = [
     "crates/compositor",
     "crates/cef-bridge",
 ]
+
+[workspace.lints.clippy]
+# Frame-loop handlers take app state as explicit &mut params by design.
+too_many_arguments = "allow"
+# RunAt mirrors userscript `@run-at document-*` names.
+enum_variant_names = "allow"

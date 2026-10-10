@@ -18,6 +18,8 @@ jobs:
       - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -40,6 +42,12 @@ jobs:
         run: |
           cargo install cef --version "${CEF_VERSION}" --locked \
             --root ~/.local/share/cargo-cef-tools
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --locked
 
       - name: Bundle
         run: ./scripts/bundle.sh compositor
