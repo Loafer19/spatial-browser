@@ -1,9 +1,10 @@
 // Custom-scheme intercepts (`bookmark://`, `omnibox://`, …): cancel in
 // on_before_browse, stash in PENDING_* for the compositor (clipboard://copy
-// is handled immediately — no Session needed).
+// is handled immediately — no Session needed — behind clipboard::copy_allowed).
 
 use crate::blocklist::{OsrResourceRequestHandler, ResourceRequestHandlerBuilder};
 use crate::clean_urls;
+use crate::clipboard;
 use cef::{self, rc::Rc, *};
 use std::cell::RefCell;
 
@@ -533,13 +534,6 @@ fn parse_clipboard_copy(url: &str) -> Option<String> {
     query_param(query, "text")
 }
 
-/// Spawn `wl-copy` (daemonizes; do not wait).
-fn write_to_clipboard(text: &str) {
-    if let Err(e) = std::process::Command::new("wl-copy").arg(text).spawn() {
-        log::warn!("wl-copy failed (system clipboard copy unavailable): {e}");
-    }
-}
-
 #[derive(Clone)]
 pub struct OsrRequestHandler {}
 
@@ -554,7 +548,7 @@ wrap_request_handler! {
             browser: Option<&mut Browser>,
             frame: Option<&mut Frame>,
             request: Option<&mut Request>,
-            _user_gesture: ::std::os::raw::c_int,
+            user_gesture: ::std::os::raw::c_int,
             _is_redirect: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
             let (Some(browser), Some(request)) = (browser, request) else {
@@ -612,8 +606,18 @@ wrap_request_handler! {
                 return true as _;
             }
             if let Some(text) = parse_clipboard_copy(&url) {
-                write_to_clipboard(&text);
-                return true as _;
+                let is_main = frame.is_some_and(|f| f.is_main() != 0);
+                if clipboard::copy_allowed(
+                    user_gesture != 0,
+                    is_main,
+                    clipboard::last_copy_shortcut(),
+                    std::time::Instant::now(),
+                ) {
+                    clipboard::copy_text(&text, false);
+                } else {
+                    log::warn!("dropped clipboard://copy from browser {id}: no user gesture or Ctrl+C");
+                }
+                return true as _; // always cancel — never a real navigation
             }
             false as _
         }

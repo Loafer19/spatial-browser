@@ -158,9 +158,10 @@ pub fn apply(
     context_menu: &mut Option<ContextMenuState>,
     pending_context_hit: &mut Option<(i32, (f32, f32))>,
 ) {
-    // Complete background file dialogs.
+    // Complete background file dialogs and Ctrl+V clipboard reads.
     poll_bookmark_file_pick(session, gpu, bookmarks);
     poll_csv_file_pick(session, gpu, vault, generated_password);
+    clipboard_bridge::deliver_paste(session);
 
     // Load progress → top-edge bar (skip ephemeral).
     let load_states = PENDING_LOAD_STATE.with_borrow_mut(std::mem::take);
@@ -829,7 +830,7 @@ fn handle_context_action(
         }
         ContextAction::Copy(text) => {
             dismiss_context_menu(session, context_menu);
-            let _ = std::process::Command::new("wl-copy").arg(&text).spawn();
+            cef_bridge::clipboard::copy_text(&text, false);
         }
         ContextAction::SaveImage(url) => {
             let target = context_menu
@@ -855,7 +856,7 @@ fn handle_context_action(
         ContextAction::GenPassword => {
             dismiss_context_menu(session, context_menu);
             let pw = vault::generate_password(20, true);
-            let _ = std::process::Command::new("wl-copy").arg(&pw).spawn();
+            cef_bridge::clipboard::copy_text(&pw, true);
         }
         ContextAction::FillPassword => {
             let target = context_menu

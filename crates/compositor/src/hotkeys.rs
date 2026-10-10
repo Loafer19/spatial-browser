@@ -145,14 +145,21 @@ pub fn handle(
             paste_into_focused(session);
             true
         }
-        // Ctrl+C falls through to page copy-bridge; Ctrl+Shift+C = copy URL.
+        // Ctrl+C/X fall through to the page copy-bridge, which may then write
+        // the clipboard (see cef_bridge::clipboard::copy_allowed).
+        // Ctrl+Shift+C = copy URL.
         PhysicalKey::Code(KeyCode::KeyC) => {
             if modifiers.shift_key() {
                 copy_focused_url(session);
                 true
             } else {
+                cef_bridge::clipboard::note_copy_shortcut();
                 false
             }
+        }
+        PhysicalKey::Code(KeyCode::KeyX) if !modifiers.shift_key() => {
+            cef_bridge::clipboard::note_copy_shortcut();
+            false
         }
         // Page content zoom (CEF zoom_level), not Ctrl+Space canvas zoom.
         PhysicalKey::Code(KeyCode::Equal) => {
@@ -273,30 +280,10 @@ fn reload_focused(session: &Session) {
     }
 }
 
-/// Ctrl+V: wl-paste + execCommand('insertText') (OSR has no CEF clipboard).
+/// Ctrl+V: async wl-paste; text lands via clipboard_bridge::deliver_paste.
 fn paste_into_focused(session: &Session) {
-    let Some(page) = session.pages().last() else {
-        return;
-    };
-    let Ok(output) = std::process::Command::new("wl-paste")
-        .arg("--no-newline")
-        .output()
-    else {
-        return;
-    };
-    if !output.status.success() {
-        return; // e.g. clipboard empty — wl-paste exits non-zero
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    if text.is_empty() {
-        return;
-    }
-    if let Some(frame) = page.browser.main_frame() {
-        let script = format!(
-            "document.execCommand('insertText', false, {});",
-            clipboard_bridge::js_literal(&text)
-        );
-        frame.execute_java_script(Some(&script.as_str().into()), Some(&"".into()), 0);
+    if let Some(page) = session.pages().last() {
+        clipboard_bridge::start_paste(page.browser.identifier());
     }
 }
 
@@ -305,10 +292,7 @@ fn copy_focused_url(session: &Session) {
     let Some(page) = session.pages().last() else {
         return;
     };
-    let url = page.url();
-    if let Err(e) = std::process::Command::new("wl-copy").arg(&url).spawn() {
-        log::warn!("wl-copy failed (couldn't copy page URL): {e}");
-    }
+    cef_bridge::clipboard::copy_text(&page.url(), false);
 }
 
 /// Ctrl+Shift+R: toggle reader mode (off = reload).
