@@ -1,4 +1,4 @@
-// Drain cef-bridge PENDING_* queues each frame and refresh list pages.
+// Drain cef-bridge PENDING_* queues every loop tick and refresh list pages.
 
 use crate::app::{ContextMenuState, PendingSaveOffer};
 use crate::autofill_bridge;
@@ -49,6 +49,8 @@ pub(crate) fn sync_blocklist_settings(settings: &AppSettings) {
     cef_bridge::set_cosmetic_enabled(cosmetic_on);
     cef_bridge::set_scriptlets_enabled(scriptlets_on);
 
+    // Background rebuild; a no-op unless the EasyList config itself changed
+    // (custom hosts / Peter Lowe toggles above never reparse the lists).
     let filters_dir = ensure_filter_lists_dir();
     cef_bridge::rebuild_filter_engine(&cef_bridge::FilterEngineConfig {
         easylist: need_engine && settings.filter_lists.easylist,
@@ -139,7 +141,7 @@ fn from_internal(session: &Session, browser_id: i32, scheme: &str) -> bool {
     internal
 }
 
-/// Drain PENDING_* once per RedrawRequested, before rendering.
+/// Drain PENDING_* from App::tick (after CEF work, before pacing/redraw).
 pub fn apply(
     session: &mut Session,
     gpu: &GpuState,

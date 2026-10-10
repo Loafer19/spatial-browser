@@ -2,6 +2,7 @@
 // bottom-right corner resizes. Page rects are world-space (see viewport.rs).
 
 use crate::browser::{self, Page};
+use crate::frame_pacer::{self, FramePacer, PageFrameInfo, Visibility};
 use crate::hotkeys;
 use crate::hud::{Hud, HudHit};
 use crate::input::{
@@ -101,14 +102,11 @@ pub struct App {
     // Cached CEF cursor — on_cursor_change only fires on change; re-apply
     // each frame so resize_hover override can be cleared.
     cef_cursor: CursorIcon,
+    // Last cursor handed to winit (skip redundant set_cursor calls).
+    applied_cursor: Option<CursorIcon>,
     last_save: Instant,
-}
-
-impl App {
-    /// Live Settings fps for main.rs event-loop pacing.
-    pub fn target_fps(&self) -> u32 {
-        self.settings.target_fps
-    }
+    // Redraw / begin-frame scheduling (idle canvas = no frames).
+    pacer: FramePacer,
 }
 
 impl Default for App {
@@ -148,7 +146,9 @@ impl Default for App {
             resizing: false,
             resize_hover: false,
             cef_cursor: CursorIcon::default(),
+            applied_cursor: None,
             last_save: Instant::now(),
+            pacer: FramePacer::new(),
         }
     }
 }
@@ -174,6 +174,147 @@ fn resize_hit_test(
 /// Topmost page (last in z-order) whose rect contains the point, if any.
 fn hit_test(pages: &[Page], x: f32, y: f32) -> Option<usize> {
     pages.iter().rposition(|p| p.rect.contains(x, y))
+}
+
+impl App {
+    /// One frame-loop step, run by main.rs after CEF work and after every
+    /// event pump: drain CEF queues, send due begin frames, request a redraw
+    /// if anything visible changed. Returns when the loop must wake next
+    /// (None = sleep until an event or CEF asks for work).
+    pub fn tick(&mut self, now: Instant) -> Option<Instant> {
+        let state = self.state.as_mut()?;
+
+        pending_actions::apply(
+            &mut self.session,
+            state,
+            &mut self.bookmarks,
+            &mut self.typed_history,
+            &mut self.downloads,
+            &mut self.history,
+            &mut self.workspaces,
+            &mut self.workspace_runtime,
+            &mut self.settings,
+            &mut self.userscripts,
+            &mut self.userstyles,
+            &mut self.vault,
+            &mut self.generated_password,
+            &mut self.pending_save_offer,
+            &mut self.context_menu,
+            &mut self.pending_context_hit,
+        );
+
+        if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {
+            self.cef_cursor = icon;
+        }
+        let cursor = if self.resize_hover {
+            CursorIcon::NwseResize
+        } else {
+            self.cef_cursor
+        };
+        if self.applied_cursor != Some(cursor) {
+            state.window.set_cursor(cursor);
+            self.applied_cursor = Some(cursor);
+        }
+
+        if let Some(hud) = &mut self.hud {
+            hud.tick();
+        }
+
+        let viewport = self.session.viewport();
+        let pages: Vec<PageFrameInfo> = self
+            .session
+            .pages()
+            .iter()
+            .map(|page| PageFrameInfo {
+                id: page.browser.identifier(),
+                visibility: frame_pacer::classify(
+                    viewport.rect_to_screen(page.rect),
+                    self.canvas_size,
+                ),
+                paint_token: page.paint_token(),
+                busy: page.load_active.get() || page.texture().is_none(),
+            })
+            .collect();
+        let animating = self
+            .session
+            .pages()
+            .iter()
+            .zip(&pages)
+            .any(|(page, info)| info.visibility == Visibility::OnScreen && shader_animates(page));
+        let signature = self.frame_signature(&pages);
+        let plan = self
+            .pacer
+            .tick(now, self.settings.target_fps, &pages, signature, animating);
+
+        for page in self.session.pages() {
+            if plan.begin_frames.contains(&page.browser.identifier()) {
+                if let Some(host) = page.browser.host() {
+                    host.send_external_begin_frame();
+                }
+            }
+        }
+        if plan.redraw {
+            if let Some(state) = &self.state {
+                state.window.request_redraw();
+            }
+        }
+
+        if self.session.dirty() && self.last_save.elapsed() >= SAVE_DEBOUNCE {
+            persistence::save(&self.session);
+            self.workspaces.capture_active_from_session(&self.session);
+            self.workspaces.save();
+            self.session.clear_dirty();
+            self.last_save = Instant::now();
+        }
+        let save_due = self
+            .session
+            .dirty()
+            .then(|| self.last_save + SAVE_DEBOUNCE);
+        let hud_due = self.hud.as_ref().and_then(Hud::hide_deadline);
+
+        frame_pacer::min_instant(
+            frame_pacer::min_instant(self.pacer.next_deadline(), save_due),
+            hud_due,
+        )
+    }
+
+    /// Hash of everything the next frame draws; a change means redraw.
+    fn frame_signature(&self, pages: &[PageFrameInfo]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        let viewport = self.session.viewport();
+        for v in [
+            viewport.offset.0,
+            viewport.offset.1,
+            viewport.zoom,
+            self.canvas_size.0,
+            self.canvas_size.1,
+        ] {
+            v.to_bits().hash(&mut h);
+        }
+        self.session.theme().name.hash(&mut h);
+        for (page, info) in self.session.pages().iter().zip(pages) {
+            info.id.hash(&mut h);
+            info.paint_token.hash(&mut h);
+            for v in [page.rect.x, page.rect.y, page.rect.w, page.rect.h] {
+                v.to_bits().hash(&mut h);
+            }
+            page.load_progress.get().to_bits().hash(&mut h);
+            (page.load_active.get() && !page.ephemeral).hash(&mut h);
+        }
+        self.hud.as_ref().map(Hud::visible).hash(&mut h);
+        self.workspaces.active.hash(&mut h);
+        self.workspaces.slot_count().hash(&mut h);
+        h.finish()
+    }
+}
+
+/// Page quad uses the frame clock (shader.wgsl): loading placeholder pulse
+/// before the first paint, sliding load-bar chunk while progress is unknown.
+fn shader_animates(page: &Page) -> bool {
+    let progress = page.load_progress.get();
+    let load_bar = page.load_active.get() && !page.ephemeral && progress < 0.999;
+    page.texture().is_none() || (load_bar && progress < 0.02)
 }
 
 impl ApplicationHandler for App {
@@ -243,6 +384,11 @@ impl ApplicationHandler for App {
         };
         if state.window.id() != id {
             return;
+        }
+        // Anything but our own redraw is user/WM activity: repaint and run
+        // visible pages at full rate for a moment (frame_pacer).
+        if !matches!(event, WindowEvent::RedrawRequested) {
+            self.pacer.note_input(Instant::now());
         }
 
         match event {
@@ -687,40 +833,8 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                for page in self.session.pages() {
-                    if let Some(host) = page.browser.host() {
-                        host.send_external_begin_frame();
-                    }
-                }
-
-                pending_actions::apply(
-                    &mut self.session,
-                    state,
-                    &mut self.bookmarks,
-                    &mut self.typed_history,
-                    &mut self.downloads,
-                    &mut self.history,
-                    &mut self.workspaces,
-                    &mut self.workspace_runtime,
-                    &mut self.settings,
-                    &mut self.userscripts,
-                    &mut self.userstyles,
-                    &mut self.vault,
-                    &mut self.generated_password,
-                    &mut self.pending_save_offer,
-                    &mut self.context_menu,
-                    &mut self.pending_context_hit,
-                );
-
-                if let Some(icon) = CURSOR.with_borrow_mut(|cursor| cursor.take()) {
-                    self.cef_cursor = icon;
-                }
-                state.window.set_cursor(if self.resize_hover {
-                    CursorIcon::NwseResize
-                } else {
-                    self.cef_cursor
-                });
-
+                // Begin frames, pending CEF actions, cursor and session
+                // saves run in `tick` (every loop iteration), not per frame.
                 let viewport = self.session.viewport();
                 let pages = self.session.pages();
                 let last_index = pages.len().saturating_sub(1);
@@ -745,7 +859,6 @@ impl ApplicationHandler for App {
 
                 let theme = self.session.theme();
                 if let Some(hud) = &mut self.hud {
-                    hud.tick();
                     hud.rebuild(&state.queue, &state.device, &self.workspaces, &theme);
                 }
                 let focused = self.session.pages().len().checked_sub(1);
@@ -769,26 +882,18 @@ impl ApplicationHandler for App {
                     hud_ref,
                     minimap_ref,
                 ) {
-                    FrameOutcome::Rendered | FrameOutcome::Skip => {}
+                    FrameOutcome::Rendered => self.pacer.rendered(Instant::now()),
+                    FrameOutcome::Skip => self.pacer.render_skipped(Instant::now()),
                     FrameOutcome::Reconfigure => {
                         let size = state.window.inner_size();
                         state.resize(size.width, size.height);
+                        self.pacer.render_skipped(Instant::now());
                     }
                     FrameOutcome::Fatal => {
                         log::error!("fatal surface validation error, exiting");
                         event_loop.exit();
                     }
                 }
-
-                if self.session.dirty() && self.last_save.elapsed() >= SAVE_DEBOUNCE {
-                    persistence::save(&self.session);
-                    self.workspaces.capture_active_from_session(&self.session);
-                    self.workspaces.save();
-                    self.session.clear_dirty();
-                    self.last_save = Instant::now();
-                }
-
-                state.window.request_redraw();
             }
             _ => {}
         }

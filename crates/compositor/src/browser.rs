@@ -43,6 +43,16 @@ impl Page {
         self.texture.borrow().clone()
     }
 
+    /// Changes on every CEF paint: the bind group is replaced per paint, and
+    /// cef_bridge::note_paint covers paint paths that reuse it (frame_pacer).
+    pub fn paint_token(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.texture.borrow().hash(&mut hasher);
+        cef_bridge::paint_count(cef::ImplBrowser::identifier(&self.browser)).hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// Current URL from CEF (includes in-page navigations).
     pub fn url(&self) -> String {
         cef::ImplBrowser::main_frame(&self.browser)
