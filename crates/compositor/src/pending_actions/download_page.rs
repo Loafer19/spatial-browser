@@ -14,11 +14,7 @@ pub(super) fn refresh_downloads_page(
 }
 
 /// Finished downloads (record + notification) and `download://` list actions.
-pub(super) fn drain(
-    session: &mut Session,
-    gpu: &GpuState,
-    downloads: &mut Vec<DownloadRecord>,
-) {
+pub(super) fn drain(session: &mut Session, gpu: &GpuState, downloads: &mut Vec<DownloadRecord>) {
     // Completed downloads → downloads.json + desktop notification.
     let completed = PENDING_DOWNLOADS.with_borrow_mut(std::mem::take);
     for download in completed {
@@ -44,8 +40,7 @@ pub(super) fn drain(
     }
 
     // download://…
-    if let Some((browser_id, action)) =
-        PENDING_DOWNLOAD_ACTION
+    if let Some((browser_id, action)) = PENDING_DOWNLOAD_ACTION
         .with_borrow_mut(|pending| pending.take())
         .filter(|(id, _)| from_internal(session, *id, "download://"))
     {

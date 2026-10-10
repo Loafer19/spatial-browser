@@ -94,9 +94,8 @@ pub(crate) fn unlock_url(theme: &Theme, create: bool, error: Option<&str>) -> St
 fn tab_bar(theme: &Theme, active: &str) -> String {
     // Same pattern as Settings: navigate via password://tab/… so the active
     // tab survives refresh.
-    let mut html = String::from(
-        "<div style=\"display:flex;gap:6px;margin:0 0 16px;flex-wrap:wrap\">",
-    );
+    let mut html =
+        String::from("<div style=\"display:flex;gap:6px;margin:0 0 16px;flex-wrap:wrap\">");
     for (id, label) in [
         ("saved", "Saved"),
         ("add", "Add / Import"),
@@ -341,10 +340,15 @@ mod tag_tests {
         assert!(list.starts_with("spatial://page/vault-list/"), "{list}");
         assert!(super::is_list_url(&list));
         let unlock = super::unlock_url(&THEMES[0], false, None);
-        assert!(unlock.starts_with("spatial://page/vault-unlock/"), "{unlock}");
+        assert!(
+            unlock.starts_with("spatial://page/vault-unlock/"),
+            "{unlock}"
+        );
         assert!(!super::is_list_url(&unlock));
         // The heading id alone (e.g. in a web page's URL) means nothing.
         assert!(!super::is_list_url("https://a.test/#sb-vault-list"));
-        assert!(!super::is_list_url("data:text/html;tag=sb-vault-list;base64,PGgxPg=="));
+        assert!(!super::is_list_url(
+            "data:text/html;tag=sb-vault-list;base64,PGgxPg=="
+        ));
     }
 }

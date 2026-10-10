@@ -27,7 +27,11 @@ struct CpuTarget {
 
 /// CEF dirty rects as `(x, y, w, h)` clipped to a `width`×`height` view;
 /// empty input means the whole view.
-pub fn clip_dirty(rects: &[(i32, i32, i32, i32)], width: u32, height: u32) -> Vec<(u32, u32, u32, u32)> {
+pub fn clip_dirty(
+    rects: &[(i32, i32, i32, i32)],
+    width: u32,
+    height: u32,
+) -> Vec<(u32, u32, u32, u32)> {
     if rects.is_empty() {
         return vec![(0, 0, width, height)];
     }
@@ -308,7 +312,13 @@ mod tests {
 
     #[test]
     fn rects_are_clipped_and_empty_ones_dropped() {
-        let rects = [(10, 20, 30, 40), (-5, -5, 10, 10), (790, 590, 50, 50), (900, 0, 10, 10), (0, 0, 0, 5)];
+        let rects = [
+            (10, 20, 30, 40),
+            (-5, -5, 10, 10),
+            (790, 590, 50, 50),
+            (900, 0, 10, 10),
+            (0, 0, 0, 5),
+        ];
         assert_eq!(
             clip_dirty(&rects, 800, 600),
             vec![(10, 20, 30, 40), (0, 0, 5, 5), (790, 590, 10, 10)]

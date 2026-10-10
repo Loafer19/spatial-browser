@@ -11,7 +11,8 @@ pub(super) fn apply_find(session: &mut Session, gpu: &GpuState) {
         return;
     };
     let (bar_id, target_id) = (find.bar_id, find.target_id);
-    let index_of = |s: &Session, id: i32| s.pages().iter().position(|p| p.browser.identifier() == id);
+    let index_of =
+        |s: &Session, id: i32| s.pages().iter().position(|p| p.browser.identifier() == id);
     let host_of = |s: &Session, id: i32| {
         s.pages()
             .iter()
@@ -33,7 +34,15 @@ pub(super) fn apply_find(session: &mut Session, gpu: &GpuState) {
         return;
     }
 
-    if let Some((id, FindAction::Search { text, forward, match_case })) = action {
+    if let Some((
+        id,
+        FindAction::Search {
+            text,
+            forward,
+            match_case,
+        },
+    )) = action
+    {
         if id == bar_id && from_internal(session, id, "find://") {
             if let Some(host) = host_of(session, target_id) {
                 let query = (text.clone(), match_case);
@@ -55,7 +64,12 @@ pub(super) fn apply_find(session: &mut Session, gpu: &GpuState) {
         }
     }
 
-    if let Some(result) = results.iter().rev().find(|(id, _)| *id == target_id).map(|(_, r)| *r) {
+    if let Some(result) = results
+        .iter()
+        .rev()
+        .find(|(id, _)| *id == target_id)
+        .map(|(_, r)| *r)
+    {
         if let Some(frame) = session
             .pages()
             .iter()

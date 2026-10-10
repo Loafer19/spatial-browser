@@ -35,7 +35,12 @@ fn load_state() -> StateFile {
 }
 
 fn save_state(state: &StateFile) {
-    crate::persistence::store::save_json(&state_path(), "userstyles state", state, crate::persistence::store::Backup::Keep);
+    crate::persistence::store::save_json(
+        &state_path(),
+        "userstyles state",
+        state,
+        crate::persistence::store::Backup::Keep,
+    );
 }
 
 pub fn load() -> Vec<UserStyle> {
@@ -138,7 +143,10 @@ fn parse_file(path: &Path, disabled: &HashSet<String>) -> Option<UserStyle> {
 }
 
 fn is_spatial_ui_token(pattern: &str) -> bool {
-    matches!(pattern, "spatial-ui" | "spatial:*" | "spatial://*" | "spatial://ui")
+    matches!(
+        pattern,
+        "spatial-ui" | "spatial:*" | "spatial://*" | "spatial://ui"
+    )
 }
 
 fn matches_pattern(pattern: &str, url: &str, ephemeral: bool) -> bool {

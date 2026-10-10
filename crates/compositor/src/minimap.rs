@@ -61,7 +61,11 @@ pub struct Minimap {
 }
 
 impl Minimap {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, surface_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+    ) -> Self {
         let texture = solid_white_texture(device, queue);
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("minimap atlas layout"),
@@ -197,10 +201,7 @@ impl Minimap {
             .map(|s| {
                 let v = s.viewfinder;
                 let pad = 4.0;
-                x >= v.x - pad
-                    && x <= v.x + v.w + pad
-                    && y >= v.y - pad
-                    && y <= v.y + v.h + pad
+                x >= v.x - pad && x <= v.x + v.w + pad && y >= v.y - pad && y <= v.y + v.h + pad
             })
             .unwrap_or(false)
     }
@@ -282,14 +283,7 @@ impl Minimap {
         let focus = rgba_focus(theme);
 
         push_rect(
-            &mut verts,
-            panel.x,
-            panel.y,
-            panel.w,
-            panel.h,
-            sw,
-            sh,
-            panel_bg,
+            &mut verts, panel.x, panel.y, panel.w, panel.h, sw, sh, panel_bg,
         );
         push_rect_outline(
             &mut verts,
@@ -470,11 +464,18 @@ fn solid_white_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Text
     texture
 }
 
-fn push_rect(out: &mut Vec<MmVertex>, x: f32, y: f32, w: f32, h: f32, sw: f32, sh: f32, color: [f32; 4]) {
+fn push_rect(
+    out: &mut Vec<MmVertex>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    sw: f32,
+    sh: f32,
+    color: [f32; 4],
+) {
     let (x0, y0, x1, y1) = (x, y, x + w, y + h);
-    let to_ndc = |px: f32, py: f32| -> [f32; 2] {
-        [(px / sw) * 2.0 - 1.0, 1.0 - (py / sh) * 2.0]
-    };
+    let to_ndc = |px: f32, py: f32| -> [f32; 2] { [(px / sw) * 2.0 - 1.0, 1.0 - (py / sh) * 2.0] };
     let p00 = to_ndc(x0, y0);
     let p10 = to_ndc(x1, y0);
     let p01 = to_ndc(x0, y1);
@@ -537,7 +538,9 @@ fn parse_rgb(s: &str, alpha: f32) -> [f32; 4] {
         .strip_prefix("rgb(")
         .and_then(|t| t.strip_suffix(')'))
         .unwrap_or("128,128,128");
-    let mut parts = inner.split(',').filter_map(|p| p.trim().parse::<f32>().ok());
+    let mut parts = inner
+        .split(',')
+        .filter_map(|p| p.trim().parse::<f32>().ok());
     let r = parts.next().unwrap_or(128.0) / 255.0;
     let g = parts.next().unwrap_or(128.0) / 255.0;
     let b = parts.next().unwrap_or(128.0) / 255.0;

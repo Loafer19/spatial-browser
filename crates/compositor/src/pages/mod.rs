@@ -90,8 +90,29 @@ fn js_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | ' ' | '-' | '_' | '.' | ',' | ':' | '/' | '@'
-            | '?' | '=' | '+' | '*' | '(' | ')' | '[' | ']' | '!' | '$' | '~' | ';' => out.push(c),
+            'A'..='Z'
+            | 'a'..='z'
+            | '0'..='9'
+            | ' '
+            | '-'
+            | '_'
+            | '.'
+            | ','
+            | ':'
+            | '/'
+            | '@'
+            | '?'
+            | '='
+            | '+'
+            | '*'
+            | '('
+            | ')'
+            | '['
+            | ']'
+            | '!'
+            | '$'
+            | '~'
+            | ';' => out.push(c),
             c if c.is_ascii() || c == '\u{2028}' || c == '\u{2029}' => {
                 out.push_str(&format!("\\u{:04x}", c as u32));
             }
@@ -295,34 +316,67 @@ pub(crate) mod tests {
             serde_json::from_str(r#"{"active":0,"slots":[]}"#).unwrap();
         let pages = [
             (kind::HELP, help::page_url(&theme)),
-            (kind::SWITCHER, switcher::page_url(&theme, &[(1, "https://a.test/#x".into())])),
-            (kind::OMNIBOX, omnibox::page_url(&theme, &["#1".into()], "https://e.test/?q=")),
-            (kind::VAULT_UNLOCK, passwords_list::unlock_url(&theme, true, Some("#err"))),
+            (
+                kind::SWITCHER,
+                switcher::page_url(&theme, &[(1, "https://a.test/#x".into())]),
+            ),
+            (
+                kind::OMNIBOX,
+                omnibox::page_url(&theme, &["#1".into()], "https://e.test/?q="),
+            ),
+            (
+                kind::VAULT_UNLOCK,
+                passwords_list::unlock_url(&theme, true, Some("#err")),
+            ),
             (
                 kind::VAULT_LIST,
                 passwords_list::page_url(&theme, &[], &[], Some("gen"), None, "generator"),
             ),
             (kind::FIND_BAR, find_bar::page_url(&theme)),
-            (kind::SAVE_PROMPT, save_prompt::page_url(&theme, "a.test", "u", true)),
-            (kind::CONTEXT_MENU, context_menu::page_url(&theme, &Default::default())),
-            (kind::BOOKMARKS, bookmarks_list::page_url(&theme, &[], Some("ok"))),
+            (
+                kind::SAVE_PROMPT,
+                save_prompt::page_url(&theme, "a.test", "u", true),
+            ),
+            (
+                kind::CONTEXT_MENU,
+                context_menu::page_url(&theme, &Default::default()),
+            ),
+            (
+                kind::BOOKMARKS,
+                bookmarks_list::page_url(&theme, &[], Some("ok")),
+            ),
             (
                 kind::DOWNLOADS,
                 downloads_list::page_url(
                     &theme,
-                    &[DownloadRecord { url: "https://a.test/f".into(), path: "/tmp/f".into() }],
+                    &[DownloadRecord {
+                        url: "https://a.test/f".into(),
+                        path: "/tmp/f".into(),
+                    }],
                 ),
             ),
             (
                 kind::HISTORY,
                 history_list::page_url(
                     &theme,
-                    &[HistoryEntry { url: "https://a.test/".into(), visited_at: 0 }],
+                    &[HistoryEntry {
+                        url: "https://a.test/".into(),
+                        visited_at: 0,
+                    }],
                 ),
             ),
-            (kind::WORKSPACES, workspace_list::page_url(&theme, &workspaces)),
-            (kind::SETTINGS, settings_list::page_url(&theme, &Default::default())),
-            (kind::USERSCRIPTS, userscripts_list::page_url(&theme, &[], &[])),
+            (
+                kind::WORKSPACES,
+                workspace_list::page_url(&theme, &workspaces),
+            ),
+            (
+                kind::SETTINGS,
+                settings_list::page_url(&theme, &Default::default()),
+            ),
+            (
+                kind::USERSCRIPTS,
+                userscripts_list::page_url(&theme, &[], &[]),
+            ),
         ];
         for (expected, url) in pages {
             assert_eq!(kind_of(&url), Some(expected), "{url}");
@@ -386,11 +440,19 @@ pub(crate) mod tests {
             None,
             "saved",
         ));
-        assert!(!saved.contains("<img") && !saved.contains("\"><script>"), "{saved}");
+        assert!(
+            !saved.contains("<img") && !saved.contains("\"><script>"),
+            "{saved}"
+        );
         assert!(saved.contains("a.test&quot;&gt;&lt;script&gt;"));
         assert!(saved.contains("password://go/fill?id=id%27%29%3B%20x%28%27"));
         let never_page = served_html(&passwords_list::page_url(
-            &THEMES[0], &[], &never, None, None, "never",
+            &THEMES[0],
+            &[],
+            &never,
+            None,
+            None,
+            "never",
         ));
         assert!(!never_page.contains("');alert(1)"), "{never_page}");
         assert!(never_page.contains("remove-never?origin=https%3A%2F%2Fn.test%27%29%3Balert"));

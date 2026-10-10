@@ -4,13 +4,13 @@
 
 mod app;
 mod blocklist;
-pub mod clipboard;
-mod filter_engine;
-mod find;
 mod clean_urls;
 mod client;
+pub mod clipboard;
 mod display;
 mod download;
+mod filter_engine;
+mod find;
 mod life_span;
 mod load;
 mod message_pump;
@@ -21,15 +21,16 @@ pub mod spatial;
 
 pub use app::*;
 pub use blocklist::{set_custom_hosts, set_enabled, set_peter_lowe_enabled};
-pub use filter_engine::{
-    cosmetic_hide_css, cosmetic_inject_js, rebuild as rebuild_filter_engine, wait_idle as wait_filter_engine, scriptlet_inject_js,
-    scriptlet_js, set_cosmetic_enabled, set_scriptlets_enabled, FilterEngineConfig,
-};
 pub use clean_urls::set_enabled as set_clean_urls_enabled;
 pub use client::*;
 pub use display::*;
-pub use find::*;
 pub use download::*;
+pub use filter_engine::{
+    cosmetic_hide_css, cosmetic_inject_js, rebuild as rebuild_filter_engine, scriptlet_inject_js,
+    scriptlet_js, set_cosmetic_enabled, set_scriptlets_enabled, wait_idle as wait_filter_engine,
+    FilterEngineConfig,
+};
+pub use find::*;
 pub use life_span::*;
 pub use load::*;
 pub use message_pump::{

@@ -163,16 +163,17 @@ pub(super) fn handle_context_action(
             cef_bridge::clipboard::copy_text(&pw, true);
         }
         ContextAction::FillPassword => {
-            let target = context_menu
-                .as_ref()
-                .and_then(|c| c.target_browser_id);
+            let target = context_menu.as_ref().and_then(|c| c.target_browser_id);
             dismiss_context_menu(session, context_menu);
             if vault.is_none() {
                 hotkeys::open_passwords(session, gpu, None);
                 return;
             }
             if let Some(tid) = target {
-                if let Some(page) = session.pages().iter().find(|p| p.browser.identifier() == tid)
+                if let Some(page) = session
+                    .pages()
+                    .iter()
+                    .find(|p| p.browser.identifier() == tid)
                 {
                     let origin = vault::normalize_origin(&page.url());
                     if let Some(v) = vault.as_ref() {
@@ -194,9 +195,7 @@ pub(super) fn handle_context_action(
             }
         }
         ContextAction::ClosePage => {
-            let target = context_menu
-                .as_ref()
-                .and_then(|c| c.target_browser_id);
+            let target = context_menu.as_ref().and_then(|c| c.target_browser_id);
             dismiss_context_menu(session, context_menu);
             if let Some(tid) = target {
                 if let Some(index) = session
@@ -237,13 +236,8 @@ pub(super) fn handle_context_action(
 }
 
 /// `context://` from the right-click menu (and `hit` from the clicked page).
-pub(super) fn drain(
-    session: &mut Session,
-    gpu: &GpuState,
-    s: &mut Stores<'_>,
-) {
-    if let Some((browser_id, action)) =
-        PENDING_CONTEXT_ACTION
+pub(super) fn drain(session: &mut Session, gpu: &GpuState, s: &mut Stores<'_>) {
+    if let Some((browser_id, action)) = PENDING_CONTEXT_ACTION
         .with_borrow_mut(|pending| pending.take())
         .filter(|(id, action)| {
             matches!(action, ContextAction::Hit { .. }) || from_internal(session, *id, "context://")

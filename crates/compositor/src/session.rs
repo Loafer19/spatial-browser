@@ -442,7 +442,11 @@ impl Session {
 
 /// Z-order index of the item whose browser id is `browser_id`. Generic over
 /// the item so the lookup is testable without a live CEF `Page`.
-fn index_by_browser_id<T>(items: &[T], browser_id: i32, id_of: impl Fn(&T) -> i32) -> Option<usize> {
+fn index_by_browser_id<T>(
+    items: &[T],
+    browser_id: i32,
+    id_of: impl Fn(&T) -> i32,
+) -> Option<usize> {
     items.iter().position(|item| id_of(item) == browser_id)
 }
 
@@ -452,12 +456,21 @@ mod tile_tests {
 
     #[test]
     fn tiles_scale_with_the_display() {
-        let page = Rect { x: 100.0, y: 200.0, w: 2000.0, h: 1200.0 };
+        let page = Rect {
+            x: 100.0,
+            y: 200.0,
+            w: 2000.0,
+            h: 1200.0,
+        };
         let one = find_bar_rect(page, 1.0);
         let two = find_bar_rect(page, 2.0);
         assert_eq!(two.h, one.h * 2.0);
         assert_eq!(two.w, one.w * 2.0);
-        assert_eq!(two.x + two.w, page.x + page.w, "find bar stays right-aligned");
+        assert_eq!(
+            two.x + two.w,
+            page.x + page.w,
+            "find bar stays right-aligned"
+        );
         assert!(two.y + two.h < page.y, "above the page, not over it");
         let save = save_prompt_rect(page, 2.0);
         assert_eq!(save.x, page.x);

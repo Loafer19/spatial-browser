@@ -11,7 +11,8 @@ pub(super) fn drain_omnibox(
     // omnibox://go → log typed text; close+respawn at resolved URL.
     if let Some((browser_id, submit)) = PENDING_OMNIBOX
         .with_borrow_mut(|pending| pending.take())
-        .filter(|(id, _)| from_internal(session, *id, "omnibox://")) {
+        .filter(|(id, _)| from_internal(session, *id, "omnibox://"))
+    {
         typed_history::record(typed_history, &submit.raw);
         if let Some(index) = session
             .pages()
@@ -26,10 +27,7 @@ pub(super) fn drain_omnibox(
 }
 
 /// `switcher://go/{id}`: front and pan to the target, close the switcher.
-pub(super) fn drain_switcher(
-    session: &mut Session,
-    gpu: &GpuState,
-) {
+pub(super) fn drain_switcher(session: &mut Session, gpu: &GpuState) {
     // switcher://go/{id} → front+pan target; close switcher (not undo stack).
     if let Some((switcher_id, target_id)) = PENDING_SWITCH
         .with_borrow_mut(|pending| pending.take())
@@ -66,10 +64,7 @@ pub(super) fn drain_switcher(
 }
 
 /// Launch/second-launch URLs and accepted popups → new tiles.
-pub(super) fn drain_new_pages(
-    session: &mut Session,
-    gpu: &GpuState,
-) {
+pub(super) fn drain_new_pages(session: &mut Session, gpu: &GpuState) {
     // URLs from launch argv / a second launch → new pages, newest on top.
     for url in crate::single_instance::take_incoming() {
         let size = gpu.window.inner_size();

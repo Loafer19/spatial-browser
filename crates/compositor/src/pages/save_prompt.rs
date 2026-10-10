@@ -54,7 +54,12 @@ mod tests {
 
     #[test]
     fn escapes_host_and_username() {
-        let html = served_html(&super::page_url(&THEMES[0], "a.test", "<img src=x onerror=alert(1)>", false));
+        let html = served_html(&super::page_url(
+            &THEMES[0],
+            "a.test",
+            "<img src=x onerror=alert(1)>",
+            false,
+        ));
         assert!(!html.contains("<img"));
         assert!(html.contains("&lt;img"));
     }

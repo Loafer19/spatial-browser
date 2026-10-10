@@ -405,7 +405,9 @@ fn parse_find_action(url: &str) -> Option<FindAction> {
     if rest == "close" || rest == "close/" {
         return Some(FindAction::Close);
     }
-    let query = rest.strip_prefix("search?").or_else(|| rest.strip_prefix("search/?"))?;
+    let query = rest
+        .strip_prefix("search?")
+        .or_else(|| rest.strip_prefix("search/?"))?;
     Some(FindAction::Search {
         text: query_param(query, "q").unwrap_or_default(),
         forward: query_param(query, "dir").as_deref() != Some("prev"),
@@ -567,9 +569,7 @@ fn parse_password_action(url: &str) -> Option<PasswordAction> {
         return Some(PasswordAction::ImportBrowse);
     }
     if let Some(id) = rest.strip_prefix("tab/") {
-        return Some(PasswordAction::Tab {
-            id: id.to_string(),
-        });
+        return Some(PasswordAction::Tab { id: id.to_string() });
     }
     if rest == "open-list" {
         return Some(PasswordAction::OpenList);
@@ -590,7 +590,8 @@ fn signal_frame_ok(is_main: bool, parent_is_main: bool, current_url: &str) -> bo
     // initial about:blank; either way it has never held web content.
     is_main
         || (parent_is_main
-            && (matches!(current_url, "" | "about:blank") || current_url.starts_with("password://")))
+            && (matches!(current_url, "" | "about:blank")
+                || current_url.starts_with("password://")))
 }
 
 /// Parse `clipboard://copy?text=...` (OSR has no OS clipboard surface).
@@ -786,8 +787,11 @@ mod tests {
 
     #[test]
     fn password_unlock_flags() {
-        let Some(PasswordAction::Unlock { password, create, confirm }) =
-            parse_password_action("password://go/unlock?create=1&password=a%2Bb&confirm=a%2Bb")
+        let Some(PasswordAction::Unlock {
+            password,
+            create,
+            confirm,
+        }) = parse_password_action("password://go/unlock?create=1&password=a%2Bb&confirm=a%2Bb")
         else {
             panic!("expected unlock");
         };
@@ -800,7 +804,10 @@ mod tests {
     fn password_required_params_and_unknown_actions() {
         assert!(parse_password_action("password://go/fill?nope=1").is_none());
         assert!(parse_password_action("password://go/explode?x=1").is_none());
-        assert!(matches!(parse_password_action("password://go/lock"), Some(PasswordAction::Lock)));
+        assert!(matches!(
+            parse_password_action("password://go/lock"),
+            Some(PasswordAction::Lock)
+        ));
         assert!(parse_password_action("password://go/locked").is_none());
         assert!(parse_password_action("https://password.test/go/fill?id=1").is_none());
     }
@@ -824,9 +831,16 @@ mod tests {
         ));
         assert!(matches!(
             parse_find_action("find://go/search/?q=x"),
-            Some(FindAction::Search { forward: true, match_case: false, .. })
+            Some(FindAction::Search {
+                forward: true,
+                match_case: false,
+                ..
+            })
         ));
-        assert!(matches!(parse_find_action("find://go/close"), Some(FindAction::Close)));
+        assert!(matches!(
+            parse_find_action("find://go/close"),
+            Some(FindAction::Close)
+        ));
         assert!(parse_find_action("find://go/explode").is_none());
         assert!(parse_find_action("https://find.test/go/close").is_none());
     }

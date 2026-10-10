@@ -86,14 +86,9 @@ pub(super) fn refresh_settings_page(
 }
 
 /// `settings://` from the settings page.
-pub(super) fn drain(
-    session: &mut Session,
-    gpu: &GpuState,
-    settings: &mut AppSettings,
-) {
+pub(super) fn drain(session: &mut Session, gpu: &GpuState, settings: &mut AppSettings) {
     // settings://…
-    if let Some((browser_id, action)) =
-        PENDING_SETTINGS_ACTION
+    if let Some((browser_id, action)) = PENDING_SETTINGS_ACTION
         .with_borrow_mut(|pending| pending.take())
         .filter(|(id, _)| from_internal(session, *id, "settings://"))
     {

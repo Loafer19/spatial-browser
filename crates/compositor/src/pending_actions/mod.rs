@@ -25,12 +25,13 @@ use crate::userscripts::{self, RunAt, UserScript};
 use crate::userstyles::{self, UserStyle};
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 use cef_bridge::{
-    BookmarkAction, ContextAction, DownloadPageAction, FindAction, HistoryPageAction, PasswordAction,
-    SettingsPageAction, UserscriptsPageAction, WorkspacePageAction, PENDING_BOOKMARK,
-    PENDING_CONTEXT_ACTION, PENDING_DOWNLOADS, PENDING_FIND_ACTION, PENDING_FIND_RESULTS, PENDING_DOWNLOAD_ACTION, PENDING_HISTORY_ACTION,
-    PENDING_LOAD_PROGRESS, PENDING_LOAD_START, PENDING_LOAD_STATE, PENDING_OMNIBOX,
-    PENDING_PASSWORD_ACTION, PENDING_POPUPS, PENDING_SETTINGS_ACTION, PENDING_SWITCH,
-    PENDING_USERSCRIPT_ACTION, PENDING_VISITS, PENDING_WORKSPACE_ACTION,
+    BookmarkAction, ContextAction, DownloadPageAction, FindAction, HistoryPageAction,
+    PasswordAction, SettingsPageAction, UserscriptsPageAction, WorkspacePageAction,
+    PENDING_BOOKMARK, PENDING_CONTEXT_ACTION, PENDING_DOWNLOADS, PENDING_DOWNLOAD_ACTION,
+    PENDING_FIND_ACTION, PENDING_FIND_RESULTS, PENDING_HISTORY_ACTION, PENDING_LOAD_PROGRESS,
+    PENDING_LOAD_START, PENDING_LOAD_STATE, PENDING_OMNIBOX, PENDING_PASSWORD_ACTION,
+    PENDING_POPUPS, PENDING_SETTINGS_ACTION, PENDING_SWITCH, PENDING_USERSCRIPT_ACTION,
+    PENDING_VISITS, PENDING_WORKSPACE_ACTION,
 };
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -148,7 +149,13 @@ fn now_unix_secs() -> i64 {
 
 /// Drain PENDING_* from App::tick (after CEF work, before pacing/redraw).
 pub fn apply(session: &mut Session, gpu: &GpuState, mut s: Stores<'_>) {
-    passwords::auto_lock(session, gpu, s.vault, s.generated_password, s.pending_save_offer);
+    passwords::auto_lock(
+        session,
+        gpu,
+        s.vault,
+        s.generated_password,
+        s.pending_save_offer,
+    );
 
     // Complete background file dialogs and Ctrl+V clipboard reads.
     bookmark_page::poll_bookmark_file_pick(session, gpu, s.bookmarks);
@@ -176,7 +183,13 @@ pub fn apply(session: &mut Session, gpu: &GpuState, mut s: Stores<'_>) {
 
     scripts_page::drain(session, gpu, s.userscripts, s.userstyles);
 
-    passwords::drain(session, gpu, s.vault, s.generated_password, s.pending_save_offer);
+    passwords::drain(
+        session,
+        gpu,
+        s.vault,
+        s.generated_password,
+        s.pending_save_offer,
+    );
 
     context::drain(session, gpu, &mut s);
 
@@ -207,15 +220,28 @@ mod tests {
     #[test]
     fn web_query_uses_page_origin_not_requested_one() {
         let v = vault();
-        let out = web(Some(&v), PasswordAction::Query { origin: "https://bank.test".into() });
-        assert!(matches!(out, Some(PasswordAction::Query { origin }) if origin == "https://site.test"));
+        let out = web(
+            Some(&v),
+            PasswordAction::Query {
+                origin: "https://bank.test".into(),
+            },
+        );
+        assert!(
+            matches!(out, Some(PasswordAction::Query { origin }) if origin == "https://site.test")
+        );
     }
 
     #[test]
     fn web_fill_only_for_own_origin() {
         let v = vault();
         assert!(web(Some(&v), PasswordAction::Fill { id: "bank".into() }).is_none());
-        assert!(web(Some(&v), PasswordAction::Fill { id: "missing".into() }).is_none());
+        assert!(web(
+            Some(&v),
+            PasswordAction::Fill {
+                id: "missing".into()
+            }
+        )
+        .is_none());
         assert!(matches!(
             web(Some(&v), PasswordAction::Fill { id: "mine".into() }),
             Some(PasswordAction::Fill { id }) if id == "mine"
@@ -232,7 +258,13 @@ mod tests {
             id: None,
         };
         assert!(web(Some(&v), save).is_none());
-        assert!(web(Some(&v), PasswordAction::Never { origin: String::new() }).is_none());
+        assert!(web(
+            Some(&v),
+            PasswordAction::Never {
+                origin: String::new()
+            }
+        )
+        .is_none());
         assert!(web(Some(&v), PasswordAction::PromptSave).is_none());
         assert!(web(Some(&v), PasswordAction::PromptNever).is_none());
         assert!(web(Some(&v), PasswordAction::PromptDismiss).is_none());
@@ -241,16 +273,34 @@ mod tests {
 
     #[test]
     fn fill_only_into_entry_site() {
-        assert!(fill_allowed("https://www.site.test", "https://site.test/login"));
+        assert!(fill_allowed(
+            "https://www.site.test",
+            "https://site.test/login"
+        ));
         assert!(fill_allowed("https://site.test", "https://www.site.test/"));
-        assert!(fill_allowed("http://192.168.1.1", "http://192.168.1.1/admin"));
+        assert!(fill_allowed(
+            "http://192.168.1.1",
+            "http://192.168.1.1/admin"
+        ));
         assert!(!fill_allowed("https://bank.test", "https://evil.test/"));
-        assert!(!fill_allowed("https://bank.test", "https://bank.test.evil.test/"));
-        assert!(!fill_allowed("https://bank.test", "https://bank.test@evil.test/"));
-        assert!(!fill_allowed("https://bank.test", "https://login.bank.test/"));
+        assert!(!fill_allowed(
+            "https://bank.test",
+            "https://bank.test.evil.test/"
+        ));
+        assert!(!fill_allowed(
+            "https://bank.test",
+            "https://bank.test@evil.test/"
+        ));
+        assert!(!fill_allowed(
+            "https://bank.test",
+            "https://login.bank.test/"
+        ));
         // Same host, but public HTTP: MITM-able, no autofill.
         assert!(!fill_allowed("https://bank.test", "http://bank.test/"));
-        assert!(!fill_allowed("https://bank.test", "data:text/html,https://bank.test"));
+        assert!(!fill_allowed(
+            "https://bank.test",
+            "data:text/html,https://bank.test"
+        ));
         assert!(!fill_allowed("", "https://site.test/"));
     }
 
@@ -262,14 +312,20 @@ mod tests {
             username: "u".into(),
             password: "p".into(),
         };
-        assert!(matches!(web(Some(&v), offer), Some(PasswordAction::SaveOffer { origin, .. }) if origin == "https://site.test"));
+        assert!(
+            matches!(web(Some(&v), offer), Some(PasswordAction::SaveOffer { origin, .. }) if origin == "https://site.test")
+        );
     }
 
     #[test]
     fn web_cannot_manage_vault() {
         let v = vault();
         let denied = [
-            PasswordAction::Unlock { password: "x".repeat(8), create: true, confirm: Some("x".repeat(8)) },
+            PasswordAction::Unlock {
+                password: "x".repeat(8),
+                create: true,
+                confirm: Some("x".repeat(8)),
+            },
             PasswordAction::Delete { id: "bank".into() },
             PasswordAction::Upsert {
                 id: Some("bank".into()),
@@ -278,8 +334,13 @@ mod tests {
                 password: "p".into(),
                 email: None,
             },
-            PasswordAction::RemoveNever { origin: "https://bank.test".into() },
-            PasswordAction::Generate { length: 20, symbols: true },
+            PasswordAction::RemoveNever {
+                origin: "https://bank.test".into(),
+            },
+            PasswordAction::Generate {
+                length: 20,
+                symbols: true,
+            },
             PasswordAction::ImportBrowse,
             PasswordAction::OpenList,
             PasswordAction::Lock,
@@ -296,7 +357,10 @@ mod tests {
             test_entry("router", "http://192.168.1.1"),
         ]);
         let http = |action| web_password_action(Some(&v), "http://site.test", action);
-        assert!(http(PasswordAction::Query { origin: String::new() }).is_none());
+        assert!(http(PasswordAction::Query {
+            origin: String::new()
+        })
+        .is_none());
         assert!(http(PasswordAction::Fill { id: "plain".into() }).is_none());
         assert!(http(PasswordAction::SaveOffer {
             origin: String::new(),
@@ -307,7 +371,9 @@ mod tests {
 
         let lan = |action| web_password_action(Some(&v), "http://192.168.1.1", action);
         assert!(matches!(
-            lan(PasswordAction::Fill { id: "router".into() }),
+            lan(PasswordAction::Fill {
+                id: "router".into()
+            }),
             Some(PasswordAction::Fill { .. })
         ));
     }
@@ -315,7 +381,11 @@ mod tests {
     #[test]
     fn context_hit_needs_the_clicked_page_and_a_fresh_click() {
         let at = std::time::Instant::now();
-        let request = ContextHitRequest { browser_id: 7, screen_pos: (1.0, 2.0), at };
+        let request = ContextHitRequest {
+            browser_id: 7,
+            screen_pos: (1.0, 2.0),
+            at,
+        };
         assert!(request.accepts(7, at + std::time::Duration::from_millis(50)));
         assert!(!request.accepts(8, at));
         assert!(!request.accepts(7, at + std::time::Duration::from_secs(2)));
@@ -326,7 +396,10 @@ mod tests {
         assert!(same_origin("https://a.test/x?y#z", "https://A.test/other"));
         assert!(!same_origin("https://a.test/", "https://b.test/"));
         assert!(!same_origin("http://a.test/", "https://a.test/"));
-        assert!(same_origin("spatial://page/help/a", "spatial://page/settings/b"));
+        assert!(same_origin(
+            "spatial://page/help/a",
+            "spatial://page/settings/b"
+        ));
         assert!(!same_origin("spatial://page/help/a", "https://a.test/"));
         assert!(!same_origin("https://page/", "spatial://page/help/a"));
         assert!(!same_origin("about:blank", "javascript:void(0)"));
@@ -345,13 +418,21 @@ mod tests {
         // Same token under another kind, unknown token, and the old data: path.
         let (_, token) = cef_bridge::spatial::parse_page_url(&url).unwrap();
         let token = token.to_string();
-        assert!(!is_internal_page(true, &format!("spatial://page/vault-list/{token}"), 31_337));
+        assert!(!is_internal_page(
+            true,
+            &format!("spatial://page/vault-list/{token}"),
+            31_337
+        ));
         assert!(!is_internal_page(
             true,
             "spatial://page/settings/00000000000000000000000000000000",
             31_337
         ));
-        assert!(!is_internal_page(true, "data:text/html;base64,PGgxPg==", 31_337));
+        assert!(!is_internal_page(
+            true,
+            "data:text/html;base64,PGgxPg==",
+            31_337
+        ));
         // Closing the tile revokes it.
         cef_bridge::spatial::forget_browser(31_337);
         assert!(!is_internal_page(true, &url, 31_337));
@@ -359,6 +440,12 @@ mod tests {
 
     #[test]
     fn web_actions_are_silent_while_locked() {
-        assert!(web(None, PasswordAction::Query { origin: String::new() }).is_none());
+        assert!(web(
+            None,
+            PasswordAction::Query {
+                origin: String::new()
+            }
+        )
+        .is_none());
     }
 }

@@ -157,7 +157,12 @@ fn build_engine(config: &FilterEngineConfig) -> (Option<Engine>, u32) {
     let mut loaded = 0u32;
 
     if config.easylist
-        && load_list(&mut set, &config.filters_dir, "easylist.txt", FilterFormat::Standard)
+        && load_list(
+            &mut set,
+            &config.filters_dir,
+            "easylist.txt",
+            FilterFormat::Standard,
+        )
     {
         loaded += 1;
     }
@@ -209,8 +214,7 @@ fn attach_scriptlets(engine: &mut Engine, dir: &Path) {
         return;
     }
     #[allow(deprecated)]
-    let resources =
-        adblock::resources::resource_assembler::assemble_scriptlet_resources(&path);
+    let resources = adblock::resources::resource_assembler::assemble_scriptlet_resources(&path);
     log::info!("loaded {} scriptlet resources", resources.len());
     engine.use_resources(resources);
 }
@@ -260,7 +264,11 @@ pub fn check_request(url: &str, source_url: &str, resource_type: cef::ResourceTy
     let Some(engine) = guard.as_ref() else {
         return false;
     };
-    let source = if source_url.is_empty() { url } else { source_url };
+    let source = if source_url.is_empty() {
+        url
+    } else {
+        source_url
+    };
     let Ok(req) = Request::new(url, source, map_resource_type(resource_type), "GET") else {
         return false;
     };
@@ -383,10 +391,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "spatial-filter-test-{tag}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("spatial-filter-test-{tag}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -415,8 +421,13 @@ mod tests {
         let (engine, loaded) = build_engine(&config);
         assert_eq!(loaded, 1);
         let engine = engine.expect("engine built");
-        let req = Request::new("https://ads.example/x.js", "https://site.test/", "script", "GET")
-            .unwrap();
+        let req = Request::new(
+            "https://ads.example/x.js",
+            "https://site.test/",
+            "script",
+            "GET",
+        )
+        .unwrap();
         assert!(engine.check_network_request(&req).should_block());
 
         let (none, loaded) = build_engine(&FilterEngineConfig {

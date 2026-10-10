@@ -82,8 +82,7 @@ fn path() -> PathBuf {
 }
 
 pub fn load() -> AppSettings {
-    super::store::load_json(&path(), "settings")
-        .unwrap_or_default()
+    super::store::load_json(&path(), "settings").unwrap_or_default()
 }
 
 pub fn save(settings: &AppSettings) {

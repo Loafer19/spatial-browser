@@ -4,7 +4,8 @@
 /// http(s) only: anything else could make xdg-open run a local handler.
 pub fn is_web_url(url: &str) -> bool {
     let lower = url.trim_start().to_ascii_lowercase();
-    (lower.starts_with("https://") || lower.starts_with("http://")) && !url.chars().any(char::is_whitespace)
+    (lower.starts_with("https://") || lower.starts_with("http://"))
+        && !url.chars().any(char::is_whitespace)
 }
 
 /// Open `url` with the desktop's default browser; ignores non-web URLs.

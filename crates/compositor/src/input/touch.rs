@@ -126,11 +126,7 @@ impl TouchInput {
             TouchPhase::Moved => {
                 if let Some(finger) = self.fingers.get_mut(&id) {
                     finger.window = window;
-                    if let FingerTarget::Page {
-                        local,
-                        browser_id,
-                    } = &mut finger.target
-                    {
+                    if let FingerTarget::Page { local, browser_id } = &mut finger.target {
                         if let Some(h) = hit {
                             *local = h.local;
                             *browser_id = h.browser_id;

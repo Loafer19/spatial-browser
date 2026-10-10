@@ -51,7 +51,12 @@ fn popup_rate_ok(last: Option<Instant>, now: Instant) -> bool {
     }
 }
 
-fn popup_verdict(user_gesture: bool, url: &str, last: Option<Instant>, now: Instant) -> PopupVerdict {
+fn popup_verdict(
+    user_gesture: bool,
+    url: &str,
+    last: Option<Instant>,
+    now: Instant,
+) -> PopupVerdict {
     if !user_gesture {
         PopupVerdict::NoGesture
     } else if !popup_url_allowed(url) {
@@ -142,12 +147,16 @@ mod tests {
 
     #[test]
     fn popup_url_scheme_filter() {
-        assert!(popup_url_allowed("https://accounts.example.test/o/oauth2/auth?x=1"));
+        assert!(popup_url_allowed(
+            "https://accounts.example.test/o/oauth2/auth?x=1"
+        ));
         assert!(popup_url_allowed("http://example.test/"));
         assert!(popup_url_allowed("HTTPS://example.test/"));
         assert!(!popup_url_allowed(""));
         assert!(!popup_url_allowed("about:blank"));
-        assert!(!popup_url_allowed("data:text/html,<script>alert(1)</script>"));
+        assert!(!popup_url_allowed(
+            "data:text/html,<script>alert(1)</script>"
+        ));
         assert!(!popup_url_allowed("javascript:alert(1)"));
         assert!(!popup_url_allowed("file:///etc/passwd"));
         assert!(!popup_url_allowed("blob:https://example.test/uuid"));
@@ -175,8 +184,14 @@ mod tests {
         let url = "https://example.test/";
         assert_eq!(popup_verdict(true, url, None, t0), PopupVerdict::Allow);
         assert_eq!(popup_verdict(false, url, None, t0), PopupVerdict::NoGesture);
-        assert_eq!(popup_verdict(true, "data:,x", None, t0), PopupVerdict::BadScheme);
-        assert_eq!(popup_verdict(true, url, Some(t0), t0), PopupVerdict::RateLimited);
+        assert_eq!(
+            popup_verdict(true, "data:,x", None, t0),
+            PopupVerdict::BadScheme
+        );
+        assert_eq!(
+            popup_verdict(true, url, Some(t0), t0),
+            PopupVerdict::RateLimited
+        );
     }
 
     #[test]

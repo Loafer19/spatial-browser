@@ -49,9 +49,7 @@ pub fn import_path(session: &mut VaultSession, path: &str) -> Result<ImportStats
     if entries.is_empty() {
         return Err("no login rows found (Chrome or Bitwarden CSV?)".into());
     }
-    session
-        .import_entries(entries)
-        .map_err(|e| e.to_string())
+    session.import_entries(entries).map_err(|e| e.to_string())
 }
 
 /// Parse Chrome (`name,url,username,password`) or Bitwarden
@@ -163,9 +161,7 @@ impl VaultSession {
                 vault::host_key(&e.origin) == vault::host_key(&entry.origin)
                     && e.username == entry.username
             }) {
-                if existing.password == entry.password
-                    && existing.notes == entry.notes
-                {
+                if existing.password == entry.password && existing.notes == entry.notes {
                     stats.skipped += 1;
                     continue;
                 }

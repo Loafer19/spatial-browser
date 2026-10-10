@@ -9,10 +9,10 @@ use crate::persistence::bookmarks::{self, Bookmark};
 use crate::persistence::downloads::DownloadRecord;
 use crate::persistence::history::HistoryEntry;
 use crate::persistence::settings::AppSettings;
+use crate::persistence::vault::{self, VaultSession};
 use crate::persistence::workspaces::{self, WorkspaceRuntime, WorkspaceStore};
 use crate::reader_mode;
 use crate::session::Session;
-use crate::persistence::vault::{self, VaultSession};
 use crate::userscripts::{self, UserScript};
 use crate::userstyles::{self, UserStyle};
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
@@ -106,14 +106,14 @@ pub fn handle(
         // Ctrl+Shift+1..9 — move focused page to slot N (create empty if missing) and follow.
         PhysicalKey::Code(
             code @ (KeyCode::Digit1
-                | KeyCode::Digit2
-                | KeyCode::Digit3
-                | KeyCode::Digit4
-                | KeyCode::Digit5
-                | KeyCode::Digit6
-                | KeyCode::Digit7
-                | KeyCode::Digit8
-                | KeyCode::Digit9),
+            | KeyCode::Digit2
+            | KeyCode::Digit3
+            | KeyCode::Digit4
+            | KeyCode::Digit5
+            | KeyCode::Digit6
+            | KeyCode::Digit7
+            | KeyCode::Digit8
+            | KeyCode::Digit9),
         ) => {
             let id = match code {
                 KeyCode::Digit1 => 1,
@@ -482,11 +482,7 @@ fn open_userscripts(
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
-pub(crate) fn open_passwords(
-    session: &mut Session,
-    gpu: &GpuState,
-    vault: Option<&VaultSession>,
-) {
+pub(crate) fn open_passwords(session: &mut Session, gpu: &GpuState, vault: Option<&VaultSession>) {
     let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.52).clamp(420.0, 720.0);
     let h = (size.height as f32 * 0.75).clamp(420.0, 800.0);

@@ -44,7 +44,11 @@ pub struct Hud {
 }
 
 impl Hud {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, surface_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+    ) -> Self {
         let atlas = build_atlas(device, queue);
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("hud atlas layout"),
@@ -177,7 +181,8 @@ impl Hud {
 
     /// When `tick` may auto-hide the strip (frame loop wakes for it).
     pub fn hide_deadline(&self) -> Option<Instant> {
-        self.hide_at.filter(|_| self.visible && !self.pointer_in_strip)
+        self.hide_at
+            .filter(|_| self.visible && !self.pointer_in_strip)
     }
 
     pub fn tick(&mut self) {
@@ -275,7 +280,17 @@ impl Hud {
             let active = slot.id == store.active;
             let bg = if active { accent } else { idle };
             let gc = if active { glyph_on } else { glyph_off };
-            push_rect(&mut verts, cx, cy, CHIP_W, CHIP_H, sw, sh, bg, atlas_uv_solid());
+            push_rect(
+                &mut verts,
+                cx,
+                cy,
+                CHIP_W,
+                CHIP_H,
+                sw,
+                sh,
+                bg,
+                atlas_uv_solid(),
+            );
             push_rect_outline(&mut verts, cx, cy, CHIP_W, CHIP_H, sw, sh, border);
             let label = if slot.id >= 10 {
                 format!("{}", slot.id)
@@ -287,7 +302,17 @@ impl Hud {
             push_glyph_centered(&mut verts, &label, cx, cy, CHIP_W, CHIP_H, sw, sh, gc);
             cx += CHIP_W + CHIP_GAP;
         }
-        push_rect(&mut verts, cx, cy, CHIP_W, CHIP_H, sw, sh, idle, atlas_uv_solid());
+        push_rect(
+            &mut verts,
+            cx,
+            cy,
+            CHIP_W,
+            CHIP_H,
+            sw,
+            sh,
+            idle,
+            atlas_uv_solid(),
+        );
         push_rect_outline(&mut verts, cx, cy, CHIP_W, CHIP_H, sw, sh, border);
         push_glyph_centered(&mut verts, "+", cx, cy, CHIP_W, CHIP_H, sw, sh, glyph_off);
 
@@ -428,12 +453,7 @@ fn push_rect(
 ) {
     let (x0, y0, x1, y1) = (x, y, x + w, y + h);
     let (u0, v0, u1, v1) = (uv[0], uv[1], uv[2], uv[3]);
-    let to_ndc = |px: f32, py: f32| -> [f32; 2] {
-        [
-            (px / sw) * 2.0 - 1.0,
-            1.0 - (py / sh) * 2.0,
-        ]
-    };
+    let to_ndc = |px: f32, py: f32| -> [f32; 2] { [(px / sw) * 2.0 - 1.0, 1.0 - (py / sh) * 2.0] };
     let p00 = to_ndc(x0, y0);
     let p10 = to_ndc(x1, y0);
     let p01 = to_ndc(x0, y1);
@@ -562,11 +582,10 @@ fn blit_glyph(pixels: &mut [u8], width: u32, col: u32, ch: char) {
 
 fn parse_rgb(s: &str, alpha: f32) -> [f32; 4] {
     // "rgb(r,g,b)"
-    let inner = s
-        .trim()
-        .trim_start_matches("rgb(")
-        .trim_end_matches(')');
-    let mut parts = inner.split(',').filter_map(|p| p.trim().parse::<f32>().ok());
+    let inner = s.trim().trim_start_matches("rgb(").trim_end_matches(')');
+    let mut parts = inner
+        .split(',')
+        .filter_map(|p| p.trim().parse::<f32>().ok());
     let r = parts.next().unwrap_or(128.0) / 255.0;
     let g = parts.next().unwrap_or(128.0) / 255.0;
     let b = parts.next().unwrap_or(128.0) / 255.0;

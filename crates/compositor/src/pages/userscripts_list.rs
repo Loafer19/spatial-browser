@@ -27,7 +27,10 @@ pub(crate) fn page_url(theme: &Theme, scripts: &[UserScript], styles: &[UserStyl
         let matches = html_escape(&script.matches.join(", "));
         let name = html_escape(&script.name);
         let file = html_escape(&script.file_name);
-        let toggle = format!("userscripts://toggle/{}", urlencoding_path(&script.file_name));
+        let toggle = format!(
+            "userscripts://toggle/{}",
+            urlencoding_path(&script.file_name)
+        );
         script_rows.push_str(&format!(
             "<div class=\"list-row\" data-open=\"{toggle}\" onclick=\"location='{toggle}'\" \
              style=\"display:flex;flex-direction:column;gap:4px;padding:10px 14px;\

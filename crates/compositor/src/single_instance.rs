@@ -25,7 +25,11 @@ fn socket_path() -> PathBuf {
 pub fn launch_urls() -> Vec<String> {
     // args_os: a non-UTF-8 argument (e.g. a Latin-1 path from a file
     // manager) must not panic before CEF is up; it's just not a URL.
-    web_urls(std::env::args_os().skip(1).filter_map(|a| a.into_string().ok()))
+    web_urls(
+        std::env::args_os()
+            .skip(1)
+            .filter_map(|a| a.into_string().ok()),
+    )
 }
 
 fn web_urls(items: impl IntoIterator<Item = String>) -> Vec<String> {
@@ -38,7 +42,10 @@ fn web_urls(items: impl IntoIterator<Item = String>) -> Vec<String> {
 }
 
 pub fn take_incoming() -> Vec<String> {
-    INCOMING.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default()
+    INCOMING
+        .lock()
+        .map(|mut q| std::mem::take(&mut *q))
+        .unwrap_or_default()
 }
 
 fn queue(urls: Vec<String>) {
@@ -98,7 +105,13 @@ mod tests {
 
     #[test]
     fn keeps_only_web_urls() {
-        let args = ["--type=renderer", "https://a.test", " http://b.test ", "file:///x", "foo"];
+        let args = [
+            "--type=renderer",
+            "https://a.test",
+            " http://b.test ",
+            "file:///x",
+            "foo",
+        ];
         assert_eq!(
             web_urls(args.iter().map(|s| s.to_string())),
             vec!["https://a.test".to_string(), "http://b.test".to_string()]

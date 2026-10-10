@@ -67,15 +67,12 @@ pub(super) fn refresh_bookmarks_page(
 }
 
 /// `bookmark://` from the bookmarks list.
-pub(super) fn drain(
-    session: &mut Session,
-    gpu: &GpuState,
-    bookmarks: &mut Vec<Bookmark>,
-) {
+pub(super) fn drain(session: &mut Session, gpu: &GpuState, bookmarks: &mut Vec<Bookmark>) {
     // bookmark://… → act; refresh the requesting list page in place.
     if let Some((browser_id, action)) = PENDING_BOOKMARK
         .with_borrow_mut(|pending| pending.take())
-        .filter(|(id, _)| from_internal(session, *id, "bookmark://")) {
+        .filter(|(id, _)| from_internal(session, *id, "bookmark://"))
+    {
         match action {
             BookmarkAction::Open(index) => {
                 if let Some(bookmark) = bookmarks.get(index) {

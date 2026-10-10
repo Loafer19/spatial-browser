@@ -219,7 +219,9 @@ impl Registry {
 static REGISTRY: LazyLock<Mutex<Registry>> = LazyLock::new(Default::default);
 
 fn registry() -> MutexGuard<'static, Registry> {
-    REGISTRY.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    REGISTRY
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Store `html` under `token` (caller-generated, 32 lowercase hex chars from
@@ -323,7 +325,9 @@ struct Served {
 }
 
 fn lock_served(served: &Mutex<Served>) -> MutexGuard<'_, Served> {
-    served.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    served
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 wrap_resource_handler! {
@@ -486,7 +490,9 @@ mod tests {
         assert_eq!(r.body(&url, Some(7)).unwrap().as_bytes(), b"<p>hi</p>");
         // Unknown token, wrong kind, malformed URL: 404.
         assert!(r.body(&format!("spatial://page/help/{T2}"), None).is_none());
-        assert!(r.body(&format!("spatial://page/settings/{T1}"), None).is_none());
+        assert!(r
+            .body(&format!("spatial://page/settings/{T1}"), None)
+            .is_none());
         assert!(r.body("spatial://page/help/nope", None).is_none());
         assert!(r.publish("help", "short", String::new()).is_none());
     }
@@ -568,7 +574,10 @@ mod tests {
             assert!(r.body(url, None).is_none(), "{url} should be evicted");
         }
         assert!(r.body(&urls[3], None).is_some());
-        assert!(r.body(&bound, Some(1)).is_some(), "bound pages are never evicted");
+        assert!(
+            r.body(&bound, Some(1)).is_some(),
+            "bound pages are never evicted"
+        );
     }
 
     #[test]

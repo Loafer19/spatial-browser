@@ -20,8 +20,7 @@ pub(super) fn drain(
     userscripts: &mut Vec<UserScript>,
     userstyles: &mut Vec<UserStyle>,
 ) {
-    if let Some((browser_id, action)) =
-        PENDING_USERSCRIPT_ACTION
+    if let Some((browser_id, action)) = PENDING_USERSCRIPT_ACTION
         .with_borrow_mut(|pending| pending.take())
         .filter(|(id, _)| from_internal(session, *id, "userscripts://"))
     {

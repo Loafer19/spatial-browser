@@ -61,8 +61,7 @@ pub(super) fn handle_password_action(
     let action = match source {
         ActionSource::Internal => action,
         ActionSource::Web { origin } => {
-            match web_password_action(vault.as_ref(), &origin, action)
-            {
+            match web_password_action(vault.as_ref(), &origin, action) {
                 Some(action) => action,
                 None => return,
             }
@@ -74,7 +73,9 @@ pub(super) fn handle_password_action(
         if internal
             || matches!(
                 action,
-                PasswordAction::Fill { .. } | PasswordAction::Save { .. } | PasswordAction::Never { .. }
+                PasswordAction::Fill { .. }
+                    | PasswordAction::Save { .. }
+                    | PasswordAction::Never { .. }
             )
         {
             v.touch();
@@ -212,9 +213,10 @@ pub(super) fn handle_password_action(
             let existing = v.entries_for_origin(&origin);
             // Same credentials already stored → no prompt (also covers empty
             // username when the only distinguishing field is the password).
-            if existing.iter().any(|e| {
-                e.password == password && (username.is_empty() || e.username == username)
-            }) {
+            if existing
+                .iter()
+                .any(|e| e.password == password && (username.is_empty() || e.username == username))
+            {
                 return;
             }
             let id = existing
@@ -529,7 +531,11 @@ pub(super) fn apply_save_prompt(
     match (rect_of(target_id), rect_of(prompt_id)) {
         (Some(target), Some(_)) => {
             let scale = gpu.window.scale_factor();
-            session.place_page(prompt_id, crate::session::save_prompt_rect(target, scale), scale);
+            session.place_page(
+                prompt_id,
+                crate::session::save_prompt_rect(target, scale),
+                scale,
+            );
         }
         _ => close_save_prompt(session, offer),
     }
@@ -663,7 +669,14 @@ pub(super) fn auto_lock(
         .as_ref()
         .is_some_and(|v| v.idle_for() >= vault::AUTO_LOCK_AFTER);
     if lock_requested || idle {
-        lock_vault(session, gpu, vault, generated_password, pending_save_offer, None);
+        lock_vault(
+            session,
+            gpu,
+            vault,
+            generated_password,
+            pending_save_offer,
+            None,
+        );
     }
 }
 

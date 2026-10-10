@@ -49,7 +49,10 @@ fn items(ctx: &MenuContext) -> Vec<(&'static str, String)> {
                 items.push(("Copy page URL", format!("context://copy?text={enc}")));
             }
             let enc = url_component(url);
-            items.push(("Open page in system browser", format!("context://external?url={enc}")));
+            items.push((
+                "Open page in system browser",
+                format!("context://external?url={enc}"),
+            ));
         }
         items.push(("Reader mode", "context://reader".into()));
         if !ctx.password_field {

@@ -117,8 +117,10 @@ pub(crate) fn copy_allowed(
     if !is_main_frame {
         return false;
     }
-    let recent_copy_key = last_copy_key
-        .is_some_and(|t| now.checked_duration_since(t).is_some_and(|d| d <= COPY_KEY_WINDOW));
+    let recent_copy_key = last_copy_key.is_some_and(|t| {
+        now.checked_duration_since(t)
+            .is_some_and(|d| d <= COPY_KEY_WINDOW)
+    });
     user_gesture || recent_copy_key
 }
 
@@ -136,10 +138,7 @@ mod tests {
 
     #[test]
     fn wl_copy_sensitive_adds_hint() {
-        assert_eq!(
-            wl_copy_args(true),
-            ["--type", TEXT_MIME, "--sensitive"]
-        );
+        assert_eq!(wl_copy_args(true), ["--type", TEXT_MIME, "--sensitive"]);
     }
 
     #[test]
@@ -155,8 +154,18 @@ mod tests {
         assert!(copy_allowed(true, true, None, now));
         assert!(copy_allowed(false, true, just_now, now));
         // Window edge is inclusive; key "in the future" (clock skew) is not.
-        assert!(copy_allowed(false, true, now.checked_sub(COPY_KEY_WINDOW), now));
-        assert!(!copy_allowed(false, true, Some(now + Duration::from_secs(1)), now));
+        assert!(copy_allowed(
+            false,
+            true,
+            now.checked_sub(COPY_KEY_WINDOW),
+            now
+        ));
+        assert!(!copy_allowed(
+            false,
+            true,
+            Some(now + Duration::from_secs(1)),
+            now
+        ));
     }
 
     #[test]

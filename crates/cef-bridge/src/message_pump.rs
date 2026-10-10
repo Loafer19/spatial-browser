@@ -86,6 +86,8 @@ mod tests {
         assert!(!take_message_pump_work(Instant::now()));
         schedule(20);
         assert!(!take_message_pump_work(Instant::now()));
-        assert!(take_message_pump_work(Instant::now() + Duration::from_millis(40)));
+        assert!(take_message_pump_work(
+            Instant::now() + Duration::from_millis(40)
+        ));
     }
 }

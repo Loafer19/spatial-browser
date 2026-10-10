@@ -144,9 +144,7 @@ impl FramePacer {
 
         let mut plan = TickPlan::default();
         self.pages.retain(|id, _| pages.iter().any(|p| p.id == *id));
-        let input_active = self
-            .last_input
-            .is_some_and(|t| now < t + ACTIVE_HOLD);
+        let input_active = self.last_input.is_some_and(|t| now < t + ACTIVE_HOLD);
 
         let mut next_begin_frame: Option<Instant> = None;
         for page in pages {
@@ -162,8 +160,7 @@ impl FramePacer {
                 clock.paint_token = page.paint_token;
                 clock.active_until = now + ACTIVE_HOLD;
             }
-            if page.visibility == Visibility::OnScreen
-                && clock.visibility == Visibility::OffScreen
+            if page.visibility == Visibility::OnScreen && clock.visibility == Visibility::OffScreen
             {
                 // Panned into view: refresh the (≤1 s old) texture now.
                 clock.active_until = now + ACTIVE_HOLD;
@@ -219,7 +216,10 @@ impl FramePacer {
     /// When the loop must wake for pacing work (None = sleep until an event).
     pub fn next_deadline(&self) -> Option<Instant> {
         let redraw = if (self.dirty || self.animating) && !self.redraw_pending {
-            Some(self.last_render.map_or_else(Instant::now, |t| t + self.frame))
+            Some(
+                self.last_render
+                    .map_or_else(Instant::now, |t| t + self.frame),
+            )
         } else {
             None
         };
@@ -304,18 +304,45 @@ mod tests {
     #[test]
     fn classify_overlap() {
         let canvas = (800.0, 600.0);
-        assert_eq!(classify(rect(10.0, 10.0, 100.0, 100.0), canvas), Visibility::OnScreen);
+        assert_eq!(
+            classify(rect(10.0, 10.0, 100.0, 100.0), canvas),
+            Visibility::OnScreen
+        );
         // Partially visible counts as on screen.
-        assert_eq!(classify(rect(-50.0, -50.0, 60.0, 60.0), canvas), Visibility::OnScreen);
-        assert_eq!(classify(rect(790.0, 590.0, 100.0, 100.0), canvas), Visibility::OnScreen);
+        assert_eq!(
+            classify(rect(-50.0, -50.0, 60.0, 60.0), canvas),
+            Visibility::OnScreen
+        );
+        assert_eq!(
+            classify(rect(790.0, 590.0, 100.0, 100.0), canvas),
+            Visibility::OnScreen
+        );
         // Fully outside on each side.
-        assert_eq!(classify(rect(-200.0, 0.0, 100.0, 100.0), canvas), Visibility::OffScreen);
-        assert_eq!(classify(rect(800.0, 0.0, 100.0, 100.0), canvas), Visibility::OffScreen);
-        assert_eq!(classify(rect(0.0, 600.0, 100.0, 100.0), canvas), Visibility::OffScreen);
-        assert_eq!(classify(rect(0.0, -100.0, 100.0, 100.0), canvas), Visibility::OffScreen);
+        assert_eq!(
+            classify(rect(-200.0, 0.0, 100.0, 100.0), canvas),
+            Visibility::OffScreen
+        );
+        assert_eq!(
+            classify(rect(800.0, 0.0, 100.0, 100.0), canvas),
+            Visibility::OffScreen
+        );
+        assert_eq!(
+            classify(rect(0.0, 600.0, 100.0, 100.0), canvas),
+            Visibility::OffScreen
+        );
+        assert_eq!(
+            classify(rect(0.0, -100.0, 100.0, 100.0), canvas),
+            Visibility::OffScreen
+        );
         // Degenerate rect, unknown canvas.
-        assert_eq!(classify(rect(10.0, 10.0, 0.0, 100.0), canvas), Visibility::OffScreen);
-        assert_eq!(classify(rect(5000.0, 0.0, 10.0, 10.0), (0.0, 0.0)), Visibility::OnScreen);
+        assert_eq!(
+            classify(rect(10.0, 10.0, 0.0, 100.0), canvas),
+            Visibility::OffScreen
+        );
+        assert_eq!(
+            classify(rect(5000.0, 0.0, 10.0, 10.0), (0.0, 0.0)),
+            Visibility::OnScreen
+        );
     }
 
     #[test]
@@ -364,7 +391,11 @@ mod tests {
         let t2 = t + frame_interval(FPS);
         assert!(pacer.tick(t2, FPS, &pages, 1, false).redraw);
         // Still pending (RedrawRequested not yet delivered): no second request.
-        assert!(!pacer.tick(t2 + Duration::from_millis(30), FPS, &pages, 1, false).redraw);
+        assert!(
+            !pacer
+                .tick(t2 + Duration::from_millis(30), FPS, &pages, 1, false)
+                .redraw
+        );
     }
 
     #[test]
@@ -404,8 +435,16 @@ mod tests {
             now += step;
         }
         let per_sec = |id| counts.get(&id).copied().unwrap_or(0) as f32 / 2.0;
-        assert!((9.0..=11.0).contains(&per_sec(1)), "idle on-screen {}", per_sec(1));
-        assert!((0.5..=1.5).contains(&per_sec(2)), "off-screen {}", per_sec(2));
+        assert!(
+            (9.0..=11.0).contains(&per_sec(1)),
+            "idle on-screen {}",
+            per_sec(1)
+        );
+        assert!(
+            (0.5..=1.5).contains(&per_sec(2)),
+            "off-screen {}",
+            per_sec(2)
+        );
         assert!((55.0..=62.0).contains(&per_sec(3)), "busy {}", per_sec(3));
     }
 
@@ -419,12 +458,18 @@ mod tests {
         let plan = pacer.tick(t1, FPS, &painted, 2, false);
         assert!(plan.redraw);
         let next = pacer.next_deadline().unwrap();
-        assert!(next <= t1 + frame_interval(FPS), "full-rate begin frame scheduled");
+        assert!(
+            next <= t1 + frame_interval(FPS),
+            "full-rate begin frame scheduled"
+        );
     }
 
     #[test]
     fn input_promotes_all_visible_pages() {
-        let pages = [page(1, Visibility::OnScreen, 0), page(2, Visibility::OffScreen, 0)];
+        let pages = [
+            page(1, Visibility::OnScreen, 0),
+            page(2, Visibility::OffScreen, 0),
+        ];
         let (mut pacer, t) = settled(&pages);
         let t1 = t + Duration::from_millis(150);
         pacer.note_input(t1);
@@ -460,7 +505,10 @@ mod tests {
         pacer.rendered(t);
         pacer.tick(t, FPS, &pages, 1, false);
         let next = pacer.next_deadline().unwrap();
-        assert!(next >= t + Duration::from_millis(90), "idle page wakes at ~10 Hz");
+        assert!(
+            next >= t + Duration::from_millis(90),
+            "idle page wakes at ~10 Hz"
+        );
 
         let mut empty = FramePacer::new();
         let now = Instant::now();
@@ -478,8 +526,10 @@ mod tests {
         assert!(pacer.tick(t, FPS, &pages, 1, false).redraw);
         pacer.render_skipped(t);
         assert!(!pacer.tick(t, FPS, &pages, 1, false).redraw);
-        assert!(pacer
-            .tick(t + frame_interval(FPS), FPS, &pages, 1, false)
-            .redraw);
+        assert!(
+            pacer
+                .tick(t + frame_interval(FPS), FPS, &pages, 1, false)
+                .redraw
+        );
     }
 }

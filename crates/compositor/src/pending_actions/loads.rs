@@ -28,9 +28,7 @@ pub(super) fn same_origin(a: &str, b: &str) -> bool {
 }
 
 /// Load state/progress → the top-edge bar (built-in tiles never show one).
-pub(super) fn apply_load_progress(
-    session: &mut Session,
-) {
+pub(super) fn apply_load_progress(session: &mut Session) {
     // Load progress → top-edge bar (skip ephemeral).
     let load_states = PENDING_LOAD_STATE.with_borrow_mut(std::mem::take);
     for (browser_id, is_loading) in load_states {
@@ -93,7 +91,11 @@ pub(super) fn inject_document_start(
                 page.load_active.set(true);
                 page.load_progress.set(0.0);
             }
-            if let Some(frame) = page.browser.main_frame().filter(|f| frame_still_on(f, &url)) {
+            if let Some(frame) = page
+                .browser
+                .main_frame()
+                .filter(|f| frame_still_on(f, &url))
+            {
                 // EasyList cosmetic hides + optional ##+js scriptlets.
                 if !page.ephemeral {
                     if let Some(css) = cef_bridge::cosmetic_hide_css(&url) {
@@ -139,7 +141,11 @@ pub(super) fn inject_load_end(
             .iter()
             .find(|p| p.browser.identifier() == browser_id)
         {
-            if let Some(frame) = page.browser.main_frame().filter(|f| frame_still_on(f, &url)) {
+            if let Some(frame) = page
+                .browser
+                .main_frame()
+                .filter(|f| frame_still_on(f, &url))
+            {
                 frame.execute_java_script(
                     Some(&clipboard_bridge::COPY_BRIDGE_SCRIPT.into()),
                     Some(&"".into()),
@@ -147,11 +153,7 @@ pub(super) fn inject_load_end(
                 );
                 if !page.ephemeral {
                     let bridge = autofill_bridge::script(&session.theme());
-                    frame.execute_java_script(
-                        Some(&bridge.as_str().into()),
-                        Some(&"".into()),
-                        0,
-                    );
+                    frame.execute_java_script(Some(&bridge.as_str().into()), Some(&"".into()), 0);
                 }
                 // Styles again (missed start / full document swap).
                 for js in userstyles::matching_inject_js(&url, page.ephemeral, userstyles) {
@@ -161,11 +163,7 @@ pub(super) fn inject_load_end(
                     for code in
                         userscripts::matching_code(&url, page.ephemeral, userscripts, run_at)
                     {
-                        frame.execute_java_script(
-                            Some(&code.as_str().into()),
-                            Some(&"".into()),
-                            0,
-                        );
+                        frame.execute_java_script(Some(&code.as_str().into()), Some(&"".into()), 0);
                     }
                 }
             }

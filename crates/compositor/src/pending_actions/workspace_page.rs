@@ -21,21 +21,14 @@ pub(super) fn drain(
     workspace_runtime: &mut WorkspaceRuntime,
 ) {
     // workspace://…
-    if let Some((browser_id, action)) =
-        PENDING_WORKSPACE_ACTION
+    if let Some((browser_id, action)) = PENDING_WORKSPACE_ACTION
         .with_borrow_mut(|pending| pending.take())
         .filter(|(id, _)| from_internal(session, *id, "workspace://"))
     {
         match action {
             WorkspacePageAction::Load(index) => {
                 if let Some(slot) = workspaces.slots.get(index).cloned() {
-                    workspaces::switch_to(
-                        workspaces,
-                        workspace_runtime,
-                        session,
-                        gpu,
-                        slot.id,
-                    );
+                    workspaces::switch_to(workspaces, workspace_runtime, session, gpu, slot.id);
                 }
             }
             WorkspacePageAction::Rename(_index, _name) => {
@@ -44,13 +37,7 @@ pub(super) fn drain(
             }
             WorkspacePageAction::Delete(index) => {
                 if let Some(id) = workspaces.slots.get(index).map(|s| s.id) {
-                    workspaces::delete_slot(
-                        workspaces,
-                        workspace_runtime,
-                        session,
-                        gpu,
-                        id,
-                    );
+                    workspaces::delete_slot(workspaces, workspace_runtime, session, gpu, id);
                 }
                 // List page may still be open if a non-active slot was deleted.
                 if session

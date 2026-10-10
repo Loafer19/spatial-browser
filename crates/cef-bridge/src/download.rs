@@ -30,14 +30,58 @@ thread_local! {
 /// Windows executables that Wine would happily launch via xdg-open.
 const RISKY_EXTENSIONS: &[&str] = &[
     // Linux executables, installers, launchers
-    "appimage", "run", "bin", "elf", "out", "so", "ko", "desktop", "deb", "rpm", "snap",
-    "flatpak", "flatpakref", "flatpakrepo", "pkg", "x86_64", "aarch64",
+    "appimage",
+    "run",
+    "bin",
+    "elf",
+    "out",
+    "so",
+    "ko",
+    "desktop",
+    "deb",
+    "rpm",
+    "snap",
+    "flatpak",
+    "flatpakref",
+    "flatpakrepo",
+    "pkg",
+    "x86_64",
+    "aarch64",
     // Scripts
-    "sh", "bash", "zsh", "csh", "ksh", "fish", "command", "py", "pyw", "pyc", "pl", "rb",
-    "php", "lua", "tcl", "jar", "jnlp",
+    "sh",
+    "bash",
+    "zsh",
+    "csh",
+    "ksh",
+    "fish",
+    "command",
+    "py",
+    "pyw",
+    "pyc",
+    "pl",
+    "rb",
+    "php",
+    "lua",
+    "tcl",
+    "jar",
+    "jnlp",
     // Windows (Wine)
-    "exe", "msi", "msp", "com", "bat", "cmd", "ps1", "vbs", "vbe", "wsf", "scr", "pif",
-    "lnk", "reg", "cpl", "hta",
+    "exe",
+    "msi",
+    "msp",
+    "com",
+    "bat",
+    "cmd",
+    "ps1",
+    "vbs",
+    "vbe",
+    "wsf",
+    "scr",
+    "pif",
+    "lnk",
+    "reg",
+    "cpl",
+    "hta",
 ];
 
 /// MIME types (parameters stripped, lowercase) that mean "this is a program".
@@ -102,7 +146,12 @@ pub fn is_risky_download(name: &str, mime: Option<&str>) -> bool {
         }
     };
     let risky_mime = mime.is_some_and(|mime| {
-        let essence = mime.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        let essence = mime
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
         RISKY_MIME_TYPES.contains(&essence.as_str())
     });
     risky_name || risky_mime
@@ -305,8 +354,10 @@ mod tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let dir = std::env::temp_dir()
-                .join(format!("spatial-dl-test-{tag}-{}-{nanos}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!(
+                "spatial-dl-test-{tag}-{}-{nanos}",
+                std::process::id()
+            ));
             std::fs::create_dir_all(&dir).unwrap();
             Self(dir)
         }
@@ -321,9 +372,22 @@ mod tests {
     #[test]
     fn risky_by_extension() {
         for name in [
-            "install.sh", "Tool.AppImage", "setup.run", "fw.bin", "evil.desktop", "setup.exe",
-            "pkg.msi", "app.deb", "app.rpm", "script.py", "app.jar", "invoice.pdf.exe",
-            "trailing.sh.", "trailing.sh ", "UPPER.SH", "dir/inner.sh",
+            "install.sh",
+            "Tool.AppImage",
+            "setup.run",
+            "fw.bin",
+            "evil.desktop",
+            "setup.exe",
+            "pkg.msi",
+            "app.deb",
+            "app.rpm",
+            "script.py",
+            "app.jar",
+            "invoice.pdf.exe",
+            "trailing.sh.",
+            "trailing.sh ",
+            "UPPER.SH",
+            "dir/inner.sh",
         ] {
             assert!(is_risky_download(name, None), "{name} should be risky");
         }
@@ -339,31 +403,57 @@ mod tests {
     #[test]
     fn safe_common_types() {
         for name in [
-            "report.pdf", "photo.JPG", "data.csv", "archive.zip", "src.tar.gz", "notes.txt",
-            "slides.pptx", "song.mp3", "movie.mkv", "page.html",
+            "report.pdf",
+            "photo.JPG",
+            "data.csv",
+            "archive.zip",
+            "src.tar.gz",
+            "notes.txt",
+            "slides.pptx",
+            "song.mp3",
+            "movie.mkv",
+            "page.html",
         ] {
             assert!(!is_risky_download(name, None), "{name} should be safe");
             assert!(!is_risky_download(name, Some("")), "{name} with empty mime");
         }
         assert!(!is_risky_download("report.pdf", Some("application/pdf")));
-        assert!(!is_risky_download("data.csv", Some("text/csv; charset=utf-8")));
+        assert!(!is_risky_download(
+            "data.csv",
+            Some("text/csv; charset=utf-8")
+        ));
     }
 
     #[test]
     fn risky_by_mime() {
-        assert!(is_risky_download("report.pdf", Some("application/octet-stream")));
+        assert!(is_risky_download(
+            "report.pdf",
+            Some("application/octet-stream")
+        ));
         assert!(is_risky_download("x.txt", Some("application/x-executable")));
-        assert!(is_risky_download("x.txt", Some("Application/X-Sh; charset=binary")));
-        assert!(is_risky_download("x.zip", Some("application/vnd.debian.binary-package")));
+        assert!(is_risky_download(
+            "x.txt",
+            Some("Application/X-Sh; charset=binary")
+        ));
+        assert!(is_risky_download(
+            "x.zip",
+            Some("application/vnd.debian.binary-package")
+        ));
     }
 
     #[test]
     fn unique_path_stays_in_dir() {
         let tmp = TempDir::new("unique");
-        assert_eq!(unique_download_path(&tmp.0, "../../etc/passwd"), tmp.0.join("passwd"));
+        assert_eq!(
+            unique_download_path(&tmp.0, "../../etc/passwd"),
+            tmp.0.join("passwd")
+        );
         assert_eq!(unique_download_path(&tmp.0, ""), tmp.0.join("download"));
         std::fs::write(tmp.0.join("a.pdf"), b"x").unwrap();
-        assert_eq!(unique_download_path(&tmp.0, "a.pdf"), tmp.0.join("a (1).pdf"));
+        assert_eq!(
+            unique_download_path(&tmp.0, "a.pdf"),
+            tmp.0.join("a (1).pdf")
+        );
     }
 
     #[test]
@@ -390,12 +480,18 @@ mod tests {
         assert_eq!(contained_download_path(&downloads, &outside_file), None);
         // The dir itself, and missing files.
         assert_eq!(contained_download_path(&downloads, &downloads), None);
-        assert_eq!(contained_download_path(&downloads, &downloads.join("gone.pdf")), None);
+        assert_eq!(
+            contained_download_path(&downloads, &downloads.join("gone.pdf")),
+            None
+        );
         // Sibling with a shared prefix ("Downloads-evil") is not inside.
         let sibling = tmp.0.join("Downloads-evil");
         std::fs::create_dir_all(&sibling).unwrap();
         std::fs::write(sibling.join("x.pdf"), b"x").unwrap();
-        assert_eq!(contained_download_path(&downloads, &sibling.join("x.pdf")), None);
+        assert_eq!(
+            contained_download_path(&downloads, &sibling.join("x.pdf")),
+            None
+        );
         // Symlink inside pointing outside.
         #[cfg(unix)]
         {

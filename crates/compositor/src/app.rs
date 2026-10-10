@@ -5,13 +5,11 @@ use crate::browser::{self, Page};
 use crate::frame_pacer::{self, FramePacer, PageFrameInfo, Visibility};
 use crate::hotkeys;
 use crate::hud::{Hud, HudHit};
-use crate::input::{
-    send_touch_to_host, KeyboardInput, MouseInput, TouchCmd, TouchHit, TouchInput,
-};
+use crate::input::{send_touch_to_host, KeyboardInput, MouseInput, TouchCmd, TouchHit, TouchInput};
 use crate::minimap::Minimap;
-use crate::viewport::Viewport;
 use crate::output::{FrameOutcome, GpuState, PageDraw, Rect, THEMES};
 use crate::pending_actions;
+use crate::persistence::vault::VaultSession;
 use crate::persistence::{
     self,
     bookmarks::{self, Bookmark},
@@ -22,9 +20,9 @@ use crate::persistence::{
     workspaces::{self, WorkspaceRuntime, WorkspaceStore},
 };
 use crate::session::Session;
-use crate::persistence::vault::VaultSession;
 use crate::userscripts;
 use crate::userstyles;
+use crate::viewport::Viewport;
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 
 /// A login a page offered to save, shown as a compositor-owned prompt tile
@@ -245,12 +243,10 @@ impl App {
                 busy: page.load_active.get() || page.texture().is_none(),
             })
             .collect();
-        let animating = self
-            .session
-            .pages()
-            .iter()
-            .zip(&pages)
-            .any(|(page, info)| info.visibility == Visibility::OnScreen && shader_animates(page));
+        let animating =
+            self.session.pages().iter().zip(&pages).any(|(page, info)| {
+                info.visibility == Visibility::OnScreen && shader_animates(page)
+            });
         let signature = self.frame_signature(&pages);
         let plan = self
             .pacer
@@ -276,10 +272,7 @@ impl App {
             self.session.clear_dirty();
             self.last_save = Instant::now();
         }
-        let save_due = self
-            .session
-            .dirty()
-            .then(|| self.last_save + SAVE_DEBOUNCE);
+        let save_due = self.session.dirty().then(|| self.last_save + SAVE_DEBOUNCE);
         let hud_due = self.hud.as_ref().and_then(Hud::hide_deadline);
 
         frame_pacer::min_instant(
@@ -369,17 +362,10 @@ impl ApplicationHandler for App {
                     w: (size.width as f32 - margin * 2.0).max(320.0),
                     h: (size.height as f32 - margin * 2.0).max(240.0),
                 };
-                let page = browser::spawn(
-                    &state,
-                    &window,
-                    "https://www.google.com",
-                    rect,
-                    false,
-                );
+                let page = browser::spawn(&state, &window, "https://www.google.com", rect, false);
                 Session::new(vec![page], Viewport::default(), THEMES[0])
             });
-            self.workspaces
-                .capture_active_from_session(&self.session);
+            self.workspaces.capture_active_from_session(&self.session);
             self.workspaces.save();
         }
         self.canvas_size = (
@@ -561,9 +547,11 @@ impl ApplicationHandler for App {
                     match element_state {
                         ElementState::Pressed => {
                             if let Some(hud) = &self.hud {
-                                if let Some(hit) =
-                                    hud.hit_test(&self.workspaces, self.cursor_window.0, self.cursor_window.1)
-                                {
+                                if let Some(hit) = hud.hit_test(
+                                    &self.workspaces,
+                                    self.cursor_window.0,
+                                    self.cursor_window.1,
+                                ) {
                                     match hit {
                                         HudHit::Slot(id) => {
                                             workspaces::switch_to(
@@ -588,23 +576,19 @@ impl ApplicationHandler for App {
                             }
                             if let Some(minimap) = &self.minimap {
                                 if minimap.visible()
-                                    && minimap.contains_screen(
-                                        self.cursor_window.0,
-                                        self.cursor_window.1,
-                                    )
+                                    && minimap
+                                        .contains_screen(self.cursor_window.0, self.cursor_window.1)
                                 {
-                                    if minimap.hit_viewfinder(
-                                        self.cursor_window.0,
-                                        self.cursor_window.1,
-                                    ) {
+                                    if minimap
+                                        .hit_viewfinder(self.cursor_window.0, self.cursor_window.1)
+                                    {
                                         self.minimap_drag = Some((
                                             self.cursor_window,
                                             self.session.viewport().offset,
                                         ));
-                                    } else if let Some(world) = minimap.screen_to_world(
-                                        self.cursor_window.0,
-                                        self.cursor_window.1,
-                                    ) {
+                                    } else if let Some(world) = minimap
+                                        .screen_to_world(self.cursor_window.0, self.cursor_window.1)
+                                    {
                                         let (sw, sh) = self.canvas_size;
                                         let zoom = self.session.viewport().zoom;
                                         self.session.pan_viewport_to((
@@ -618,10 +602,8 @@ impl ApplicationHandler for App {
                             // Dismiss context menu on any left click outside it
                             // (clicks on the menu itself are CEF navigations).
                             if self.context_menu.is_some() {
-                                let cursor_world = self
-                                    .session
-                                    .viewport()
-                                    .screen_to_world(self.cursor_window);
+                                let cursor_world =
+                                    self.session.viewport().screen_to_world(self.cursor_window);
                                 let on_menu = self.context_menu.as_ref().and_then(|cm| {
                                     self.session.pages().iter().find(|p| {
                                         p.browser.identifier() == cm.menu_browser_id
@@ -710,11 +692,12 @@ impl ApplicationHandler for App {
                             } else {
                                 let local_x = (cursor_world.0 - page.rect.x) / scale as f32;
                                 let local_y = (cursor_world.1 - page.rect.y) / scale as f32;
-                                self.pending_context_hit = Some(crate::pending_actions::ContextHitRequest {
-                                    browser_id,
-                                    screen_pos: self.cursor_window,
-                                    at: std::time::Instant::now(),
-                                });
+                                self.pending_context_hit =
+                                    Some(crate::pending_actions::ContextHitRequest {
+                                        browser_id,
+                                        screen_pos: self.cursor_window,
+                                        at: std::time::Instant::now(),
+                                    });
                                 if let Some(frame) = page.browser.main_frame() {
                                     let js = format!(
                                         "window.__spatialContextHitAt && window.__spatialContextHitAt({local_x},{local_y});"
@@ -780,7 +763,9 @@ impl ApplicationHandler for App {
                         ),
                     }
                 });
-                let cmds = self.touch.handle(&touch, hit, viewport.offset, viewport.zoom);
+                let cmds = self
+                    .touch
+                    .handle(&touch, hit, viewport.offset, viewport.zoom);
                 for cmd in cmds {
                     match cmd {
                         TouchCmd::Send {

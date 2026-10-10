@@ -158,7 +158,11 @@ pub fn exists() -> bool {
     path().is_file()
 }
 
-fn derive_key(password: &str, salt: &[u8; SALT_LEN], kdf: KdfParams) -> Result<KeyMaterial, VaultError> {
+fn derive_key(
+    password: &str,
+    salt: &[u8; SALT_LEN],
+    kdf: KdfParams,
+) -> Result<KeyMaterial, VaultError> {
     let params = Params::new(kdf.m_cost, kdf.t_cost, kdf.p_cost, Some(KEY_LEN))
         .map_err(|_| VaultError::Corrupt("bad KDF parameters"))?;
     // Hash straight into the zeroize-on-drop buffer; no stray stack copy.
@@ -378,8 +382,8 @@ impl VaultSession {
         restrict_permissions(path);
         let header = parse_header(&bytes)?;
         let key = derive_key(password, &header.salt, header.kdf)?;
-        let cipher = Aes256Gcm::new_from_slice(&key.0)
-            .map_err(|_| VaultError::Corrupt("bad key length"))?;
+        let cipher =
+            Aes256Gcm::new_from_slice(&key.0).map_err(|_| VaultError::Corrupt("bad key length"))?;
         let aad: &[u8] = if header.version == VERSION_V1 {
             &[]
         } else {
@@ -505,7 +509,9 @@ impl VaultSession {
 
     pub fn remove_never_save(&mut self, origin: &str) -> Result<(), VaultError> {
         let origin = normalize_origin(origin);
-        self.data.never_save.retain(|o| normalize_origin(o) != origin);
+        self.data
+            .never_save
+            .retain(|o| normalize_origin(o) != origin);
         self.save()
     }
 }
@@ -541,7 +547,9 @@ pub fn normalize_origin(url_or_origin: &str) -> String {
             // origins; a bare `host:port` (digits after the colon) is.
             if let Some((head, tail)) = s.split_once(':') {
                 let port = tail.split(['/', '?', '#']).next().unwrap_or("");
-                if is_scheme(head) && !(port.chars().all(|c| c.is_ascii_digit()) && !port.is_empty()) {
+                if is_scheme(head)
+                    && !(port.chars().all(|c| c.is_ascii_digit()) && !port.is_empty())
+                {
                     return String::new();
                 }
             }
@@ -592,7 +600,9 @@ fn is_local_host(host: &str) -> bool {
         Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
         Ok(std::net::IpAddr::V6(ip)) => {
             // ::1, fc00::/7 unique-local, fe80::/10 link-local.
-            ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00 || (ip.segments()[0] & 0xffc0) == 0xfe80
+            ip.is_loopback()
+                || (ip.segments()[0] & 0xfe00) == 0xfc00
+                || (ip.segments()[0] & 0xffc0) == 0xfe80
         }
         Err(_) => false,
     }
@@ -734,7 +744,10 @@ mod tests {
         rand::rng().fill_bytes(&mut nonce);
         let ct = Aes256Gcm::new_from_slice(&key)
             .unwrap()
-            .encrypt(Nonce::from_slice(&nonce), serde_json::to_vec(data).unwrap().as_ref())
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                serde_json::to_vec(data).unwrap().as_ref(),
+            )
             .unwrap();
         let mut out = MAGIC.to_vec();
         out.push(VERSION_V1);
@@ -877,7 +890,10 @@ mod tests {
         let tmp = TempVault::new("upgrade");
         let path = tmp.path();
         create_at(&path, "password1", FAST).unwrap();
-        let stronger = KdfParams { m_cost: 128, ..FAST };
+        let stronger = KdfParams {
+            m_cost: 128,
+            ..FAST
+        };
         VaultSession::unlock_at(&path, "password1", stronger).unwrap();
         let header = parse_header(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(header.kdf, stronger);
@@ -931,7 +947,10 @@ mod tests {
     fn json_buffer_is_exact_size() {
         let data = VaultData {
             version: 1,
-            entries: vec![test_entry("a", "https://a.test"), test_entry("b", "https://b.test")],
+            entries: vec![
+                test_entry("a", "https://a.test"),
+                test_entry("b", "https://b.test"),
+            ],
             never_save: vec!["https://\"quoted\".test".into()],
         };
         let buf = to_json(&data).unwrap();
@@ -957,17 +976,32 @@ mod tests {
 
     #[test]
     fn normalize_origin_strips_path_and_lowercases_host() {
-        assert_eq!(normalize_origin("https://Example.COM/a?b#c"), "https://example.com");
-        assert_eq!(normalize_origin("http://example.com:8080/x"), "http://example.com:8080");
+        assert_eq!(
+            normalize_origin("https://Example.COM/a?b#c"),
+            "https://example.com"
+        );
+        assert_eq!(
+            normalize_origin("http://example.com:8080/x"),
+            "http://example.com:8080"
+        );
         assert_eq!(normalize_origin("example.com/login"), "https://example.com");
         assert_eq!(normalize_origin("  https://a.test  "), "https://a.test");
     }
 
     #[test]
     fn host_key_ignores_scheme_and_www_only() {
-        assert_eq!(host_key("https://www.example.com"), host_key("http://example.com"));
-        assert_ne!(host_key("https://example.com:8443"), host_key("https://example.com"));
-        assert_ne!(host_key("https://login.example.com"), host_key("https://example.com"));
+        assert_eq!(
+            host_key("https://www.example.com"),
+            host_key("http://example.com")
+        );
+        assert_ne!(
+            host_key("https://example.com:8443"),
+            host_key("https://example.com")
+        );
+        assert_ne!(
+            host_key("https://login.example.com"),
+            host_key("https://example.com")
+        );
     }
 
     #[test]
@@ -984,9 +1018,18 @@ mod tests {
         ] {
             assert_eq!(normalize_origin(bad), "", "{bad}");
         }
-        assert_eq!(normalize_origin("localhost:3000/x"), "https://localhost:3000");
-        assert_eq!(normalize_origin("HTTPS://Bank.Test/login"), "https://bank.test");
-        assert_eq!(normalize_origin("chrome-extension://abc/x"), "chrome-extension://abc");
+        assert_eq!(
+            normalize_origin("localhost:3000/x"),
+            "https://localhost:3000"
+        );
+        assert_eq!(
+            normalize_origin("HTTPS://Bank.Test/login"),
+            "https://bank.test"
+        );
+        assert_eq!(
+            normalize_origin("chrome-extension://abc/x"),
+            "chrome-extension://abc"
+        );
         assert_eq!(host_key("data:text/html,https://bank.test"), "");
     }
 
@@ -1026,7 +1069,10 @@ mod tests {
     #[test]
     fn host_key_does_not_strip_userinfo() {
         // `https://bank.test@evil.test/` must not match bank.test.
-        assert_ne!(host_key("https://bank.test@evil.test/"), host_key("https://bank.test"));
+        assert_ne!(
+            host_key("https://bank.test@evil.test/"),
+            host_key("https://bank.test")
+        );
     }
 
     #[test]
@@ -1035,7 +1081,11 @@ mod tests {
             test_entry("1", "https://www.a.test"),
             test_entry("2", "https://b.test"),
         ]);
-        let ids: Vec<_> = v.entries_for_origin("http://a.test/login").iter().map(|e| e.id.as_str()).collect();
+        let ids: Vec<_> = v
+            .entries_for_origin("http://a.test/login")
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect();
         assert_eq!(ids, ["1"]);
     }
 
@@ -1043,9 +1093,13 @@ mod tests {
     fn generate_password_clamps_length_and_respects_symbols() {
         assert_eq!(generate_password(1, true).len(), 8);
         assert_eq!(generate_password(500, true).len(), 128);
-        assert!(generate_password(64, false).bytes().all(|c| GEN_ALPHA.contains(&c)));
+        assert!(generate_password(64, false)
+            .bytes()
+            .all(|c| GEN_ALPHA.contains(&c)));
         let with_sym = GEN_ALPHA.iter().chain(GEN_SYM).copied().collect::<Vec<_>>();
-        assert!(generate_password(128, true).bytes().all(|c| with_sym.contains(&c)));
+        assert!(generate_password(128, true)
+            .bytes()
+            .all(|c| with_sym.contains(&c)));
     }
 
     #[test]

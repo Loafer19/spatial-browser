@@ -14,14 +14,9 @@ pub(super) fn refresh_history_page(
 }
 
 /// `history://` from the history list.
-pub(super) fn drain(
-    session: &mut Session,
-    gpu: &GpuState,
-    history: &mut Vec<HistoryEntry>,
-) {
+pub(super) fn drain(session: &mut Session, gpu: &GpuState, history: &mut Vec<HistoryEntry>) {
     // history://…
-    if let Some((browser_id, action)) =
-        PENDING_HISTORY_ACTION
+    if let Some((browser_id, action)) = PENDING_HISTORY_ACTION
         .with_borrow_mut(|pending| pending.take())
         .filter(|(id, _)| from_internal(session, *id, "history://"))
     {

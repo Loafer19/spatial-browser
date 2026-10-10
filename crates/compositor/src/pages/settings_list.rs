@@ -66,11 +66,7 @@ fn list_row(
     enabled: bool,
     available: bool,
 ) -> String {
-    let state = if !available {
-        "Soon"
-    } else {
-        on_off(enabled)
-    };
+    let state = if !available { "Soon" } else { on_off(enabled) };
     let opacity = if available { "1" } else { "0.55" };
     let cursor = if available { "pointer" } else { "default" };
     let onclick = if available {
@@ -111,9 +107,8 @@ fn choice_row(theme: &Theme, href: &str, label: &str, current: bool) -> String {
 }
 
 fn tab_bar(theme: &Theme, active: &str) -> String {
-    let mut html = String::from(
-        "<div style=\"display:flex;gap:6px;margin:0 0 20px;flex-wrap:wrap\">",
-    );
+    let mut html =
+        String::from("<div style=\"display:flex;gap:6px;margin:0 0 20px;flex-wrap:wrap\">");
     for (id, label) in [
         ("general", "General"),
         ("blocking", "Blocking"),

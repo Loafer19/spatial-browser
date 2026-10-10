@@ -134,7 +134,10 @@ fn writer() -> &'static Writer {
                 let (path, job) = {
                     let mut queue = writer.queue.lock().unwrap_or_else(|e| e.into_inner());
                     while queue.jobs.is_empty() {
-                        queue = writer.changed.wait(queue).unwrap_or_else(|e| e.into_inner());
+                        queue = writer
+                            .changed
+                            .wait(queue)
+                            .unwrap_or_else(|e| e.into_inner());
                     }
                     let path = queue.jobs.keys().next().cloned().expect("non-empty");
                     let job = queue.jobs.remove(&path).expect("present");
@@ -186,7 +189,10 @@ pub fn flush() {
             .unwrap_or_else(|e| e.into_inner());
         queue = next;
         if timeout.timed_out() {
-            log::warn!("config writer: flush timed out with {} pending", queue.jobs.len());
+            log::warn!(
+                "config writer: flush timed out with {} pending",
+                queue.jobs.len()
+            );
             return;
         }
     }
@@ -198,7 +204,9 @@ fn prune_corrupt(path: &Path) {
         return;
     };
     let prefix = format!("{}.corrupt-", name.to_string_lossy());
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     let mut aside: Vec<(u64, PathBuf)> = entries
         .filter_map(|e| e.ok())
         .filter_map(|e| {
@@ -228,7 +236,9 @@ pub fn load_with<T>(path: &Path, what: &str, parse: impl Fn(&[u8]) -> Option<T>)
                 .unwrap_or(0);
             let aside = sibling(path, "", &format!(".corrupt-{stamp}"));
             match fs::rename(path, &aside) {
-                Ok(()) => log::warn!("{what}: {path:?} unreadable, moved to {aside:?}; trying backup"),
+                Ok(()) => {
+                    log::warn!("{what}: {path:?} unreadable, moved to {aside:?}; trying backup")
+                }
                 Err(e) => log::warn!("{what}: {path:?} unreadable and not moved aside: {e}"),
             }
             prune_corrupt(path);
@@ -275,9 +285,16 @@ mod tests {
         save_json(&path, "t", &vec![1, 2], Backup::Keep);
         save_json(&path, "t", &vec![3], Backup::Keep);
         assert_eq!(load_json::<Vec<i32>>(&path, "t"), Some(vec![3]));
-        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
-        assert_eq!(fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
-        let bak: Vec<i32> = serde_json::from_slice(&fs::read(dir.join("a.json.bak")).unwrap()).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let bak: Vec<i32> =
+            serde_json::from_slice(&fs::read(dir.join("a.json.bak")).unwrap()).unwrap();
         assert_eq!(bak, vec![1, 2]);
         assert!(!dir.join(".a.json.tmp").exists());
     }
@@ -291,11 +308,18 @@ mod tests {
         fs::write(&path, b"{ truncated").unwrap();
 
         assert_eq!(load_json::<Vec<i32>>(&path, "t"), Some(vec![7]));
-        assert!(!path.exists(), "corrupt file must not stay where a save would overwrite it");
+        assert!(
+            !path.exists(),
+            "corrupt file must not stay where a save would overwrite it"
+        );
         let aside: Vec<_> = fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with("b.json.corrupt-"))
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("b.json.corrupt-")
+            })
             .collect();
         assert_eq!(aside.len(), 1);
         assert_eq!(fs::read(aside[0].path()).unwrap(), b"{ truncated");
@@ -311,11 +335,18 @@ mod tests {
     fn stale_tmp_is_replaced() {
         let dir = temp_dir("tmp");
         let path = dir.join("c.json");
-        fs::write(dir.join(".c.json.tmp"), b"garbage that is longer than the payload").unwrap();
+        fs::write(
+            dir.join(".c.json.tmp"),
+            b"garbage that is longer than the payload",
+        )
+        .unwrap();
         fs::set_permissions(dir.join(".c.json.tmp"), Permissions::from_mode(0o644)).unwrap();
         save_json(&path, "t", &1, Backup::Keep);
         assert_eq!(load_json::<i32>(&path, "t"), Some(1));
-        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[test]
@@ -326,7 +357,10 @@ mod tests {
         save_json(&path, "t", &vec![2], Backup::Keep);
         assert!(dir.join("h.json.bak").exists());
         save_json(&path, "t", &Vec::<i32>::new(), Backup::None);
-        assert!(!dir.join("h.json.bak").exists(), "cleared history must not survive in .bak");
+        assert!(
+            !dir.join("h.json.bak").exists(),
+            "cleared history must not survive in .bak"
+        );
     }
 
     #[test]
@@ -348,7 +382,10 @@ mod tests {
         fs::write(&real, b"1").unwrap();
         std::os::unix::fs::symlink(&real, &link).unwrap();
         save_json(&link, "t", &2, Backup::Keep);
-        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         assert_eq!(load_json::<i32>(&real, "t"), Some(2));
     }
 
@@ -366,6 +403,9 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         left.sort();
-        assert_eq!(left, ["p.json.corrupt-3", "p.json.corrupt-4", "p.json.corrupt-5"]);
+        assert_eq!(
+            left,
+            ["p.json.corrupt-3", "p.json.corrupt-4", "p.json.corrupt-5"]
+        );
     }
 }
