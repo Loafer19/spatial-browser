@@ -432,6 +432,13 @@ pub fn apply(
         }
     }
 
+    // URLs from launch argv / a second launch → new pages, newest on top.
+    for url in crate::single_instance::take_incoming() {
+        let size = gpu.window.inner_size();
+        let rect = session.cascade_rect((size.width as f32, size.height as f32));
+        session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, false));
+    }
+
     // Canceled popups → spawn canvas Page (cascaded from opener rect).
     let popups = PENDING_POPUPS.with_borrow_mut(std::mem::take);
     for (opener_id, url) in popups {
@@ -917,6 +924,10 @@ fn handle_context_action(
                     target_browser_id: Some(target_id),
                 },
             );
+        }
+        ContextAction::OpenExternal(url) => {
+            dismiss_context_menu(session, context_menu);
+            crate::external::open_in_system_browser(&url);
         }
         ContextAction::OpenLink(url) => {
             dismiss_context_menu(session, context_menu);

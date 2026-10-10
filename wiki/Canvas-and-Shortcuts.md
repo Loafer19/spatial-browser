@@ -32,6 +32,7 @@ Pages live in **world space** on a pannable/zoomable canvas. Hit-testing and dra
 | `Ctrl+Shift+T` | Reopen closed page |
 | `Ctrl+W` | Close page |
 | `Ctrl+F` | Find in page (Enter next, Shift+Enter previous, Esc close) |
+| `Ctrl+Shift+O` | Open page in system browser |
 | `Ctrl+R` | Reload |
 | `Ctrl+V` | Paste from clipboard |
 | `Ctrl+Shift+C` | Copy page URL |

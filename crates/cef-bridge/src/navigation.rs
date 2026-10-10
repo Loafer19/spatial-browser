@@ -413,6 +413,8 @@ pub enum ContextAction {
         page_url: String,
     },
     OpenLink(String),
+    /// Open in the desktop's default browser (xdg-open).
+    OpenExternal(String),
     Copy(String),
     SaveImage(String),
     GenPassword,
@@ -441,6 +443,9 @@ fn parse_context_action(url: &str) -> Option<ContextAction> {
     }
     if let Some(query) = rest.strip_prefix("open-link?") {
         return Some(ContextAction::OpenLink(query_param(query, "url")?));
+    }
+    if let Some(query) = rest.strip_prefix("external?") {
+        return Some(ContextAction::OpenExternal(query_param(query, "url")?));
     }
     if let Some(query) = rest.strip_prefix("copy?") {
         return Some(ContextAction::Copy(query_param(query, "text")?));

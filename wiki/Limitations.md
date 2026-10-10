@@ -45,7 +45,7 @@ Twitch live video typically needs **H.264 + AAC**, so the player surfaces **Erro
 
 Open codecs that *are* present (VP8/VP9/AV1) do not help when the site only offers H.264.
 
-**Workaround:** open Twitch (and similar) in system Chrome/Firefox. Enabling codecs requires a **custom CEF/Chromium build** (`proprietary_codecs=true`, `ffmpeg_branding=Chrome`) plus awareness of patent/licensing constraints when redistributing. PyPI Qt WebEngine wheels have the same codec gap unless the distro build includes openh264.
+**Workaround:** `Ctrl+Shift+O` (or right-click → *Open page / link in system browser*) hands the URL to the desktop's default browser via `xdg-open`. Enabling codecs requires a **custom CEF/Chromium build** (`proprietary_codecs=true`, `ffmpeg_branding=Chrome`) plus awareness of patent/licensing constraints when redistributing. PyPI Qt WebEngine wheels have the same codec gap unless the distro build includes openh264.
 
 ## Security model
 

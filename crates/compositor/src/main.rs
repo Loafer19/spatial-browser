@@ -17,6 +17,7 @@ mod persistence;
 mod reader_mode;
 mod session;
 mod single_instance;
+mod external;
 mod userscripts;
 mod userstyles;
 mod viewport;
@@ -57,7 +58,7 @@ fn main() -> ExitCode {
     }
 
     // Browser process only — subprocesses would collide with the instance lock.
-    if single_instance::acquire_or_notify() {
+    if single_instance::acquire_or_notify(&single_instance::launch_urls()) {
         return ExitCode::from(0);
     }
 

@@ -24,6 +24,10 @@ fn items(ctx: &MenuContext) -> Vec<(&'static str, String)> {
             "Open link in new page",
             format!("context://open-link?url={enc}"),
         ));
+        items.push((
+            "Open link in system browser",
+            format!("context://external?url={enc}"),
+        ));
         items.push(("Copy link", format!("context://copy?text={enc}")));
     }
 
@@ -44,6 +48,8 @@ fn items(ctx: &MenuContext) -> Vec<(&'static str, String)> {
                 let enc = urlencoding_minimal(url);
                 items.push(("Copy page URL", format!("context://copy?text={enc}")));
             }
+            let enc = urlencoding_minimal(url);
+            items.push(("Open page in system browser", format!("context://external?url={enc}")));
         }
         items.push(("Reader mode", "context://reader".into()));
         if !ctx.password_field {

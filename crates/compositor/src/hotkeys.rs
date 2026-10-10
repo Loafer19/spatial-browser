@@ -66,6 +66,12 @@ pub fn handle(
 
     match event.physical_key {
         // --- Pages ---
+        PhysicalKey::Code(KeyCode::KeyO) if modifiers.shift_key() => {
+            if let Some(page) = session.pages().iter().rev().find(|p| !p.ephemeral) {
+                crate::external::open_in_system_browser(&page.url());
+            }
+            true
+        }
         PhysicalKey::Code(KeyCode::KeyF) if !modifiers.shift_key() => {
             open_find(session, gpu);
             true
