@@ -73,8 +73,8 @@ pub(crate) fn page_url(theme: &Theme, bookmarks: &[Bookmark], status: Option<&st
                  this.nextElementSibling.style.display='inline-block';\
                  this.nextElementSibling.focus();this.nextElementSibling.select()\" \
                  style=\"cursor:text;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\
-                 flex:1;color:{fg}\" title=\"Click to rename\">{label}</span>\
-                 <input name=\"title\" value=\"{label_attr}\" \
+                 flex:1;color:{fg}\" title=\"Click to rename\">{label_html}</span>\
+                 <input name=\"title\" value=\"{label_html}\" \
                  style=\"display:none;flex:1;min-width:0;background:{bg};color:{fg};\
                  border:1px solid {card_border};border-radius:4px;padding:2px 6px;\
                  font:inherit;font-size:13px\">\
@@ -91,7 +91,7 @@ pub(crate) fn page_url(theme: &Theme, bookmarks: &[Bookmark], status: Option<&st
                 favicon = super::favicon_tile(host, &letter, theme),
                 fg = theme.help_fg,
                 bg = theme.help_bg,
-                label_attr = html_escape(label),
+                label_html = html_escape(label),
                 folder_attr = html_escape(bookmark.folder.as_deref().unwrap_or("")),
                 save_button = super::icon_submit_button("Save", CHECKMARK_SVG_PATH, theme),
                 delete_button = super::icon_link_button(
@@ -105,8 +105,8 @@ pub(crate) fn page_url(theme: &Theme, bookmarks: &[Bookmark], status: Option<&st
         }
     }
 
-    format!(
-        "data:text/html;charset=utf-8,{nav_script}\
+    let html = format!(
+        "{nav_script}\
          <style>{icon_hover}\
          .list-row:hover,.list-row.list-active{{background:{key_bg}!important}}\
          .list-row:hover span,.list-row.list-active span{{color:{key_fg}!important}}</style>\
@@ -128,5 +128,35 @@ pub(crate) fn page_url(theme: &Theme, bookmarks: &[Bookmark], status: Option<&st
         key_fg = theme.help_key_fg,
         heading = theme.help_heading,
         fg = theme.help_fg,
-    )
+    );
+    super::data_url(&html)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::output::THEMES;
+    use crate::pages::tests::decode_data_url;
+
+    #[test]
+    fn bookmark_label_folder_and_host_are_escaped() {
+        let marks = [
+            Bookmark {
+                url: "https://a.test/".into(),
+                title: Some("<img src=x onerror=alert(1)>".into()),
+                folder: Some("</h2><script>f()</script>".into()),
+            },
+            // No title: label falls back to the host of a web-chosen URL.
+            Bookmark {
+                url: "javascript:\"><svg onload=alert(2)>".into(),
+                title: None,
+                folder: None,
+            },
+        ];
+        let html = decode_data_url(&page_url(&THEMES[0], &marks, None));
+        for raw in ["<img src=x", "<script>f()", "<svg onload"] {
+            assert!(!html.contains(raw), "{raw} in {html}");
+        }
+        assert!(html.contains("&lt;img src=x onerror=alert(1)&gt;</span>"));
+    }
 }

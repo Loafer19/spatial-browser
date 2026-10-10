@@ -68,8 +68,8 @@ pub(crate) fn page_url(theme: &Theme, store: &WorkspaceStore) -> String {
         ));
     }
 
-    format!(
-        "data:text/html;charset=utf-8,{nav_script}\
+    let html = format!(
+        "{nav_script}\
          <style>{icon_hover}\
          .list-row:hover,.list-row.list-active{{background:{key_bg}!important}}\
          .list-row:hover span,.list-row.list-active span{{color:{key_fg}!important}}</style>\
@@ -90,5 +90,6 @@ pub(crate) fn page_url(theme: &Theme, store: &WorkspaceStore) -> String {
         key_fg = theme.help_key_fg,
         fg = theme.help_fg,
         heading = theme.help_heading,
-    )
+    );
+    super::data_url(&html)
 }

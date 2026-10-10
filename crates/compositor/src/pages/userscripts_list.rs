@@ -102,8 +102,8 @@ pub(crate) fn page_url(theme: &Theme, scripts: &[UserScript], styles: &[UserStyl
         fg = theme.help_heading,
     );
 
-    format!(
-        "data:text/html;charset=utf-8,{body_open}\
+    let html = format!(
+        "{body_open}\
          <h1 style=\"margin:0 0 4px;color:{heading};font-size:20px\">Scripts &amp; styles</h1>\
          <p style=\"margin:0 0 12px;opacity:0.7;font-size:13px\">\
          Both honor <code>spatial-ui</code> for built-in pages · \
@@ -118,7 +118,8 @@ pub(crate) fn page_url(theme: &Theme, scripts: &[UserScript], styles: &[UserStyl
          {LIST_NAV_SCRIPT}</body>",
         body_open = super::body_open(theme, ""),
         heading = theme.help_heading,
-    )
+    );
+    super::data_url(&html)
 }
 
 fn urlencoding_path(s: &str) -> String {

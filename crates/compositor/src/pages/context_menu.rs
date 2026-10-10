@@ -1,7 +1,7 @@
 // Right-click context menu — small ephemeral data: page at the cursor.
 // Items depend on hit target (canvas / page / link / image / password).
 
-use super::html_escape;
+use super::{html_escape, url_component};
 use crate::output::Theme;
 
 #[derive(Clone, Default)]
@@ -19,7 +19,7 @@ fn items(ctx: &MenuContext) -> Vec<(&'static str, String)> {
     let mut items: Vec<(&'static str, String)> = Vec::new();
 
     if let Some(link) = ctx.link.as_deref().filter(|s| !s.is_empty()) {
-        let enc = urlencoding_minimal(link);
+        let enc = url_component(link);
         items.push((
             "Open link in new page",
             format!("context://open-link?url={enc}"),
@@ -28,7 +28,7 @@ fn items(ctx: &MenuContext) -> Vec<(&'static str, String)> {
     }
 
     if let Some(img) = ctx.image.as_deref().filter(|s| !s.is_empty()) {
-        let enc = urlencoding_minimal(img);
+        let enc = url_component(img);
         items.push(("Copy image address", format!("context://copy?text={enc}")));
         items.push(("Save image", format!("context://save-image?url={enc}")));
     }
@@ -41,7 +41,7 @@ fn items(ctx: &MenuContext) -> Vec<(&'static str, String)> {
     if !ctx.on_canvas {
         if let Some(url) = ctx.page_url.as_deref().filter(|s| !s.is_empty()) {
             if ctx.link.is_none() {
-                let enc = urlencoding_minimal(url);
+                let enc = url_component(url);
                 items.push(("Copy page URL", format!("context://copy?text={enc}")));
             }
         }
@@ -80,6 +80,7 @@ pub(crate) fn page_url(theme: &Theme, ctx: &MenuContext) -> String {
              style=\"display:block;box-sizing:border-box;width:100%;padding:8px 10px;\
              text-decoration:none;color:{fg};border-radius:{radius_inner};\
              overflow:hidden;text-overflow:ellipsis;white-space:nowrap\">{label}</a>",
+            href = html_escape(href),
             label = html_escape(label),
             fg = theme.help_fg,
         ));
@@ -87,9 +88,8 @@ pub(crate) fn page_url(theme: &Theme, ctx: &MenuContext) -> String {
 
     // overflow:hidden — never show scrollbars inside the tiny CEF view.
     // width/height 100% fill the view sized by menu_css_size.
-    format!(
-        "data:text/html;charset=utf-8,\
-         <html style=\"margin:0;width:100%;height:100%;overflow:hidden\">\
+    let html = format!(
+        "<html style=\"margin:0;width:100%;height:100%;overflow:hidden\">\
          <body style=\"margin:0;padding:6px;box-sizing:border-box;width:100%;height:100%;\
          overflow:hidden;background:{bg};color:{fg};\
          font-family:ui-monospace,monospace;font-size:13px;line-height:1.3;\
@@ -104,16 +104,6 @@ pub(crate) fn page_url(theme: &Theme, ctx: &MenuContext) -> String {
         border = theme.help_card_border,
         card = theme.help_card_bg,
         heading = theme.help_heading,
-    )
-}
-
-fn urlencoding_minimal(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
+    );
+    super::data_url(&html)
 }

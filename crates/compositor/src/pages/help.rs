@@ -87,16 +87,14 @@ pub fn page_url(theme: &Theme) -> String {
             ));
         }
     }
-    // Hex colors avoided deliberately: an unescaped `#` in a `data:` URL
-    // starts a fragment, silently truncating everything after it from
-    // the actual document — every Theme field here is an rgb() string.
-    format!(
-        "data:text/html;charset=utf-8,{body_open}\
+    let html = format!(
+        "{body_open}\
          <h1 style=\"margin:0 0 4px;color:{heading};font-size:20px\">\
          spatial-browser &mdash; shortcuts ({name})</h1>\
          <div style=\"display:flex;flex-direction:column;gap:8px\">{rows}</div></body>",
         body_open = super::body_open(theme, ""),
         heading = theme.help_heading,
         name = theme.name,
-    )
+    );
+    super::data_url(&html)
 }
