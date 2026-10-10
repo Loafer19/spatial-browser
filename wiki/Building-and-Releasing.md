@@ -19,6 +19,16 @@ cargo install export-cef-dir --version "$CEF_VERSION" --locked --root ~/.local/s
 ~/.local/share/cargo-cef-tools/bin/export-cef-dir --force ~/.local/share/cef
 ```
 
+## Checks (same as CI)
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -j 2 -- -D warnings
+cargo test --workspace -j 2
+```
+
+`-j 2` keeps rustc under ~8 GB on a 16 GB machine. Formatting-only commits go in `.git-blame-ignore-revs` (`git config blame.ignoreRevsFile .git-blame-ignore-revs` once per clone).
+
 ## Local bundle
 
 ```sh
