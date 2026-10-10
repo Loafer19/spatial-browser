@@ -9,7 +9,7 @@ Keep these in sync:
 - `.github/workflows/ci.yml` / `release.yml` → `CEF_VERSION`
 - README / `scripts/bundle.sh` comments for `cargo install cef --version …`
 
-Pinned CEF: **151.8.0+151.3.24**.
+Pinned CEF: **154.5.0+154.0.34**.
 
 Refresh local binaries after a bump:
 
@@ -27,7 +27,7 @@ cargo install export-cef-dir --version "$CEF_VERSION" --locked --root ~/.local/s
 ./scripts/install.sh             # ~/.local/share/applications/…desktop
 ```
 
-`bundle-cef-app` must be on `PATH` (from the cargo-cef-tools install). `TMPDIR` may need a large disk — CEF’s dependency tree overflows small `/tmp` tmpfs.
+`bundle-cef-app` must be on `PATH` (from the cargo-cef-tools install). To try a CEF bump side by side, install tools and distribution to separate dirs and point the build at them: `CEF_PATH=~/.local/share/cef-<ver> CEF_TOOLS=~/.local/share/cargo-cef-tools-<ver> ./scripts/bundle.sh compositor`. `TMPDIR` may need a large disk — CEF’s dependency tree overflows small `/tmp` tmpfs.
 
 ## Release
 

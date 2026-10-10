@@ -9,7 +9,8 @@ shift
 export CEF_PATH="${CEF_PATH:-$HOME/.local/share/cef}"
 export TMPDIR="${TMPDIR:-$HOME/Work/.cargo-tmp}"
 mkdir -p "$TMPDIR"
-export PATH="$HOME/.local/share/cargo-cef-tools/bin:$PATH"
+# CEF_TOOLS: where `cargo install cef` put bundle-cef-app (match CEF_PATH).
+export PATH="${CEF_TOOLS:-$HOME/.local/share/cargo-cef-tools}/bin:$PATH"
 
 cd "$(dirname "$0")/.."
 bundle-cef-app "$package" -o target/bundle --release "$@"

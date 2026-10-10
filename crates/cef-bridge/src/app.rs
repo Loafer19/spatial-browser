@@ -38,8 +38,9 @@ wrap_app! {
             command_line.append_switch(Some(&"noerrdialogs".into()));
             command_line.append_switch(Some(&"hide-crash-restore-bubble".into()));
             command_line.append_switch(Some(&"use-mock-keychain".into()));
-            // Disable ImmersiveReadAnything: SPA soft-nav crashes Alloy/OSR
-            // (CEF#4234, fixed M152; we're on 151). Disable VAAPI — unreliable
+            // ImmersiveReadAnything: SPA soft-nav null-deref in Alloy/OSR
+            // (CEF#4234), fixed in M152; still off since OSR has no reading
+            // mode UI to lose. Disable VAAPI — unreliable
             // in this OSR/hybrid-GPU setup; flags alone still open libva.
             command_line.append_switch_with_value(
                 Some(&"disable-features".into()),

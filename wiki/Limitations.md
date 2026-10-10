@@ -14,8 +14,8 @@ Long-term hope for embedders: Igalia’s `//content` + `//extensions` work — n
 
 Chromium bug: `ReadAnythingSoftNavigationObserver` assumes a real browser tab. Windowless WebContents can null-deref on client-side navigations (YouTube, Google Images lightbox, …).
 
-- Upstream fix targeted M152; this project is on **CEF 151.x** until cef-rs publishes 152
-- Mitigation: `disable-features=ImmersiveReadAnything` in `cef-bridge`
+- Fixed upstream in M152; this project is on **CEF 154.x**
+- `disable-features=ImmersiveReadAnything` stays on in `cef-bridge` as belt-and-braces (OSR has no reading-mode UI)
 - Still: some crashes happen — `scripts/run.sh` **auto-relaunches** and restores the saved canvas (debounced ~1s). Unlike Chrome’s per-tab process isolation, a crash takes down the whole app
 - Each relaunch appends a line to `~/.config/spatial-browser/restarts.log` (`reason=cef_soft_nav` vs `fast_crash`, exit code, elapsed, counts) so CEF/VAAPI changes can be judged from restart rate
 

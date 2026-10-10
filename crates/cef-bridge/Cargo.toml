@@ -16,7 +16,7 @@ adblock = { version = "0.13", default-features = false, features = [
     "full-regex-handling",
     "resource-assembler",
 ] }
-cef = { version = "151.8.0", default-features = false }
+cef = { version = "154.5.0", default-features = false }
 log = "0.4"
 wgpu = "30"
 winit = "0.30"

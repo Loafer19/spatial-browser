@@ -8,7 +8,7 @@ on:
 
 env:
   # Keep in sync with release.yml and crates/*/Cargo.toml cef version.
-  CEF_VERSION: 151.8.0+151.3.24
+  CEF_VERSION: 154.5.0+154.0.34
   CEF_PATH: ${{ github.workspace }}/.cef-cache
 
 jobs:

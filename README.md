@@ -27,9 +27,9 @@ instead of flat tabs.
 
 ```sh
 # One-time CEF tools (version must match crates/*/Cargo.toml)
-cargo install cef --version 151.8.0+151.3.24 --locked \
+cargo install cef --version 154.5.0+154.0.34 --locked \
   --root ~/.local/share/cargo-cef-tools
-cargo install export-cef-dir --version 151.8.0+151.3.24 --locked \
+cargo install export-cef-dir --version 154.5.0+154.0.34 --locked \
   --root ~/.local/share/cargo-cef-tools
 ~/.local/share/cargo-cef-tools/bin/export-cef-dir --force ~/.local/share/cef
 
