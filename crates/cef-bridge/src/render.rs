@@ -12,6 +12,35 @@ pub struct OsrRenderHandler {
     // Must be the compositor pipeline's layout identity, not a lookalike.
     texture_bind_group_layout: wgpu::BindGroupLayout,
     texture: std::rc::Rc<RefCell<Option<wgpu::BindGroup>>>,
+    // Created once per page, shared by both paint paths.
+    sampler: wgpu::Sampler,
+    // CPU path: the page's texture, reused while its size holds.
+    cpu: std::rc::Rc<RefCell<Option<CpuTarget>>>,
+}
+
+struct CpuTarget {
+    width: u32,
+    height: u32,
+    texture: wgpu::Texture,
+    bind_group: wgpu::BindGroup,
+}
+
+/// CEF dirty rects as `(x, y, w, h)` clipped to a `width`×`height` view;
+/// empty input means the whole view.
+pub fn clip_dirty(rects: &[(i32, i32, i32, i32)], width: u32, height: u32) -> Vec<(u32, u32, u32, u32)> {
+    if rects.is_empty() {
+        return vec![(0, 0, width, height)];
+    }
+    rects
+        .iter()
+        .filter_map(|&(x, y, w, h)| {
+            let x0 = x.clamp(0, width as i32) as u32;
+            let y0 = y.clamp(0, height as i32) as u32;
+            let x1 = x.saturating_add(w).clamp(0, width as i32) as u32;
+            let y1 = y.saturating_add(h).clamp(0, height as i32) as u32;
+            (x1 > x0 && y1 > y0).then_some((x0, y0, x1 - x0, y1 - y0))
+        })
+        .collect()
 }
 
 /// Shared size/texture handles for the compositor outside CEF callbacks.
@@ -30,6 +59,15 @@ impl OsrRenderHandler {
     ) -> (Self, OsrRenderHandles) {
         let size = std::rc::Rc::new(RefCell::new(size));
         let texture = std::rc::Rc::new(RefCell::new(None));
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
         (
             Self {
                 size: size.clone(),
@@ -38,6 +76,8 @@ impl OsrRenderHandler {
                 queue,
                 texture_bind_group_layout,
                 texture: texture.clone(),
+                sampler,
+                cpu: std::rc::Rc::new(RefCell::new(None)),
             },
             OsrRenderHandles { size, texture },
         )
@@ -116,16 +156,6 @@ wrap_render_handler! {
                 }
             };
 
-            let sampler = self.handler.device.create_sampler(&wgpu::SamplerDescriptor {
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::MipmapFilterMode::Linear,
-                ..Default::default()
-            });
-
             let bind_group = self.handler.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Cef Texture Bind Group"),
                 layout: &self.handler.texture_bind_group_layout,
@@ -141,11 +171,13 @@ wrap_render_handler! {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
+                        resource: wgpu::BindingResource::Sampler(&self.handler.sampler),
                     },
                 ],
             });
 
+            // A later CPU paint must rebuild its bind group, not reuse a stale one.
+            self.handler.cpu.borrow_mut().take();
             self.handler.texture.borrow_mut().replace(bind_group);
         }
 
@@ -156,7 +188,7 @@ wrap_render_handler! {
             &self,
             _browser: Option<&mut Browser>,
             type_: PaintElementType,
-            _dirty_rects: Option<&[Rect]>,
+            dirty_rects: Option<&[Rect]>,
             buffer: *const u8,
             width: ::std::os::raw::c_int,
             height: ::std::os::raw::c_int,
@@ -168,75 +200,85 @@ wrap_render_handler! {
 
             let (width, height) = (width as u32, height as u32);
             let byte_len = (width * height * 4) as usize;
-            // CEF guarantees `buffer` holds width*height BGRA pixels for this call.
+            // CEF guarantees `buffer` holds width*height BGRA pixels for this call;
+            // dirty rects are in the same pixel space.
             let pixels = unsafe { std::slice::from_raw_parts(buffer, byte_len) };
 
-            let texture = self.handler.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Cef CPU Paint Texture"),
-                size: wgpu::Extent3d {
+            let mut cpu = self.handler.cpu.borrow_mut();
+            let reuse = cpu.as_ref().is_some_and(|t| t.width == width && t.height == height);
+            if !reuse {
+                let texture = self.handler.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("Cef CPU Paint Texture"),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Bgra8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                let bind_group = self.handler.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Cef CPU Texture Bind Group"),
+                    layout: &self.handler.texture_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&texture.create_view(
+                                &wgpu::TextureViewDescriptor {
+                                    label: Some("Cef CPU Texture View"),
+                                    ..Default::default()
+                                },
+                            )),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.handler.sampler),
+                        },
+                    ],
+                });
+                *cpu = Some(CpuTarget {
                     width,
                     height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Bgra8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
+                    texture,
+                    bind_group,
+                });
+            }
+            let Some(target) = cpu.as_ref() else { return };
 
-            self.handler.queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                pixels,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * width),
-                    rows_per_image: Some(height),
-                },
-                wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
-
-            let sampler = self.handler.device.create_sampler(&wgpu::SamplerDescriptor {
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::MipmapFilterMode::Linear,
-                ..Default::default()
-            });
-
-            let bind_group = self.handler.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Cef CPU Texture Bind Group"),
-                layout: &self.handler.texture_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&texture.create_view(
-                            &wgpu::TextureViewDescriptor {
-                                label: Some("Cef CPU Texture View"),
-                                ..Default::default()
-                            },
-                        )),
+            // A fresh texture needs the whole frame; otherwise only what changed.
+            let rects: Vec<(i32, i32, i32, i32)> = match dirty_rects {
+                Some(rects) if reuse => rects.iter().map(|r| (r.x, r.y, r.width, r.height)).collect(),
+                _ => Vec::new(),
+            };
+            for (x, y, w, h) in clip_dirty(&rects, width, height) {
+                self.handler.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &target.texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d { x, y, z: 0 },
+                        aspect: wgpu::TextureAspect::All,
                     },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
+                    pixels,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: (u64::from(y) * u64::from(width) + u64::from(x)) * 4,
+                        bytes_per_row: Some(4 * width),
+                        rows_per_image: Some(h),
                     },
-                ],
-            });
+                    wgpu::Extent3d {
+                        width: w,
+                        height: h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
 
-            self.handler.texture.borrow_mut().replace(bind_group);
+            if !reuse {
+                self.handler.texture.borrow_mut().replace(target.bind_group.clone());
+            }
         }
     }
 }
@@ -244,5 +286,24 @@ wrap_render_handler! {
 impl RenderHandlerBuilder {
     pub fn build(handler: OsrRenderHandler) -> RenderHandler {
         Self::new(handler)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clip_dirty;
+
+    #[test]
+    fn empty_means_full_view() {
+        assert_eq!(clip_dirty(&[], 800, 600), vec![(0, 0, 800, 600)]);
+    }
+
+    #[test]
+    fn rects_are_clipped_and_empty_ones_dropped() {
+        let rects = [(10, 20, 30, 40), (-5, -5, 10, 10), (790, 590, 50, 50), (900, 0, 10, 10), (0, 0, 0, 5)];
+        assert_eq!(
+            clip_dirty(&rects, 800, 600),
+            vec![(10, 20, 30, 40), (0, 0, 5, 5), (790, 590, 10, 10)]
+        );
     }
 }
