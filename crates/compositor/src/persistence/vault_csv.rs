@@ -109,7 +109,8 @@ pub fn parse_login_csv(text: &str) -> Result<Vec<VaultEntry>, String> {
         }
         let url = record.get(url_i).unwrap_or("").trim();
         let username = record.get(user_i).unwrap_or("").trim();
-        let password = record.get(pass_i).unwrap_or("").trim();
+        // Not trimmed: leading/trailing spaces can be part of the password.
+        let password = record.get(pass_i).unwrap_or("");
         if url.is_empty() || password.is_empty() {
             continue;
         }
@@ -190,4 +191,50 @@ fn new_import_id() -> String {
     let mut bytes = [0u8; 16];
     rand::rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_chrome_export() {
+        let csv = "name,url,username,password,note\n\
+                   Example,https://www.Example.com/login?x=1,alice,s3cret,hi\n";
+        let entries = parse_login_csv(csv).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].origin, "https://www.example.com");
+        assert_eq!(entries[0].username, "alice");
+        assert_eq!(entries[0].password, "s3cret");
+        assert_eq!(entries[0].notes.as_deref(), Some("hi"));
+    }
+
+    #[test]
+    fn parses_bitwarden_logins_only_and_first_uri() {
+        let csv = "folder,type,name,notes,login_uri,login_username,login_password\n\
+                   ,login,A,,\"https://a.test/x,https://b.test\",bob,pw1\n\
+                   ,note,B,secret note,,,\n\
+                   ,card,C,,https://c.test,carl,pw3\n";
+        let entries = parse_login_csv(csv).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].origin, "https://a.test");
+        assert_eq!(entries[0].username, "bob");
+    }
+
+    #[test]
+    fn keeps_password_whitespace() {
+        let csv = "url,username,password\nhttps://a.test,u,\" pw \"\n";
+        assert_eq!(parse_login_csv(csv).unwrap()[0].password, " pw ");
+    }
+
+    #[test]
+    fn skips_rows_without_url_or_password() {
+        let csv = "url,username,password\n,u,pw\nhttps://a.test,u,\n";
+        assert!(parse_login_csv(csv).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rejects_unknown_headers() {
+        assert!(parse_login_csv("site,user,pass\na,b,c\n").is_err());
+    }
 }

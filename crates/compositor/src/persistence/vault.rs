@@ -306,3 +306,78 @@ pub fn generate_password(length: usize, symbols: bool) -> String {
     out
 }
 
+
+#[cfg(test)]
+impl VaultSession {
+    /// In-memory session for tests; never persisted.
+    pub fn for_test(entries: Vec<VaultEntry>) -> Self {
+        Self {
+            key: KeyMaterial([0; KEY_LEN]),
+            data: VaultData {
+                version: 1,
+                entries,
+                never_save: Vec::new(),
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+pub fn test_entry(id: &str, origin: &str) -> VaultEntry {
+    VaultEntry {
+        id: id.into(),
+        origin: origin.into(),
+        username: "user".into(),
+        password: "pw".into(),
+        email: None,
+        address_line1: None,
+        city: None,
+        postal_code: None,
+        country: None,
+        notes: None,
+        updated_at: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_origin_strips_path_and_lowercases_host() {
+        assert_eq!(normalize_origin("https://Example.COM/a?b#c"), "https://example.com");
+        assert_eq!(normalize_origin("http://example.com:8080/x"), "http://example.com:8080");
+        assert_eq!(normalize_origin("example.com/login"), "https://example.com");
+        assert_eq!(normalize_origin("  https://a.test  "), "https://a.test");
+    }
+
+    #[test]
+    fn host_key_ignores_scheme_and_www_only() {
+        assert_eq!(host_key("https://www.example.com"), host_key("http://example.com"));
+        assert_ne!(host_key("https://example.com:8443"), host_key("https://example.com"));
+        assert_ne!(host_key("https://login.example.com"), host_key("https://example.com"));
+    }
+
+    #[test]
+    fn host_key_does_not_strip_userinfo() {
+        // `https://bank.test@evil.test/` must not match bank.test.
+        assert_ne!(host_key("https://bank.test@evil.test/"), host_key("https://bank.test"));
+    }
+
+    #[test]
+    fn entries_for_origin_matches_host_key() {
+        let v = VaultSession::for_test(vec![
+            test_entry("1", "https://www.a.test"),
+            test_entry("2", "https://b.test"),
+        ]);
+        let ids: Vec<_> = v.entries_for_origin("http://a.test/login").iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["1"]);
+    }
+
+    #[test]
+    fn generate_password_clamps_length_and_respects_symbols() {
+        assert_eq!(generate_password(1, true).len(), 8);
+        assert_eq!(generate_password(500, true).len(), 128);
+        assert!(generate_password(64, false).chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+}

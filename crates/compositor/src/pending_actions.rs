@@ -1596,3 +1596,98 @@ fn now_unix_secs() -> i64 {
         .unwrap()
         .as_secs() as i64
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::persistence::vault::test_entry;
+
+    fn vault() -> VaultSession {
+        VaultSession::for_test(vec![
+            test_entry("mine", "https://www.site.test"),
+            test_entry("bank", "https://bank.test"),
+        ])
+    }
+
+    fn web(v: Option<&VaultSession>, action: PasswordAction) -> Option<PasswordAction> {
+        web_password_action(v, "https://site.test", action)
+    }
+
+    #[test]
+    fn web_query_uses_page_origin_not_requested_one() {
+        let v = vault();
+        let out = web(Some(&v), PasswordAction::Query { origin: "https://bank.test".into() });
+        assert!(matches!(out, Some(PasswordAction::Query { origin }) if origin == "https://site.test"));
+    }
+
+    #[test]
+    fn web_fill_only_for_own_origin() {
+        let v = vault();
+        assert!(web(Some(&v), PasswordAction::Fill { id: "bank".into() }).is_none());
+        assert!(web(Some(&v), PasswordAction::Fill { id: "missing".into() }).is_none());
+        assert!(matches!(
+            web(Some(&v), PasswordAction::Fill { id: "mine".into() }),
+            Some(PasswordAction::Fill { id }) if id == "mine"
+        ));
+    }
+
+    #[test]
+    fn web_save_cannot_target_foreign_entry() {
+        let v = vault();
+        let save = |id: &str| PasswordAction::Save {
+            origin: "https://bank.test".into(),
+            username: "u".into(),
+            password: "p".into(),
+            id: Some(id.into()),
+        };
+        assert!(matches!(
+            web(Some(&v), save("bank")),
+            Some(PasswordAction::Save { origin, id: None, .. }) if origin == "https://site.test"
+        ));
+        assert!(matches!(
+            web(Some(&v), save("mine")),
+            Some(PasswordAction::Save { id: Some(id), .. }) if id == "mine"
+        ));
+    }
+
+    #[test]
+    fn web_save_offer_and_never_are_rebound() {
+        let v = vault();
+        let offer = PasswordAction::SaveOffer {
+            origin: "https://bank.test".into(),
+            username: "u".into(),
+            password: "p".into(),
+        };
+        assert!(matches!(web(Some(&v), offer), Some(PasswordAction::SaveOffer { origin, .. }) if origin == "https://site.test"));
+        let never = PasswordAction::Never { origin: "https://bank.test".into() };
+        assert!(matches!(web(Some(&v), never), Some(PasswordAction::Never { origin }) if origin == "https://site.test"));
+    }
+
+    #[test]
+    fn web_cannot_manage_vault() {
+        let v = vault();
+        let denied = [
+            PasswordAction::Unlock { password: "x".repeat(8), create: true, confirm: Some("x".repeat(8)) },
+            PasswordAction::Delete { id: "bank".into() },
+            PasswordAction::Upsert {
+                id: Some("bank".into()),
+                origin: "https://bank.test".into(),
+                username: "u".into(),
+                password: "p".into(),
+                email: None,
+            },
+            PasswordAction::RemoveNever { origin: "https://bank.test".into() },
+            PasswordAction::Generate { length: 20, symbols: true },
+            PasswordAction::ImportBrowse,
+            PasswordAction::OpenList,
+        ];
+        for action in denied {
+            assert!(web(Some(&v), action).is_none());
+        }
+    }
+
+    #[test]
+    fn web_actions_are_silent_while_locked() {
+        assert!(web(None, PasswordAction::Query { origin: String::new() }).is_none());
+    }
+}

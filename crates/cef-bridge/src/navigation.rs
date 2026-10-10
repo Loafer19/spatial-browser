@@ -641,3 +641,76 @@ impl RequestHandlerBuilder {
         Self::new(handler)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_decode_handles_plus_utf8_and_malformed() {
+        assert_eq!(percent_decode("a+b%20c%2B"), "a b c+");
+        assert_eq!(percent_decode("%D0%BF%D1%80%D0%B8"), "при");
+        assert_eq!(percent_decode("100%zz"), "100%zz");
+        assert_eq!(percent_decode("tail%4"), "tail%4");
+    }
+
+    #[test]
+    fn query_param_finds_exact_key() {
+        assert_eq!(query_param("a=1&ab=2&b=x%20y", "b").as_deref(), Some("x y"));
+        assert_eq!(query_param("a=1", "missing"), None);
+    }
+
+    #[test]
+    fn password_query_accepts_go_and_legacy_forms() {
+        for url in [
+            "password://go/query?origin=https%3A%2F%2Fa.test",
+            "password://query?origin=https%3A%2F%2Fa.test",
+            "password://query/?origin=https%3A%2F%2Fa.test",
+        ] {
+            assert!(
+                matches!(parse_password_action(url), Some(PasswordAction::Query { origin }) if origin == "https://a.test"),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn password_save_offer_is_not_parsed_as_save() {
+        assert!(matches!(
+            parse_password_action("password://go/save-offer?origin=o&username=u&password=p"),
+            Some(PasswordAction::SaveOffer { .. })
+        ));
+        assert!(matches!(
+            parse_password_action("password://go/save?origin=o&username=u&password=p&id="),
+            Some(PasswordAction::Save { id: None, .. })
+        ));
+    }
+
+    #[test]
+    fn password_unlock_flags() {
+        let Some(PasswordAction::Unlock { password, create, confirm }) =
+            parse_password_action("password://go/unlock?create=1&password=a%2Bb&confirm=a%2Bb")
+        else {
+            panic!("expected unlock");
+        };
+        assert_eq!(password, "a+b");
+        assert!(create);
+        assert_eq!(confirm.as_deref(), Some("a+b"));
+    }
+
+    #[test]
+    fn password_required_params_and_unknown_actions() {
+        assert!(parse_password_action("password://go/fill?nope=1").is_none());
+        assert!(parse_password_action("password://go/explode?x=1").is_none());
+        assert!(parse_password_action("https://password.test/go/fill?id=1").is_none());
+    }
+
+    #[test]
+    fn clipboard_copy_decodes_text() {
+        assert_eq!(
+            parse_clipboard_copy("clipboard://copy?text=hello%20%F0%9F%91%8B").as_deref(),
+            Some("hello 👋")
+        );
+        assert_eq!(parse_clipboard_copy("clipboard://paste?text=x"), None);
+    }
+}
