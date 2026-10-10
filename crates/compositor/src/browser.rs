@@ -6,6 +6,7 @@ use cef_bridge::{ClientBuilder, OsrRenderHandler, OsrRenderHandles};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 use winit::window::Window;
 
 // Under wgpu's default 8192 max_texture_dimension_2d.
@@ -202,8 +203,165 @@ pub fn install_popup_factory(gpu: &GpuState) {
     }));
 }
 
+/// One pre-started, hidden browser: CEF browser + renderer process already
+/// up, so opening a tile is a navigation instead of a process launch.
+struct Warm {
+    browser: cef::Browser,
+    handles: OsrRenderHandles,
+}
+
+/// Which pool slot a page can come from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum WarmKind {
+    /// Idles on a blank spatial:// page: its process is already the
+    /// built-in pages' site, so help/lists/omnibox open without a swap.
+    Builtin,
+    /// Idles on about:blank (unlocked process) for the next web tile.
+    Web,
+}
+
+#[derive(Default)]
+struct Pool {
+    builtin: Option<Warm>,
+    web: Option<Warm>,
+    /// Refill waits for this: startup settled, or the last take loaded.
+    quiet_since: Option<Instant>,
+}
+
+thread_local! {
+    static POOL: RefCell<Pool> = RefCell::new(Pool::default());
+}
+
+/// Let startup and a just-opened tile load before warming a replacement.
+const REFILL_DELAY: Duration = Duration::from_secs(2);
+
+/// Pool slot a spawn of `url` can use, if any.
+fn warm_kind(url: &str, ephemeral: bool) -> Option<WarmKind> {
+    if ephemeral && cef_bridge::spatial::parse_page_url(url).is_some() {
+        Some(WarmKind::Builtin)
+    } else if !ephemeral && crate::external::is_web_url(url) {
+        Some(WarmKind::Web)
+    } else {
+        None
+    }
+}
+
+fn take_warm(kind: WarmKind) -> Option<Warm> {
+    POOL.with_borrow_mut(|pool| {
+        pool.quiet_since = Some(Instant::now());
+        match kind {
+            WarmKind::Builtin => pool.builtin.take(),
+            WarmKind::Web => pool.web.take(),
+        }
+    })
+}
+
+fn warm_up(gpu: &GpuState, kind: WarmKind) -> Option<Warm> {
+    let (w, h) = POPUP_START_SIZE;
+    let OsrSetup {
+        window_info,
+        mut client,
+        settings,
+        handles,
+    } = osr_setup(
+        &gpu.device,
+        &gpu.queue,
+        &gpu.texture_bind_group_layout,
+        gpu.window.scale_factor(),
+        Rect {
+            x: 0.0,
+            y: 0.0,
+            w,
+            h,
+        },
+    );
+    let url = match kind {
+        WarmKind::Builtin => crate::pages::serve(crate::pages::kind::BLANK, String::new()),
+        WarmKind::Web => "about:blank".to_string(),
+    };
+    let browser = cef::browser_host_create_browser_sync(
+        Some(&window_info),
+        Some(&mut client),
+        Some(&url.as_str().into()),
+        Some(&settings),
+        None,
+        None,
+    )?;
+    if kind == WarmKind::Builtin {
+        cef_bridge::spatial::bind(&url, cef::ImplBrowser::identifier(&browser));
+    }
+    // Hidden: no paints, throttled timers until it becomes a tile.
+    if let Some(host) = cef::ImplBrowser::host(&browser) {
+        cef::ImplBrowserHost::was_hidden(&host, true as _);
+    }
+    log::debug!("warm {kind:?} browser ready");
+    Some(Warm { browser, handles })
+}
+
+/// Called every tick: refill an empty pool slot once things are quiet.
+pub fn refill_pool(gpu: &GpuState, now: Instant) {
+    let due = POOL.with_borrow_mut(|pool| {
+        let since = *pool.quiet_since.get_or_insert(now);
+        if now.saturating_duration_since(since) < REFILL_DELAY {
+            return None;
+        }
+        if pool.builtin.is_none() {
+            Some(WarmKind::Builtin)
+        } else if pool.web.is_none() {
+            Some(WarmKind::Web)
+        } else {
+            None
+        }
+    });
+    let Some(kind) = due else { return };
+    let warm = warm_up(gpu, kind);
+    POOL.with_borrow_mut(|pool| {
+        // One per tick; the next waits its own delay so loads don't pile up.
+        pool.quiet_since = Some(now);
+        match kind {
+            WarmKind::Builtin => pool.builtin = warm,
+            WarmKind::Web => pool.web = warm,
+        }
+    });
+}
+
+/// Close and drop the pooled browsers (before cef::shutdown).
+pub fn close_pool() {
+    let warm: Vec<Warm> = POOL.with_borrow_mut(|pool| {
+        [pool.builtin.take(), pool.web.take()]
+            .into_iter()
+            .flatten()
+            .collect()
+    });
+    for w in warm {
+        if let Some(host) = cef::ImplBrowser::host(&w.browser) {
+            cef::ImplBrowserHost::close_browser(&host, true as _);
+        }
+    }
+}
+
+/// Turn a pooled browser into a tile showing `url`.
+fn adopt_warm(gpu: &GpuState, warm: Warm, url: &str, rect: Rect, ephemeral: bool) -> Page {
+    let id = cef::ImplBrowser::identifier(&warm.browser);
+    if ephemeral && !cef_bridge::spatial::bind(url, id) {
+        log::warn!("built-in page token not bound to warm browser {id}");
+    }
+    let mut page = Page::new(gpu, warm.browser, rect, warm.handles, ephemeral);
+    page.set_rect(rect, gpu.window.scale_factor());
+    if let Some(host) = cef::ImplBrowser::host(&page.browser) {
+        cef::ImplBrowserHost::was_hidden(&host, false as _);
+    }
+    if let Some(frame) = cef::ImplBrowser::main_frame(&page.browser) {
+        cef::ImplFrame::load_url(&frame, Some(&url.into()));
+    }
+    page
+}
+
 pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect, ephemeral: bool) -> Page {
     let rect = rect.clamp_size(MAX_PAGE_DIMENSION);
+    if let Some(warm) = warm_kind(url, ephemeral).and_then(take_warm) {
+        return adopt_warm(gpu, warm, url, rect, ephemeral);
+    }
     let OsrSetup {
         window_info,
         mut client,
@@ -234,4 +392,21 @@ pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect, ephemeral: 
         }
     }
     Page::new(gpu, browser, rect, handles, ephemeral)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pool_slot_by_url_and_tile_kind() {
+        let builtin = crate::pages::serve(crate::pages::kind::HELP, String::new());
+        assert_eq!(warm_kind(&builtin, true), Some(WarmKind::Builtin));
+        assert_eq!(warm_kind("https://a.test/", false), Some(WarmKind::Web));
+        // A built-in URL in a non-ephemeral tile, or a web URL in an
+        // ephemeral one, never takes a pooled browser.
+        assert_eq!(warm_kind(&builtin, false), None);
+        assert_eq!(warm_kind("https://a.test/", true), None);
+        assert_eq!(warm_kind("file:///etc/passwd", false), None);
+    }
 }

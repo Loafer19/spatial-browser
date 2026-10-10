@@ -189,6 +189,7 @@ impl App {
     /// (None = sleep until an event or CEF asks for work).
     pub fn tick(&mut self, now: Instant) -> Option<Instant> {
         let state = self.state.as_mut()?;
+        browser::refill_pool(state, now);
 
         pending_actions::apply(
             &mut self.session,

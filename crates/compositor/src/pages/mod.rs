@@ -22,6 +22,8 @@ pub mod workspace_list;
 
 /// Built-in page kinds — the `<kind>` in `spatial://page/<kind>/<token>`.
 pub(crate) mod kind {
+    /// Empty page a pre-started browser idles on (browser::warm pool).
+    pub const BLANK: &str = "blank";
     pub const BOOKMARKS: &str = "bookmarks";
     pub const CONTEXT_MENU: &str = "context-menu";
     pub const DOWNLOADS: &str = "downloads";

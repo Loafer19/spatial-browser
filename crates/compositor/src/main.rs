@@ -124,6 +124,7 @@ fn main() -> ExitCode {
 
     // Every exit path (close, fatal surface error) lands here.
     persistence::store::flush();
+    browser::close_pool();
     cef::shutdown();
     exit_code
 }
