@@ -127,7 +127,7 @@ wrap_render_handler! {
         #[cfg(feature = "accelerated_osr")]
         fn on_accelerated_paint(
             &self,
-            _browser: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             type_: PaintElementType,
             _dirty_rects: Option<&[Rect]>,
             info: Option<&AcceleratedPaintInfo>,
@@ -179,6 +179,9 @@ wrap_render_handler! {
             // A later CPU paint must rebuild its bind group, not reuse a stale one.
             self.handler.cpu.borrow_mut().take();
             self.handler.texture.borrow_mut().replace(bind_group);
+            if let Some(browser) = browser {
+                crate::paint_signal::note_paint(browser.identifier());
+            }
         }
 
         // CPU OSR fallback when shared_texture_enabled is off.
@@ -186,7 +189,7 @@ wrap_render_handler! {
         #[allow(clippy::not_unsafe_ptr_arg_deref)]
         fn on_paint(
             &self,
-            _browser: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             type_: PaintElementType,
             dirty_rects: Option<&[Rect]>,
             buffer: *const u8,
@@ -278,6 +281,11 @@ wrap_render_handler! {
 
             if !reuse {
                 self.handler.texture.borrow_mut().replace(target.bind_group.clone());
+            }
+            // The bind group is reused, so the frame pacer can't see this
+            // paint by identity; tell it.
+            if let Some(browser) = browser {
+                crate::paint_signal::note_paint(browser.identifier());
             }
         }
     }
