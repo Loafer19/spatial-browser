@@ -80,7 +80,7 @@ pub fn load() -> Vec<UserScript> {
             scripts.push(script);
         }
     }
-    scripts.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    scripts.sort_by_key(|a| a.name.to_lowercase());
     scripts
 }
 

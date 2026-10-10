@@ -274,7 +274,7 @@ impl Session {
         self.zoomed_viewport = None;
 
         let cols = (n as f32).sqrt().ceil() as usize;
-        let rows = (n + cols - 1) / cols;
+        let rows = n.div_ceil(cols);
         let margin = 24.0;
         let gap = 24.0;
         let cell_w = (screen_size.0 - margin * 2.0 - gap * (cols - 1) as f32) / cols as f32;

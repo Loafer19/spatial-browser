@@ -28,20 +28,20 @@ pub fn rebuild(config: &FilterEngineConfig) {
     let mut set = FilterSet::new(false);
     let mut loaded = 0u32;
 
-    if config.easylist {
-        if load_list(&mut set, &config.filters_dir, "easylist.txt", FilterFormat::Standard) {
-            loaded += 1;
-        }
+    if config.easylist
+        && load_list(&mut set, &config.filters_dir, "easylist.txt", FilterFormat::Standard)
+    {
+        loaded += 1;
     }
-    if config.easyprivacy {
-        if load_list(
+    if config.easyprivacy
+        && load_list(
             &mut set,
             &config.filters_dir,
             "easyprivacy.txt",
             FilterFormat::Standard,
-        ) {
-            loaded += 1;
-        }
+        )
+    {
+        loaded += 1;
     }
 
     let engine = if loaded == 0 {

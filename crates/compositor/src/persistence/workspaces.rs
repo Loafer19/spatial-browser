@@ -235,9 +235,7 @@ impl WorkspaceStore {
         if self.slots.len() <= 1 {
             return None;
         }
-        let Some(pos) = self.slots.iter().position(|s| s.id == id) else {
-            return None;
-        };
+        let pos = self.slots.iter().position(|s| s.id == id)?;
         let was_active = self.active == id;
         self.slots.remove(pos);
         for (i, slot) in self.slots.iter_mut().enumerate() {

@@ -150,6 +150,8 @@ wrap_render_handler! {
         }
 
         // CPU OSR fallback when shared_texture_enabled is off.
+        // Signature is fixed by the cef-rs trait, so it can't be `unsafe fn`.
+        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         fn on_paint(
             &self,
             _browser: Option<&mut Browser>,
@@ -166,6 +168,7 @@ wrap_render_handler! {
 
             let (width, height) = (width as u32, height as u32);
             let byte_len = (width * height * 4) as usize;
+            // CEF guarantees `buffer` holds width*height BGRA pixels for this call.
             let pixels = unsafe { std::slice::from_raw_parts(buffer, byte_len) };
 
             let texture = self.handler.device.create_texture(&wgpu::TextureDescriptor {

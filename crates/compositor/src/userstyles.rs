@@ -58,7 +58,7 @@ pub fn load() -> Vec<UserStyle> {
             styles.push(style);
         }
     }
-    styles.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    styles.sort_by_key(|a| a.name.to_lowercase());
     styles
 }
 
