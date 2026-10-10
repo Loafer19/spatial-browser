@@ -25,6 +25,28 @@ struct CpuTarget {
     bind_group: wgpu::BindGroup,
 }
 
+#[derive(Clone, Copy)]
+enum PaintPath {
+    SharedTexture,
+    Cpu,
+}
+
+/// Logs (once per path per process) which OSR paint path actually delivers
+/// frames: CEF falls back to CPU on_paint on its own when it can't share
+/// textures, so the configured mode alone doesn't say.
+fn log_paint_path_once(path: PaintPath) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static SHARED: AtomicBool = AtomicBool::new(false);
+    static CPU: AtomicBool = AtomicBool::new(false);
+    let (seen, name) = match path {
+        PaintPath::SharedTexture => (&SHARED, "shared GPU texture (dma-buf import)"),
+        PaintPath::Cpu => (&CPU, "CPU on_paint upload"),
+    };
+    if !seen.swap(true, Ordering::Relaxed) {
+        log::info!("OSR frames arriving via {name}");
+    }
+}
+
 /// CEF dirty rects as `(x, y, w, h)` clipped to a `width`×`height` view;
 /// empty input means the whole view.
 pub fn clip_dirty(
@@ -186,6 +208,7 @@ wrap_render_handler! {
             if let Some(browser) = browser {
                 crate::paint_signal::note_paint(browser.identifier());
             }
+            log_paint_path_once(PaintPath::SharedTexture);
         }
 
         // CPU OSR fallback when shared_texture_enabled is off.
@@ -291,6 +314,7 @@ wrap_render_handler! {
             if let Some(browser) = browser {
                 crate::paint_signal::note_paint(browser.identifier());
             }
+            log_paint_path_once(PaintPath::Cpu);
         }
     }
 }
