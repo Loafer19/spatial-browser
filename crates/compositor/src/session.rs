@@ -41,25 +41,29 @@ const FIND_BAR_GAP: f32 = 8.0;
 
 /// Save-password prompt: left-aligned above the page that offered a login
 /// (the find bar takes the right side).
-pub fn save_prompt_rect(target: Rect) -> Rect {
-    let w = target.w.clamp(280.0, 520.0);
+pub fn save_prompt_rect(target: Rect, scale_factor: f64) -> Rect {
+    let s = scale_factor as f32;
+    let w = target.w.clamp(280.0 * s, 520.0 * s);
     Rect {
         x: target.x,
-        y: target.y - FIND_BAR_HEIGHT - FIND_BAR_GAP,
+        y: target.y - (FIND_BAR_HEIGHT + FIND_BAR_GAP) * s,
         w,
-        h: FIND_BAR_HEIGHT,
+        h: FIND_BAR_HEIGHT * s,
     }
 }
 
 /// Where the find bar sits for a target page: right-aligned just above it,
 /// so clicking into the page never covers it.
-pub fn find_bar_rect(target: Rect) -> Rect {
-    let w = target.w.clamp(200.0, 460.0);
+/// Sizes are CSS px; page rects are device px (`Page::set_rect` divides by
+/// the scale factor), so they scale with it.
+pub fn find_bar_rect(target: Rect, scale_factor: f64) -> Rect {
+    let s = scale_factor as f32;
+    let w = target.w.clamp(200.0 * s, 460.0 * s);
     Rect {
         x: target.x + target.w - w,
-        y: target.y - FIND_BAR_HEIGHT - FIND_BAR_GAP,
+        y: target.y - (FIND_BAR_HEIGHT + FIND_BAR_GAP) * s,
         w,
-        h: FIND_BAR_HEIGHT,
+        h: FIND_BAR_HEIGHT * s,
     }
 }
 
@@ -160,6 +164,18 @@ impl Session {
     /// close — used to park a workspace's live browsers while another
     /// slot is active. Caller owns closing or later `install_pages`.
     pub fn take_pages(&mut self) -> Vec<Page> {
+        // A find bar doesn't travel with its page: clear the highlights
+        // now, while the target is still reachable (parked pages aren't).
+        if let Some(find) = self.find.take() {
+            if let Some(host) = self
+                .pages
+                .iter()
+                .find(|p| p.browser.identifier() == find.target_id)
+                .and_then(|p| p.browser.host())
+            {
+                host.stop_finding(true as _);
+            }
+        }
         self.zoomed_viewport = None;
         self.mark_dirty();
         std::mem::take(&mut self.pages)
@@ -428,6 +444,25 @@ impl Session {
 /// the item so the lookup is testable without a live CEF `Page`.
 fn index_by_browser_id<T>(items: &[T], browser_id: i32, id_of: impl Fn(&T) -> i32) -> Option<usize> {
     items.iter().position(|item| id_of(item) == browser_id)
+}
+
+#[cfg(test)]
+mod tile_tests {
+    use super::*;
+
+    #[test]
+    fn tiles_scale_with_the_display() {
+        let page = Rect { x: 100.0, y: 200.0, w: 2000.0, h: 1200.0 };
+        let one = find_bar_rect(page, 1.0);
+        let two = find_bar_rect(page, 2.0);
+        assert_eq!(two.h, one.h * 2.0);
+        assert_eq!(two.w, one.w * 2.0);
+        assert_eq!(two.x + two.w, page.x + page.w, "find bar stays right-aligned");
+        assert!(two.y + two.h < page.y, "above the page, not over it");
+        let save = save_prompt_rect(page, 2.0);
+        assert_eq!(save.x, page.x);
+        assert_eq!(save.h, two.h);
+    }
 }
 
 #[cfg(test)]

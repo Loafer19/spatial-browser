@@ -205,7 +205,7 @@ fn apply_find(session: &mut Session, gpu: &GpuState) {
 
     if let Some(rect) = target_rect {
         let scale = gpu.window.scale_factor();
-        session.place_page(bar_id, crate::session::find_bar_rect(rect), scale);
+        session.place_page(bar_id, crate::session::find_bar_rect(rect, scale), scale);
     }
 }
 
@@ -1314,7 +1314,7 @@ fn handle_password_action(
                 gpu,
                 &gpu.window,
                 &url,
-                crate::session::save_prompt_rect(target_rect),
+                crate::session::save_prompt_rect(target_rect, gpu.window.scale_factor()),
                 true,
             );
             let prompt_id = prompt.browser.identifier();
@@ -1650,7 +1650,7 @@ fn apply_save_prompt(
     match (rect_of(target_id), rect_of(prompt_id)) {
         (Some(target), Some(_)) => {
             let scale = gpu.window.scale_factor();
-            session.place_page(prompt_id, crate::session::save_prompt_rect(target), scale);
+            session.place_page(prompt_id, crate::session::save_prompt_rect(target, scale), scale);
         }
         _ => close_save_prompt(session, offer),
     }

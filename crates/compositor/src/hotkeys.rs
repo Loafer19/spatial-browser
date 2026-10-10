@@ -298,7 +298,7 @@ fn open_find(session: &mut Session, gpu: &GpuState) {
         return;
     };
     let target_id = target.browser.identifier();
-    let rect = crate::session::find_bar_rect(target.rect);
+    let rect = crate::session::find_bar_rect(target.rect, gpu.window.scale_factor());
     let bar = browser::spawn(
         gpu,
         &gpu.window,
