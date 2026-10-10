@@ -4,6 +4,7 @@
 
 mod app;
 mod blocklist;
+pub mod clipboard;
 mod filter_engine;
 mod find;
 mod clean_urls;
