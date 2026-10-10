@@ -1,5 +1,8 @@
-// Cancel popups so CEF does not open native GTK/XWayland windows; compositor
-// spawns canvas Pages from PENDING_POPUPS instead.
+// Popups. Allowed ones are created by CEF itself as windowless browsers from
+// the compositor's factory (so they stay children of their opener and
+// `window.opener` works) and handed over via PENDING_POPUP_BROWSERS; without a
+// factory they fall back to cancel + respawn from PENDING_POPUPS. Cancelling
+// is never left to CEF's default, which would open a native GTK window.
 //
 // The compositor respawns each popup as a fresh, browser-initiated page, which
 // skips Chromium's own guards on renderer-initiated top-level navigations
@@ -9,8 +12,31 @@
 
 use cef::{self, rc::Rc, *};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
+
+use crate::render::OsrRenderHandles;
+
+/// What CEF needs to create a popup as one of our windowless pages.
+pub struct PopupSetup {
+    pub window_info: WindowInfo,
+    pub client: Client,
+    pub settings: BrowserSettings,
+    pub handles: OsrRenderHandles,
+}
+
+/// A popup CEF created from a `PopupSetup`, waiting to become a tile.
+pub struct CreatedPopup {
+    pub opener_id: i32,
+    pub browser: Browser,
+    pub handles: OsrRenderHandles,
+}
+
+type PopupFactory = Box<dyn Fn() -> PopupSetup>;
+
+/// A setup whose browser hasn't shown up in on_after_created after this
+/// long belongs to a popup CEF dropped; it must not be matched to a later one.
+const POPUP_CREATE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// One popup per opener page per this interval. A `target=_blank` click or an
 /// OAuth `window.open` is one popup per gesture; a loop of `window.open` calls
@@ -22,6 +48,28 @@ thread_local! {
     pub static PENDING_POPUPS: RefCell<Vec<(i32, String)>> = const { RefCell::new(Vec::new()) };
     // Opener browser id → when its last popup was accepted.
     static LAST_POPUP: RefCell<HashMap<i32, Instant>> = RefCell::new(HashMap::new());
+    static POPUP_FACTORY: RefCell<Option<PopupFactory>> = const { RefCell::new(None) };
+    // Setups handed to CEF, in order, until their browser is created.
+    static AWAITING_POPUPS: RefCell<VecDeque<(Instant, i32, OsrRenderHandles)>> = const { RefCell::new(VecDeque::new()) };
+    pub static PENDING_POPUP_BROWSERS: RefCell<Vec<CreatedPopup>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Called once by the compositor when its GPU state exists.
+pub fn set_popup_factory(factory: PopupFactory) {
+    POPUP_FACTORY.with_borrow_mut(|slot| *slot = Some(factory));
+}
+
+/// Oldest live awaiting setup, dropping ones CEF never created.
+fn take_awaiting(now: Instant) -> Option<(i32, OsrRenderHandles)> {
+    AWAITING_POPUPS.with_borrow_mut(|queue| {
+        while let Some((at, opener, handles)) = queue.pop_front() {
+            if now.saturating_duration_since(at) <= POPUP_CREATE_TIMEOUT {
+                return Some((opener, handles));
+            }
+            log::warn!("popup from browser {opener} was never created; dropping its setup");
+        }
+        None
+    })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -103,9 +151,9 @@ wrap_life_span_handler! {
             _target_disposition: WindowOpenDisposition,
             user_gesture: ::std::os::raw::c_int,
             _popup_features: Option<&PopupFeatures>,
-            _window_info: Option<&mut WindowInfo>,
-            _client: Option<&mut Option<Client>>,
-            _settings: Option<&mut BrowserSettings>,
+            window_info: Option<&mut WindowInfo>,
+            client: Option<&mut Option<Client>>,
+            settings: Option<&mut BrowserSettings>,
             _extra_info: Option<&mut Option<DictionaryValue>>,
             _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
@@ -117,13 +165,47 @@ wrap_life_span_handler! {
             let opener_id = browser.identifier();
             match admit_popup(opener_id, user_gesture != 0, &url) {
                 PopupVerdict::Allow => {
-                    PENDING_POPUPS.with_borrow_mut(|pending| pending.push((opener_id, url)));
+                    let setup = POPUP_FACTORY.with_borrow(|factory| factory.as_ref().map(|make| make()));
+                    match (setup, window_info, client, settings) {
+                        (Some(setup), Some(window_info), Some(client), Some(settings)) => {
+                            *window_info = setup.window_info;
+                            *client = Some(setup.client);
+                            *settings = setup.settings;
+                            AWAITING_POPUPS.with_borrow_mut(|queue| {
+                                queue.push_back((Instant::now(), opener_id, setup.handles))
+                            });
+                            return false as _; // let CEF create it, windowless
+                        }
+                        _ => PENDING_POPUPS.with_borrow_mut(|pending| pending.push((opener_id, url))),
+                    }
                 }
                 verdict => {
                     log::info!("popup blocked ({verdict:?}) from browser {opener_id}: {url:?}");
                 }
             }
             true as _
+        }
+
+        fn on_after_created(&self, browser: Option<&mut Browser>) {
+            let Some(browser) = browser else { return };
+            if browser.is_popup() == 0 {
+                return;
+            }
+            match take_awaiting(Instant::now()) {
+                Some((opener_id, handles)) => PENDING_POPUP_BROWSERS.with_borrow_mut(|pending| {
+                    pending.push(CreatedPopup {
+                        opener_id,
+                        browser: browser.clone(),
+                        handles,
+                    })
+                }),
+                None => {
+                    log::warn!("popup browser {} created without a setup; closing", browser.identifier());
+                    if let Some(host) = browser.host() {
+                        host.close_browser(true as _);
+                    }
+                }
+            }
         }
 
         // Every close path ends here: drop the tile's built-in page HTML.
@@ -144,6 +226,29 @@ impl LifeSpanHandlerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn handles() -> OsrRenderHandles {
+        OsrRenderHandles {
+            size: std::rc::Rc::new(RefCell::new(winit::dpi::LogicalSize::new(1.0, 1.0))),
+            texture: std::rc::Rc::new(RefCell::new(None)),
+        }
+    }
+
+    #[test]
+    fn awaiting_popups_match_in_order_and_expire() {
+        let t0 = Instant::now();
+        AWAITING_POPUPS.with_borrow_mut(|q| {
+            q.clear();
+            q.push_back((t0, 1, handles()));
+            q.push_back((t0 + Duration::from_secs(10), 2, handles()));
+            q.push_back((t0 + Duration::from_secs(11), 3, handles()));
+        });
+        // At t0+12s the first setup is stale (CEF dropped that popup): skip it.
+        let now = t0 + Duration::from_secs(12);
+        assert_eq!(take_awaiting(now).map(|(id, _)| id), Some(2));
+        assert_eq!(take_awaiting(now).map(|(id, _)| id), Some(3));
+        assert!(take_awaiting(now).is_none());
+    }
 
     #[test]
     fn popup_url_scheme_filter() {

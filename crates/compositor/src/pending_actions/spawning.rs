@@ -72,24 +72,42 @@ pub(super) fn drain_new_pages(session: &mut Session, gpu: &GpuState) {
         session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, false));
     }
 
-    // Canceled popups → spawn canvas Page (cascaded from opener rect).
+    // Popups CEF created from our factory → adopt as tiles (cascaded from
+    // the opener). Fallback: cancelled popups (no factory) → fresh spawn.
+    let created = cef_bridge::PENDING_POPUP_BROWSERS.with_borrow_mut(std::mem::take);
+    for popup in created {
+        let rect = popup_rect(session, gpu, popup.opener_id);
+        session.add_page(browser::Page::adopt_popup(
+            gpu,
+            popup.browser,
+            popup.handles,
+            rect,
+        ));
+    }
     let popups = PENDING_POPUPS.with_borrow_mut(std::mem::take);
     for (opener_id, url) in popups {
-        let opener_rect = session
-            .pages()
-            .iter()
-            .find(|p| p.browser.identifier() == opener_id)
-            .map(|p| p.rect);
-        let size = gpu.window.inner_size();
-        let rect = match opener_rect {
-            Some(r) => Rect {
-                x: r.x + 40.0,
-                y: r.y + 40.0,
-                w: r.w,
-                h: r.h,
-            },
-            None => session.cascade_rect((size.width as f32, size.height as f32)),
-        };
+        let rect = popup_rect(session, gpu, opener_id);
         session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, false));
+    }
+}
+
+/// Offset from the opener's tile, or the next cascade slot without one.
+fn popup_rect(session: &Session, gpu: &GpuState, opener_id: i32) -> Rect {
+    let opener_rect = session
+        .pages()
+        .iter()
+        .find(|p| p.browser.identifier() == opener_id)
+        .map(|p| p.rect);
+    match opener_rect {
+        Some(r) => Rect {
+            x: r.x + 40.0,
+            y: r.y + 40.0,
+            w: r.w,
+            h: r.h,
+        },
+        None => {
+            let size = gpu.window.inner_size();
+            session.cascade_rect((size.width as f32, size.height as f32))
+        }
     }
 }

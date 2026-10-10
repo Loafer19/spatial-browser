@@ -332,6 +332,7 @@ impl ApplicationHandler for App {
                 .expect("failed to create window"),
         );
         let state = pollster::block_on(GpuState::new(window.clone()));
+        browser::install_popup_factory(&state);
 
         let mut hud = Hud::new(&state.device, &state.queue, state.surface_format());
         let mut minimap = Minimap::new(&state.device, &state.queue, state.surface_format());

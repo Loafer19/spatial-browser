@@ -2,7 +2,7 @@
 // request_context None → shared persistent global (cookies/logins across pages).
 
 use crate::output::{GpuState, PageQuad, Rect};
-use cef_bridge::{ClientBuilder, OsrRenderHandler};
+use cef_bridge::{ClientBuilder, OsrRenderHandler, OsrRenderHandles};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -76,8 +76,23 @@ impl Page {
     }
 }
 
-pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect, ephemeral: bool) -> Page {
-    let rect = rect.clamp_size(MAX_PAGE_DIMENSION);
+/// What CEF needs to create one windowless page browser, plus the handles
+/// the compositor reads its texture/size through. Shared by `spawn` and
+/// popups (which CEF creates itself; see `install_popup_factory`).
+struct OsrSetup {
+    window_info: cef::WindowInfo,
+    client: cef::Client,
+    settings: cef::BrowserSettings,
+    handles: OsrRenderHandles,
+}
+
+fn osr_setup(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    layout: &wgpu::BindGroupLayout,
+    scale_factor: f64,
+    rect: Rect,
+) -> OsrSetup {
     // Shared-texture needs CEF GPU + wgpu on the same device (see output::).
     let shared_texture = crate::output::osr_shared_texture_enabled();
     let window_info = cef::WindowInfo {
@@ -91,25 +106,121 @@ pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect, ephemeral: 
     } else {
         log::info!("CEF OSR: CPU paint path");
     }
-
-    let device_scale_factor = window.scale_factor();
     let (render_handler, handles) = OsrRenderHandler::new(
-        gpu.device.clone(),
-        gpu.queue.clone(),
-        gpu.texture_bind_group_layout.clone(),
-        device_scale_factor as _,
-        winit::dpi::PhysicalSize::new(rect.w, rect.h).to_logical::<f32>(device_scale_factor),
+        device.clone(),
+        queue.clone(),
+        layout.clone(),
+        scale_factor as _,
+        winit::dpi::PhysicalSize::new(rect.w, rect.h).to_logical::<f32>(scale_factor),
     );
+    OsrSetup {
+        window_info,
+        client: ClientBuilder::build(render_handler),
+        settings: cef::BrowserSettings {
+            windowless_frame_rate: TARGET_FRAME_RATE.load(Ordering::Relaxed) as _,
+            ..Default::default()
+        },
+        handles,
+    }
+}
 
-    let browser_settings = cef::BrowserSettings {
-        windowless_frame_rate: TARGET_FRAME_RATE.load(Ordering::Relaxed) as _,
-        ..Default::default()
-    };
+impl Page {
+    fn new(
+        gpu: &GpuState,
+        browser: cef::Browser,
+        rect: Rect,
+        handles: OsrRenderHandles,
+        ephemeral: bool,
+    ) -> Self {
+        Page {
+            browser,
+            rect,
+            quad: PageQuad::new(&gpu.device, &gpu.style_bind_group_layout),
+            size: handles.size,
+            texture: handles.texture,
+            zoomed_from: None,
+            ephemeral,
+            reader_mode: std::cell::Cell::new(false),
+            load_progress: std::cell::Cell::new(0.0),
+            // Utility pages (help/settings/…) skip the load bar.
+            load_active: std::cell::Cell::new(!ephemeral),
+        }
+    }
+
+    /// A popup CEF created from our factory: wrap it as a normal page at
+    /// `rect` (its render handler started at a default size).
+    pub fn adopt_popup(
+        gpu: &GpuState,
+        browser: cef::Browser,
+        handles: OsrRenderHandles,
+        rect: Rect,
+    ) -> Self {
+        let mut page = Page::new(
+            gpu,
+            browser,
+            rect.clamp_size(MAX_PAGE_DIMENSION),
+            handles,
+            false,
+        );
+        page.set_rect(page.rect, gpu.window.scale_factor());
+        page
+    }
+}
+
+/// Size a popup browser starts at, before `adopt_popup` places it.
+const POPUP_START_SIZE: (f32, f32) = (1024.0, 768.0);
+
+/// Let CEF create allowed popups as real windowless browsers (child of the
+/// opener: `window.opener` / `postMessage` work, e.g. OAuth) instead of the
+/// compositor cancelling and re-spawning them, which left the renderer
+/// waiting on a browser that never came ("Timeout of new browser info").
+pub fn install_popup_factory(gpu: &GpuState) {
+    let device = gpu.device.clone();
+    let queue = gpu.queue.clone();
+    let layout = gpu.texture_bind_group_layout.clone();
+    let window = gpu.window.clone();
+    cef_bridge::set_popup_factory(Box::new(move || {
+        let (w, h) = POPUP_START_SIZE;
+        let setup = osr_setup(
+            &device,
+            &queue,
+            &layout,
+            window.scale_factor(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w,
+                h,
+            },
+        );
+        cef_bridge::PopupSetup {
+            window_info: setup.window_info,
+            client: setup.client,
+            settings: setup.settings,
+            handles: setup.handles,
+        }
+    }));
+}
+
+pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect, ephemeral: bool) -> Page {
+    let rect = rect.clamp_size(MAX_PAGE_DIMENSION);
+    let OsrSetup {
+        window_info,
+        mut client,
+        settings,
+        handles,
+    } = osr_setup(
+        &gpu.device,
+        &gpu.queue,
+        &gpu.texture_bind_group_layout,
+        window.scale_factor(),
+        rect,
+    );
     let browser = cef::browser_host_create_browser_sync(
         Some(&window_info),
-        Some(&mut ClientBuilder::build(render_handler)),
+        Some(&mut client),
         Some(&url.into()),
-        Some(&browser_settings),
+        Some(&settings),
         None,
         None, // shared persistent global request context
     )
@@ -122,18 +233,5 @@ pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect, ephemeral: 
             log::warn!("built-in page token not bound to browser {id}");
         }
     }
-
-    Page {
-        browser,
-        rect,
-        quad: PageQuad::new(&gpu.device, &gpu.style_bind_group_layout),
-        size: handles.size,
-        texture: handles.texture,
-        zoomed_from: None,
-        ephemeral,
-        reader_mode: std::cell::Cell::new(false),
-        load_progress: std::cell::Cell::new(0.0),
-        // Utility pages (help/settings/…) skip the load bar.
-        load_active: std::cell::Cell::new(!ephemeral),
-    }
+    Page::new(gpu, browser, rect, handles, ephemeral)
 }
