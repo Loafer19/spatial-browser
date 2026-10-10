@@ -90,12 +90,13 @@ pub struct App {
     modifiers: ModifiersState,
     // Physical window size for layout/minimap (not for mutating world rects).
     canvas_size: (f32, f32),
-    // World-space cursor offset from page origin at drag start.
-    dragging: Option<(f32, f32)>,
+    // Alt+drag: (browser id of the dragged page, world-space cursor offset
+    // from its origin at drag start). Tracked by id, not z-order.
+    dragging: Option<(i32, (f32, f32))>,
     // Middle-button pan: (cursor, viewport offset) at press.
     panning: Option<((f32, f32), (f32, f32))>,
-    // Bottom-right resize; top-left stays fixed.
-    resizing: bool,
+    // Bottom-right resize of the page with this browser id; top-left fixed.
+    resizing: Option<i32>,
     // Override CEF cursor while over/dragging the resize corner.
     resize_hover: bool,
     // Cached CEF cursor — on_cursor_change only fires on change; re-apply
@@ -145,7 +146,7 @@ impl Default for App {
             canvas_size: (0.0, 0.0),
             dragging: None,
             panning: None,
-            resizing: false,
+            resizing: None,
             resize_hover: false,
             cef_cursor: CursorIcon::default(),
             last_save: Instant::now(),
@@ -305,31 +306,39 @@ impl ApplicationHandler for App {
 
                 let viewport = self.session.viewport();
                 let cursor_world = viewport.screen_to_world(self.cursor_window);
-                self.resize_hover = self.resizing
+                self.resize_hover = self.resizing.is_some()
                     || resize_hit_test(self.session.pages(), &viewport, self.cursor_window)
                         .is_some();
 
-                if self.resizing {
-                    let page = self.session.pages().last().expect("resizing with no pages");
-                    let rect = Rect {
-                        x: page.rect.x,
-                        y: page.rect.y,
-                        w: (cursor_world.0 - page.rect.x).max(MIN_PAGE_SIZE),
-                        h: (cursor_world.1 - page.rect.y).max(MIN_PAGE_SIZE),
+                if let Some(browser_id) = self.resizing {
+                    // Page closed mid-resize → end the gesture.
+                    let Some(page_rect) = self.session.rect_of(browser_id) else {
+                        self.resizing = None;
+                        return;
                     };
-                    self.session.set_topmost_rect(rect, scale);
+                    let rect = Rect {
+                        x: page_rect.x,
+                        y: page_rect.y,
+                        w: (cursor_world.0 - page_rect.x).max(MIN_PAGE_SIZE),
+                        h: (cursor_world.1 - page_rect.y).max(MIN_PAGE_SIZE),
+                    };
+                    self.session.set_rect_of(browser_id, rect, scale);
                     return;
                 }
 
-                if let Some(offset) = self.dragging {
-                    let page = self.session.pages().last().expect("dragging with no pages");
+                if let Some((browser_id, offset)) = self.dragging {
+                    // Page closed mid-drag → end the gesture.
+                    let Some(page_rect) = self.session.rect_of(browser_id) else {
+                        self.dragging = None;
+                        return;
+                    };
                     let rect = Rect {
                         x: cursor_world.0 - offset.0,
                         y: cursor_world.1 - offset.1,
-                        w: page.rect.w,
-                        h: page.rect.h,
+                        w: page_rect.w,
+                        h: page_rect.h,
                     };
-                    self.session.set_topmost_rect(rect, scale);
+                    self.session.set_rect_of(browser_id, rect, scale);
                     return;
                 }
 
@@ -374,9 +383,12 @@ impl ApplicationHandler for App {
                                 hit_test(self.session.pages(), cursor_world.0, cursor_world.1)
                             {
                                 let top = self.session.bring_to_front(i);
-                                let rect = self.session.pages()[top].rect;
-                                self.dragging =
-                                    Some((cursor_world.0 - rect.x, cursor_world.1 - rect.y));
+                                let page = &self.session.pages()[top];
+                                let rect = page.rect;
+                                self.dragging = Some((
+                                    page.browser.identifier(),
+                                    (cursor_world.0 - rect.x, cursor_world.1 - rect.y),
+                                ));
                             }
                         }
                         ElementState::Released => self.dragging = None,
@@ -470,8 +482,9 @@ impl ApplicationHandler for App {
                                 &self.session.viewport(),
                                 self.cursor_window,
                             ) {
-                                self.session.bring_to_front(i);
-                                self.resizing = true;
+                                let top = self.session.bring_to_front(i);
+                                self.resizing =
+                                    Some(self.session.pages()[top].browser.identifier());
                                 return;
                             }
                         }
@@ -479,8 +492,7 @@ impl ApplicationHandler for App {
                             if self.minimap_drag.take().is_some() {
                                 return;
                             }
-                            if self.resizing {
-                                self.resizing = false;
+                            if self.resizing.take().is_some() {
                                 return;
                             }
                         }
