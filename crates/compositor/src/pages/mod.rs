@@ -14,6 +14,7 @@ pub mod help;
 pub mod history_list;
 pub mod omnibox;
 pub mod passwords_list;
+pub mod save_prompt;
 pub mod settings_list;
 pub mod switcher;
 pub mod userscripts_list;

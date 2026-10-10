@@ -114,7 +114,6 @@ pub fn script(theme: &Theme) -> String {
 
   window.__spatialAutofillShowPicker = function(items) {{
     hidePicker();
-    hideSave();
     if (!items || !items.length) return;
     var box = document.createElement('div');
     box.id = '__spatial_pw_picker';
@@ -141,48 +140,6 @@ pub fn script(theme: &Theme) -> String {
     dismiss.style.cssText = 'margin-top:8px;background:transparent;border:none;color:'+UI.accent+';cursor:pointer;padding:4px 0';
     dismiss.onclick = hidePicker;
     box.appendChild(dismiss);
-    document.documentElement.appendChild(box);
-  }};
-
-  function hideSave() {{
-    var el = document.getElementById('__spatial_pw_save');
-    if (el) el.remove();
-  }}
-
-  window.__spatialAutofillShowSave = function(payload) {{
-    hideSave();
-    hidePicker();
-    var box = document.createElement('div');
-    box.id = '__spatial_pw_save';
-    box.style.cssText = 'position:fixed;z-index:2147483647;left:16px;bottom:16px;max-width:360px;background:'+UI.bg+';color:'+UI.fg+';border:1px solid '+UI.border+';border-radius:'+UI.radius+';padding:12px 14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.45)';
-    var head = document.createElement('div');
-    head.style.cssText = 'font-weight:600;margin-bottom:6px';
-    head.textContent = 'Save password?';
-    var sub = document.createElement('div');
-    sub.style.cssText = 'opacity:.75;margin-bottom:10px;word-break:break-all';
-    sub.textContent = (payload.username || '') + ' @ ' + (payload.origin || '');
-    box.appendChild(head);
-    box.appendChild(sub);
-    function btn(label, href, primary) {{
-      var b = document.createElement('button');
-      b.type = 'button';
-      b.textContent = label;
-      b.style.cssText = 'margin:0 6px 0 0;padding:7px 12px;border-radius:'+UI.radiusInner+';border:1px solid '+UI.border+';cursor:pointer;' +
-        (primary ? 'background:'+UI.accent+';color:'+UI.accentFg+';font-weight:600' : 'background:'+UI.card+';color:'+UI.fg);
-      b.onclick = function(ev) {{
-        ev.preventDefault();
-        if (href) signal(href);
-        hideSave();
-      }};
-      return b;
-    }}
-    var q = 'origin=' + encodeURIComponent(payload.origin || '') +
-      '&username=' + encodeURIComponent(payload.username || '') +
-      '&password=' + encodeURIComponent(payload.password || '') +
-      '&id=' + encodeURIComponent(payload.id || '');
-    box.appendChild(btn('Save', 'password://go/save?' + q, true));
-    box.appendChild(btn('Never for site', 'password://go/never?origin=' + encodeURIComponent(payload.origin || ''), false));
-    box.appendChild(btn('Not now', '', false));
     document.documentElement.appendChild(box);
   }};
 

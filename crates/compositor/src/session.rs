@@ -39,6 +39,18 @@ pub struct FindBar {
 pub const FIND_BAR_HEIGHT: f32 = 48.0;
 const FIND_BAR_GAP: f32 = 8.0;
 
+/// Save-password prompt: left-aligned above the page that offered a login
+/// (the find bar takes the right side).
+pub fn save_prompt_rect(target: Rect) -> Rect {
+    let w = target.w.clamp(280.0, 520.0);
+    Rect {
+        x: target.x,
+        y: target.y - FIND_BAR_HEIGHT - FIND_BAR_GAP,
+        w,
+        h: FIND_BAR_HEIGHT,
+    }
+}
+
 /// Where the find bar sits for a target page: right-aligned just above it,
 /// so clicking into the page never covers it.
 pub fn find_bar_rect(target: Rect) -> Rect {

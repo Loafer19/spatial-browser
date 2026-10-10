@@ -344,6 +344,10 @@ pub enum PasswordAction {
     Never {
         origin: String,
     },
+    /// Buttons of the compositor's save-prompt tile.
+    PromptSave,
+    PromptNever,
+    PromptDismiss,
     Delete {
         id: String,
     },
@@ -482,6 +486,12 @@ fn parse_password_action(url: &str) -> Option<PasswordAction> {
     // `query/?…`. Legacy `password://<action>?…` still accepted.
     let rest = rest.strip_prefix("go/").unwrap_or(rest);
     let rest = rest.strip_prefix('/').unwrap_or(rest);
+    match rest {
+        "prompt-save" => return Some(PasswordAction::PromptSave),
+        "prompt-never" => return Some(PasswordAction::PromptNever),
+        "prompt-dismiss" => return Some(PasswordAction::PromptDismiss),
+        _ => {}
+    }
     if let Some(query) = password_action_query(rest, "unlock") {
         let password = query_param(query, "password")?;
         let create = query_param(query, "create").as_deref() == Some("1");

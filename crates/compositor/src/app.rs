@@ -27,18 +27,20 @@ use crate::userscripts;
 use crate::userstyles;
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 
-/// The compositor-shown "Save password?" offer. Kept until Save / Never /
-/// a newer offer: a web `password://save` is only honoured when it matches
-/// this exactly, so a page cannot write arbitrary credentials on its own.
-/// Wiped on drop (it holds a password).
-#[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
+/// A login a page offered to save, shown as a compositor-owned prompt tile
+/// (`pages::save_prompt`) above that page until Save / Never / Not now, a
+/// newer offer, the page closing or the vault locking. Only the tile can
+/// accept it. Wiped on drop (it holds a password).
+#[derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct PendingSaveOffer {
     pub origin: String,
     pub username: String,
     pub password: String,
     pub id: String,
-    /// Banner already re-shown after the post-login navigation.
-    pub reshown: bool,
+    /// The page that offered it.
+    pub target_id: i32,
+    /// The prompt tile's browser.
+    pub prompt_id: i32,
 }
 
 /// Open right-click menu (ephemeral page) and the page it applies to.

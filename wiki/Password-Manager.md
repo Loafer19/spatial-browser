@@ -6,7 +6,7 @@ Local encrypted vault + form autofill. Not a Chrome/Bitwarden sync client — se
 
 1. **Ctrl+Shift+P** — create vault (first time) or unlock with master password
 2. Browse a site, focus a login field — **Use saved login?** chip (bottom-left) if the vault is unlocked (click to fill; never silent)
-3. After you submit a **new or changed** login → **Save password?** chip (same corner). Identical username+password is not offered again
+3. After you submit a **new or changed** login → a **Save password?** tile appears just above the page (owned by the browser, not drawn inside the page, so the site can't press it or hide it; it survives the post-login navigation). Identical username+password is not offered again
 4. Passwords page tabs: **Saved** · **Add / Import** · **Generator** · **Never save**
 
 Locking: **Ctrl+Shift+L** or the **Lock** button on the passwords page. The vault also locks itself after **15 minutes** without use (list page actions, Ctrl+Shift+P, fill/save clicks; focus queries don't count). Locking drops the key and decrypted entries from memory and turns any open passwords page back into the unlock form.
