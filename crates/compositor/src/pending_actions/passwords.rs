@@ -50,13 +50,14 @@ pub(super) fn web_password_action(
 pub(super) fn handle_password_action(
     session: &mut Session,
     gpu: &GpuState,
-    vault: &mut Option<VaultSession>,
-    generated_password: &mut Option<String>,
-    pending_save_offer: &mut Option<PendingSaveOffer>,
+    s: &mut Stores<'_>,
     browser_id: i32,
     source: ActionSource,
     action: PasswordAction,
 ) {
+    let vault = &mut *s.vault;
+    let generated_password = &mut *s.generated_password;
+    let pending_save_offer = &mut *s.pending_save_offer;
     let internal = matches!(source, ActionSource::Internal);
     let action = match source {
         ActionSource::Internal => action,
@@ -681,27 +682,12 @@ pub(super) fn auto_lock(
 }
 
 /// `password://` from built-in pages, tiles and the web autofill bridge.
-pub(super) fn drain(
-    session: &mut Session,
-    gpu: &GpuState,
-    vault: &mut Option<VaultSession>,
-    generated_password: &mut Option<String>,
-    pending_save_offer: &mut Option<PendingSaveOffer>,
-) {
+pub(super) fn drain(session: &mut Session, gpu: &GpuState, s: &mut Stores<'_>) {
     if let Some((browser_id, action)) =
         PENDING_PASSWORD_ACTION.with_borrow_mut(|pending| pending.take())
     {
         if let Some(source) = action_source(session, browser_id) {
-            handle_password_action(
-                session,
-                gpu,
-                vault,
-                generated_password,
-                pending_save_offer,
-                browser_id,
-                source,
-                action,
-            );
+            handle_password_action(session, gpu, s, browser_id, source, action);
         }
     }
 }

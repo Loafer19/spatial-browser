@@ -10,7 +10,7 @@ use crate::persistence::downloads::DownloadRecord;
 use crate::persistence::history::HistoryEntry;
 use crate::persistence::settings::AppSettings;
 use crate::persistence::vault::{self, VaultSession};
-use crate::persistence::workspaces::{self, WorkspaceRuntime, WorkspaceStore};
+use crate::persistence::workspaces::{self, WorkspaceStore};
 use crate::reader_mode;
 use crate::session::Session;
 use crate::userscripts::{self, UserScript};
@@ -25,17 +25,24 @@ pub fn handle(
     modifiers: ModifiersState,
     session: &mut Session,
     gpu: &GpuState,
-    bookmarks: &mut Vec<Bookmark>,
-    typed_history: &[String],
-    downloads: &[DownloadRecord],
-    history: &[HistoryEntry],
-    workspaces: &mut WorkspaceStore,
-    workspace_runtime: &mut WorkspaceRuntime,
-    settings: &AppSettings,
-    userscripts: &mut Vec<UserScript>,
-    userstyles: &mut Vec<UserStyle>,
-    vault: &mut Option<VaultSession>,
+    stores: crate::pending_actions::Stores<'_>,
 ) -> bool {
+    let crate::pending_actions::Stores {
+        bookmarks,
+        typed_history,
+        downloads,
+        history,
+        workspaces,
+        workspace_runtime,
+        settings,
+        userscripts,
+        userstyles,
+        vault,
+        ..
+    } = stores;
+    let (typed_history, downloads, history): (&[String], &[DownloadRecord], &[HistoryEntry]) =
+        (typed_history, downloads, history);
+    let settings: &AppSettings = settings;
     if event.state != ElementState::Pressed {
         return false;
     }

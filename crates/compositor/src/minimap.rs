@@ -283,16 +283,15 @@ impl Minimap {
         let focus = rgba_focus(theme);
 
         push_rect(
-            &mut verts, panel.x, panel.y, panel.w, panel.h, sw, sh, panel_bg,
+            &mut verts,
+            [panel.x, panel.y, panel.w, panel.h],
+            (sw, sh),
+            panel_bg,
         );
         push_rect_outline(
             &mut verts,
-            panel.x,
-            panel.y,
-            panel.w,
-            panel.h,
-            sw,
-            sh,
+            [panel.x, panel.y, panel.w, panel.h],
+            (sw, sh),
             panel_border,
             1.0,
         );
@@ -314,24 +313,20 @@ impl Minimap {
             if pr.w < 1.0 || pr.h < 1.0 {
                 continue;
             }
-            push_rect(&mut verts, pr.x, pr.y, pr.w, pr.h, sw, sh, page_fill);
+            push_rect(&mut verts, [pr.x, pr.y, pr.w, pr.h], (sw, sh), page_fill);
             let outline = if Some(i) == focused_index {
                 focus
             } else {
                 page_border
             };
-            push_rect_outline(&mut verts, pr.x, pr.y, pr.w, pr.h, sw, sh, outline, 1.0);
+            push_rect_outline(&mut verts, [pr.x, pr.y, pr.w, pr.h], (sw, sh), outline, 1.0);
         }
 
         if viewfinder.w >= 2.0 && viewfinder.h >= 2.0 {
             push_rect_outline(
                 &mut verts,
-                viewfinder.x,
-                viewfinder.y,
-                viewfinder.w,
-                viewfinder.h,
-                sw,
-                sh,
+                [viewfinder.x, viewfinder.y, viewfinder.w, viewfinder.h],
+                (sw, sh),
                 focus,
                 OUTLINE,
             );
@@ -464,16 +459,9 @@ fn solid_white_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Text
     texture
 }
 
-fn push_rect(
-    out: &mut Vec<MmVertex>,
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-    sw: f32,
-    sh: f32,
-    color: [f32; 4],
-) {
+fn push_rect(out: &mut Vec<MmVertex>, rect: [f32; 4], screen: (f32, f32), color: [f32; 4]) {
+    let [x, y, w, h] = rect;
+    let (sw, sh) = screen;
     let (x0, y0, x1, y1) = (x, y, x + w, y + h);
     let to_ndc = |px: f32, py: f32| -> [f32; 2] { [(px / sw) * 2.0 - 1.0, 1.0 - (py / sh) * 2.0] };
     let p00 = to_ndc(x0, y0);
@@ -517,19 +505,17 @@ fn push_rect(
 
 fn push_rect_outline(
     out: &mut Vec<MmVertex>,
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-    sw: f32,
-    sh: f32,
+    rect: [f32; 4],
+    screen: (f32, f32),
     color: [f32; 4],
     t: f32,
 ) {
-    push_rect(out, x, y, w, t, sw, sh, color);
-    push_rect(out, x, y + h - t, w, t, sw, sh, color);
-    push_rect(out, x, y, t, h, sw, sh, color);
-    push_rect(out, x + w - t, y, t, h, sw, sh, color);
+    let [x, y, w, h] = rect;
+    let (sw, sh) = screen;
+    push_rect(out, [x, y, w, t], (sw, sh), color);
+    push_rect(out, [x, y + h - t, w, t], (sw, sh), color);
+    push_rect(out, [x, y, t, h], (sw, sh), color);
+    push_rect(out, [x + w - t, y, t, h], (sw, sh), color);
 }
 
 fn parse_rgb(s: &str, alpha: f32) -> [f32; 4] {

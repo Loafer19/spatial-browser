@@ -72,16 +72,17 @@ pub(crate) fn open_context_menu(
 pub(super) fn handle_context_action(
     session: &mut Session,
     gpu: &GpuState,
-    vault: &mut Option<VaultSession>,
-    context_menu: &mut Option<ContextMenuState>,
-    pending_context_hit: &mut Option<ContextHitRequest>,
-    workspaces: &mut WorkspaceStore,
-    workspace_runtime: &mut WorkspaceRuntime,
-    typed_history: &[String],
-    settings: &AppSettings,
+    s: &mut Stores<'_>,
     browser_id: i32,
     action: ContextAction,
 ) {
+    let vault = &mut *s.vault;
+    let context_menu = &mut *s.context_menu;
+    let pending_context_hit = &mut *s.pending_context_hit;
+    let workspaces = &mut *s.workspaces;
+    let workspace_runtime = &mut *s.workspace_runtime;
+    let typed_history: &[String] = s.typed_history;
+    let settings: &AppSettings = s.settings;
     match action {
         ContextAction::Hit {
             link,
@@ -243,18 +244,6 @@ pub(super) fn drain(session: &mut Session, gpu: &GpuState, s: &mut Stores<'_>) {
             matches!(action, ContextAction::Hit { .. }) || from_internal(session, *id, "context://")
         })
     {
-        handle_context_action(
-            session,
-            gpu,
-            s.vault,
-            s.context_menu,
-            s.pending_context_hit,
-            s.workspaces,
-            s.workspace_runtime,
-            s.typed_history,
-            s.settings,
-            browser_id,
-            action,
-        );
+        handle_context_action(session, gpu, s, browser_id, action);
     }
 }

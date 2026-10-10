@@ -183,13 +183,7 @@ pub fn apply(session: &mut Session, gpu: &GpuState, mut s: Stores<'_>) {
 
     scripts_page::drain(session, gpu, s.userscripts, s.userstyles);
 
-    passwords::drain(
-        session,
-        gpu,
-        s.vault,
-        s.generated_password,
-        s.pending_save_offer,
-    );
+    passwords::drain(session, gpu, &mut s);
 
     context::drain(session, gpu, &mut s);
 

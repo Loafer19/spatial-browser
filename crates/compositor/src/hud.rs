@@ -255,23 +255,15 @@ impl Hud {
 
         push_rect(
             &mut verts,
-            panel_x,
-            panel_y,
-            panel_w,
-            panel_h,
-            sw,
-            sh,
+            [panel_x, panel_y, panel_w, panel_h],
+            (sw, sh),
             panel_bg,
             atlas_uv_solid(),
         );
         push_rect_outline(
             &mut verts,
-            panel_x,
-            panel_y,
-            panel_w,
-            panel_h,
-            sw,
-            sh,
+            [panel_x, panel_y, panel_w, panel_h],
+            (sw, sh),
             panel_border,
         );
 
@@ -282,16 +274,12 @@ impl Hud {
             let gc = if active { glyph_on } else { glyph_off };
             push_rect(
                 &mut verts,
-                cx,
-                cy,
-                CHIP_W,
-                CHIP_H,
-                sw,
-                sh,
+                [cx, cy, CHIP_W, CHIP_H],
+                (sw, sh),
                 bg,
                 atlas_uv_solid(),
             );
-            push_rect_outline(&mut verts, cx, cy, CHIP_W, CHIP_H, sw, sh, border);
+            push_rect_outline(&mut verts, [cx, cy, CHIP_W, CHIP_H], (sw, sh), border);
             let label = if slot.id >= 10 {
                 format!("{}", slot.id)
             } else {
@@ -299,22 +287,24 @@ impl Hud {
                     .unwrap_or('?')
                     .to_string()
             };
-            push_glyph_centered(&mut verts, &label, cx, cy, CHIP_W, CHIP_H, sw, sh, gc);
+            push_glyph_centered(&mut verts, &label, [cx, cy, CHIP_W, CHIP_H], (sw, sh), gc);
             cx += CHIP_W + CHIP_GAP;
         }
         push_rect(
             &mut verts,
-            cx,
-            cy,
-            CHIP_W,
-            CHIP_H,
-            sw,
-            sh,
+            [cx, cy, CHIP_W, CHIP_H],
+            (sw, sh),
             idle,
             atlas_uv_solid(),
         );
-        push_rect_outline(&mut verts, cx, cy, CHIP_W, CHIP_H, sw, sh, border);
-        push_glyph_centered(&mut verts, "+", cx, cy, CHIP_W, CHIP_H, sw, sh, glyph_off);
+        push_rect_outline(&mut verts, [cx, cy, CHIP_W, CHIP_H], (sw, sh), border);
+        push_glyph_centered(
+            &mut verts,
+            "+",
+            [cx, cy, CHIP_W, CHIP_H],
+            (sw, sh),
+            glyph_off,
+        );
 
         self.vertex_count = verts.len() as u32;
         if self.vertex_count > self.vertex_capacity {
@@ -387,14 +377,12 @@ fn glyph_ink(ch: char) -> Option<(u32, u32, u32, u32)> {
 fn push_glyph_centered(
     out: &mut Vec<HudVertex>,
     text: &str,
-    cx: f32,
-    cy: f32,
-    cw: f32,
-    ch: f32,
-    sw: f32,
-    sh: f32,
+    cell: [f32; 4],
+    screen: (f32, f32),
     color: [f32; 4],
 ) {
+    let [cx, cy, cw, ch] = cell;
+    let (sw, sh) = screen;
     let scale = GLYPH_SCALE;
     // Measure the combined ink box across all characters so we center what
     // you actually see, not the empty padding inside each 8×8 cell.
@@ -427,12 +415,8 @@ fn push_glyph_centered(
         let uv = glyph_uv(c);
         push_rect(
             out,
-            base_x + cell_x * scale,
-            base_y,
-            8.0 * scale,
-            8.0 * scale,
-            sw,
-            sh,
+            [base_x + cell_x * scale, base_y, 8.0 * scale, 8.0 * scale],
+            (sw, sh),
             color,
             uv,
         );
@@ -442,15 +426,13 @@ fn push_glyph_centered(
 
 fn push_rect(
     out: &mut Vec<HudVertex>,
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-    sw: f32,
-    sh: f32,
+    rect: [f32; 4],
+    screen: (f32, f32),
     color: [f32; 4],
     uv: [f32; 4],
 ) {
+    let [x, y, w, h] = rect;
+    let (sw, sh) = screen;
     let (x0, y0, x1, y1) = (x, y, x + w, y + h);
     let (u0, v0, u1, v1) = (uv[0], uv[1], uv[2], uv[3]);
     let to_ndc = |px: f32, py: f32| -> [f32; 2] { [(px / sw) * 2.0 - 1.0, 1.0 - (py / sh) * 2.0] };
@@ -494,19 +476,17 @@ fn push_rect(
 
 fn push_rect_outline(
     out: &mut Vec<HudVertex>,
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-    sw: f32,
-    sh: f32,
+    rect: [f32; 4],
+    screen: (f32, f32),
     color: [f32; 4],
 ) {
+    let [x, y, w, h] = rect;
+    let (sw, sh) = screen;
     let t = 1.0;
-    push_rect(out, x, y, w, t, sw, sh, color, atlas_uv_solid());
-    push_rect(out, x, y + h - t, w, t, sw, sh, color, atlas_uv_solid());
-    push_rect(out, x, y, t, h, sw, sh, color, atlas_uv_solid());
-    push_rect(out, x + w - t, y, t, h, sw, sh, color, atlas_uv_solid());
+    push_rect(out, [x, y, w, t], (sw, sh), color, atlas_uv_solid());
+    push_rect(out, [x, y + h - t, w, t], (sw, sh), color, atlas_uv_solid());
+    push_rect(out, [x, y, t, h], (sw, sh), color, atlas_uv_solid());
+    push_rect(out, [x + w - t, y, t, h], (sw, sh), color, atlas_uv_solid());
 }
 
 fn build_atlas(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture {

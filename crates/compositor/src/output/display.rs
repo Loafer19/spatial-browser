@@ -121,17 +121,23 @@ impl PageQuad {
         }
     }
 
+    /// Writes this frame's vertices and style uniform for `page`.
     fn update(
         &self,
         queue: &wgpu::Queue,
-        rect: Rect,
+        page: &PageDraw<'_>,
         viewport: (f32, f32),
-        focused: bool,
-        is_loading: bool,
-        load_progress: f32,
-        load_bar: bool,
         theme: &Theme,
     ) {
+        let PageDraw {
+            rect,
+            focused,
+            load_progress,
+            load_bar,
+            ..
+        } = *page;
+        // No texture yet: the shader draws the loading placeholder.
+        let is_loading = page.texture.is_none();
         let (vw, vh) = viewport;
         let left = (rect.x / vw) * 2.0 - 1.0;
         let right = ((rect.x + rect.w) / vw) * 2.0 - 1.0;
@@ -612,16 +618,7 @@ impl GpuState {
 
         let screen_size = (self.config.width as f32, self.config.height as f32);
         for page in pages {
-            page.quad.update(
-                &self.queue,
-                page.rect,
-                screen_size,
-                page.focused,
-                page.texture.is_none(),
-                page.load_progress,
-                page.load_bar,
-                theme,
-            );
+            page.quad.update(&self.queue, page, screen_size, theme);
         }
 
         self.queue.write_buffer(
