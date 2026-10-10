@@ -22,6 +22,7 @@ Numbered **live slots** (default three), not named one-shot snapshots.
 | Action | How |
 |--------|-----|
 | Switch slot | Top-edge chip strip, or `Ctrl+1`…`Ctrl+9` |
+| Move page → slot | `Ctrl+Shift+1`…`Ctrl+Shift+9` (creates empty slots up to N if needed, then follows) |
 | New slot | Chip `+`, `Ctrl+N`, or context menu **New workspace** |
 | Slot list / delete | `Ctrl+Shift+W` |
 

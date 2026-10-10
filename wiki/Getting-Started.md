@@ -39,6 +39,7 @@ Set `CEF_PATH` (usually `~/.local/share/cef`): copy `.cargo/config.toml.example`
 | Bookmarks | `Ctrl+D` / `Ctrl+B` |
 | History | `Ctrl+H` |
 | Workspace slots | Top-edge chips / `Ctrl+1`…`9` / `Ctrl+N` |
+| Move page → slot | `Ctrl+Shift+1`…`9` (creates slot if missing) |
 | Settings | `Ctrl+,` |
 | All shortcuts | `F1` or `Ctrl+/` |
 | Userscripts | `Ctrl+Shift+U` |

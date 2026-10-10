@@ -93,6 +93,7 @@ pub fn handle(
             }
         }
         // Ctrl+1..9 — switch to workspace slot N.
+        // Ctrl+Shift+1..9 — move focused page to slot N (create empty if missing) and follow.
         PhysicalKey::Code(
             code @ (KeyCode::Digit1
                 | KeyCode::Digit2
@@ -103,7 +104,7 @@ pub fn handle(
                 | KeyCode::Digit7
                 | KeyCode::Digit8
                 | KeyCode::Digit9),
-        ) if !modifiers.shift_key() => {
+        ) => {
             let id = match code {
                 KeyCode::Digit1 => 1,
                 KeyCode::Digit2 => 2,
@@ -117,7 +118,17 @@ pub fn handle(
                 _ => 0,
             };
             if id > 0 {
-                workspaces::switch_to(workspaces, workspace_runtime, session, gpu, id);
+                if modifiers.shift_key() {
+                    workspaces::move_focused_to_slot(
+                        workspaces,
+                        workspace_runtime,
+                        session,
+                        gpu,
+                        id,
+                    );
+                } else {
+                    workspaces::switch_to(workspaces, workspace_runtime, session, gpu, id);
+                }
             }
             true
         }

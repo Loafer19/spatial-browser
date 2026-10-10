@@ -217,6 +217,23 @@ impl Session {
         self.mark_dirty();
     }
 
+    /// Removes the topmost non-ephemeral page without closing CEF — for
+    /// moving it to another workspace slot. Utility overlays stay put.
+    /// If that page was Ctrl+Space zoomed, restores its layout rect and
+    /// the pre-zoom viewport first.
+    pub fn take_topmost_content_page(&mut self, scale_factor: f64) -> Option<Page> {
+        let idx = self.pages.iter().rposition(|p| !p.ephemeral)?;
+        let mut page = self.pages.remove(idx);
+        if let Some(previous_rect) = page.zoomed_from.take() {
+            page.set_rect(previous_rect, scale_factor);
+            if let Some(viewport) = self.zoomed_viewport.take() {
+                self.viewport = viewport;
+            }
+        }
+        self.mark_dirty();
+        Some(page)
+    }
+
     /// Used by drag/resize, both of which always act on the topmost page
     /// (bring_to_front happens at gesture start).
     pub fn set_topmost_rect(&mut self, rect: Rect, scale_factor: f64) {

@@ -51,6 +51,7 @@ Pages live in **world space** on a pannable/zoomable canvas. Hit-testing and dra
 | `Ctrl+Shift+W` | Workspace slot list |
 | `Ctrl+N` | New workspace slot |
 | `Ctrl+1`…`Ctrl+9` | Switch to workspace slot N |
+| `Ctrl+Shift+1`…`Ctrl+Shift+9` | Move focused page to slot N (creates empty slots if missing) and follow |
 | `Ctrl+Shift+U` | Scripts & styles |
 | `Ctrl+Shift+P` | Passwords / vault |
 | `Ctrl+,` | Settings |

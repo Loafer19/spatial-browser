@@ -214,6 +214,17 @@ impl WorkspaceStore {
         id
     }
 
+    /// Ensure contiguous slots `1..=id` exist (append empty unvisited
+    /// ones). No-op when `id` is already present.
+    pub fn ensure_slot(&mut self, id: u32) {
+        if id == 0 {
+            return;
+        }
+        while self.slot_count() < id {
+            self.add_fresh_slot();
+        }
+    }
+
     pub fn slot(&self, id: u32) -> Option<&WorkspaceSlot> {
         self.slots.iter().find(|s| s.id == id)
     }
@@ -404,6 +415,40 @@ pub fn add_and_switch(
     let id = store.add_fresh_slot();
     activate_slot(store, runtime, session, gpu, id);
     id
+}
+
+/// Move the focused (topmost non-ephemeral) page to slot `id`, creating
+/// empty slots up to `id` when needed, then follow into that slot.
+/// Keeps the CEF browser alive (park/restore path). No-op when there is
+/// no content page to move.
+pub fn move_focused_to_slot(
+    store: &mut WorkspaceStore,
+    runtime: &mut WorkspaceRuntime,
+    session: &mut Session,
+    gpu: &crate::output::GpuState,
+    id: u32,
+) {
+    if id == 0 {
+        return;
+    }
+    store.ensure_slot(id);
+    let scale = gpu.window.scale_factor();
+    let Some(page) = session.take_topmost_content_page(scale) else {
+        return;
+    };
+    if store.active == id {
+        session.add_page(page);
+        store.capture_active_from_session(session);
+        store.save();
+        return;
+    }
+    let from = store.active;
+    store.capture_active_from_session(session);
+    runtime.park(from, session);
+    activate_slot(store, runtime, session, gpu, id);
+    session.add_page(page);
+    store.capture_active_from_session(session);
+    store.save();
 }
 
 /// Delete a slot; closes its parked (or live) browsers. If it was active,
