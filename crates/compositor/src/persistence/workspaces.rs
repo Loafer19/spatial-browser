@@ -266,6 +266,8 @@ impl WorkspaceRuntime {
             if page.ephemeral {
                 close_browser(&page);
             } else {
+                // Hidden: CEF stops painting and Chromium throttles timers/rAF.
+                set_hidden(&page, true);
                 kept.push(page);
             }
         }
@@ -316,7 +318,16 @@ fn close_session_browsers(session: &mut Session) {
     }
 }
 
+fn set_hidden(page: &Page, hidden: bool) {
+    if let Some(host) = page.browser.host() {
+        host.was_hidden(hidden as _);
+    }
+}
+
 fn restore_parked(session: &mut Session, parked: ParkedSlot) {
+    for page in &parked.pages {
+        set_hidden(page, false);
+    }
     session.set_theme(theme_from_name(&parked.theme));
     session.set_viewport(parked.viewport);
     session.install_pages(parked.pages);

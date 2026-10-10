@@ -13,7 +13,9 @@ mod display;
 mod download;
 mod life_span;
 mod load;
+mod message_pump;
 mod navigation;
+mod paint_signal;
 mod render;
 
 pub use app::*;
@@ -29,5 +31,9 @@ pub use find::*;
 pub use download::*;
 pub use life_span::*;
 pub use load::*;
+pub use message_pump::{
+    next_message_pump_work, set_message_pump_waker, take_message_pump_work, MAX_PUMP_DELAY,
+};
 pub use navigation::*;
+pub use paint_signal::{note_paint, paint_count};
 pub use render::*;

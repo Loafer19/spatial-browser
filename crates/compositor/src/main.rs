@@ -6,6 +6,7 @@ mod autofill_bridge;
 mod browser;
 mod clipboard_bridge;
 mod file_dialog;
+mod frame_pacer;
 mod hotkeys;
 mod hud;
 mod input;
@@ -25,7 +26,7 @@ mod viewport;
 use app::App;
 use cef::{args::Args, *};
 use cef_bridge::{AppBuilder, OsrApp};
-use std::{process::ExitCode, thread::sleep, time::Duration};
+use std::{process::ExitCode, sync::Mutex, time::Instant};
 use winit::{
     event_loop::{ControlFlow, EventLoop},
     platform::pump_events::{EventLoopExtPumpEvents, PumpStatus},
@@ -87,18 +88,38 @@ fn main() -> ExitCode {
         "CEF initialize failed"
     );
 
+    // Event-driven loop: sleep until CEF asks for work
+    // (on_schedule_message_pump_work), a window event, or the App's next
+    // pacing deadline (begin frame, animation, HUD hide, session save).
     let mut event_loop = EventLoop::new().expect("failed to create event loop");
-    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.set_control_flow(ControlFlow::Wait);
+    let proxy = Mutex::new(event_loop.create_proxy());
+    cef_bridge::set_message_pump_waker(move || {
+        if let Ok(proxy) = proxy.lock() {
+            let _ = proxy.send_event(());
+        }
+    });
 
     let mut app = App::default();
+    // Never sleep longer than this without pumping CEF (cefclient does the
+    // same: on_schedule_message_pump_work alone can miss work).
+    let mut cef_fallback_at = Instant::now();
     let exit_code = loop {
-        do_message_loop_work();
-        match event_loop.pump_app_events(Some(Duration::ZERO), &mut app) {
+        let now = Instant::now();
+        if cef_bridge::take_message_pump_work(now) || now >= cef_fallback_at {
+            do_message_loop_work();
+            cef_fallback_at = Instant::now() + cef_bridge::MAX_PUMP_DELAY;
+        }
+        let app_due = app.tick(Instant::now());
+        let wake = [cef_bridge::next_message_pump_work(), app_due]
+            .into_iter()
+            .flatten()
+            .fold(cef_fallback_at, Instant::min);
+        let timeout = wake.saturating_duration_since(Instant::now());
+        match event_loop.pump_app_events(Some(timeout), &mut app) {
             PumpStatus::Exit(code) => break ExitCode::from(code as u8),
             PumpStatus::Continue => {}
         }
-        // Live Settings fps — don't hardcode 60 on top of CEF's own cap.
-        sleep(Duration::from_millis(1000 / app.target_fps() as u64));
     };
 
     cef::shutdown();

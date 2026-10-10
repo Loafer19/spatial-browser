@@ -1,20 +1,22 @@
 // EasyList/EasyPrivacy via Brave `adblock`: network cancel, cosmetic CSS,
-// optional ##+js. Rebuild on UI thread; IO thread only check_request.
-// Needs adblock without `single-thread` so Engine is Sync.
+// optional ##+js. Parsing the lists takes long enough to drop frames, so it
+// runs on a background worker and the result is swapped in under ENGINE;
+// the IO thread only calls check_request. Needs adblock without
+// `single-thread` so Engine is Sync + Send.
 
 use adblock::lists::{FilterFormat, FilterSet, ParseOptions};
 use adblock::request::Request;
 use adblock::Engine;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 static ENGINE: Mutex<Option<Engine>> = Mutex::new(None);
 static COSMETIC_ENABLED: AtomicBool = AtomicBool::new(true);
 static SCRIPTLETS_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Which list files to load from `filters_dir`.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FilterEngineConfig {
     pub easylist: bool,
     pub easyprivacy: bool,
@@ -23,8 +25,106 @@ pub struct FilterEngineConfig {
     pub filters_dir: PathBuf,
 }
 
-/// Rebuild Engine from disk (UI thread); IO checks see it after unlock.
-pub fn rebuild(config: &FilterEngineConfig) {
+/// Latest-wins request slot shared with the worker thread.
+#[derive(Default)]
+struct Worker {
+    state: Mutex<WorkerState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct WorkerState {
+    /// Config waiting to be built (newer requests overwrite older ones).
+    pending: Option<FilterEngineConfig>,
+    /// Last config handed to the worker; equal requests are no-ops.
+    requested: Option<FilterEngineConfig>,
+    /// Builds finished (installed or superseded); lets tests wait.
+    completed: u64,
+}
+
+static WORKER: OnceLock<Arc<Worker>> = OnceLock::new();
+
+/// Rebuild the Engine for `config` on a background thread. Returns false
+/// when `config` matches the last request (nothing to do) — e.g. a custom
+/// host edit, which never touches EasyList.
+pub fn rebuild(config: &FilterEngineConfig) -> bool {
+    let worker = WORKER.get_or_init(spawn_worker);
+    let Ok(mut state) = worker.state.lock() else {
+        log::warn!("filter engine worker lock poisoned; rebuild skipped");
+        return false;
+    };
+    if state.requested.as_ref() == Some(config) {
+        return false;
+    }
+    state.requested = Some(config.clone());
+    state.pending = Some(config.clone());
+    worker.changed.notify_all();
+    true
+}
+
+fn spawn_worker() -> Arc<Worker> {
+    let worker = Arc::new(Worker::default());
+    let thread_worker = worker.clone();
+    let spawned = std::thread::Builder::new()
+        .name("filter-engine".into())
+        .spawn(move || worker_loop(&thread_worker));
+    if let Err(e) = spawned {
+        log::error!("filter engine worker failed to start: {e}");
+    }
+    worker
+}
+
+fn worker_loop(worker: &Worker) {
+    loop {
+        let config = {
+            let Ok(mut state) = worker.state.lock() else {
+                return;
+            };
+            loop {
+                if let Some(config) = state.pending.take() {
+                    break config;
+                }
+                state = match worker.changed.wait(state) {
+                    Ok(state) => state,
+                    Err(_) => return,
+                };
+            }
+        };
+
+        let (engine, loaded) = build_engine(&config);
+
+        let Ok(mut state) = worker.state.lock() else {
+            return;
+        };
+        // A newer request arrived mid-build: skip installing this one.
+        if state.pending.is_none() {
+            install(engine, loaded, &config);
+        }
+        state.completed += 1;
+        worker.changed.notify_all();
+    }
+}
+
+fn install(engine: Option<Engine>, loaded: u32, config: &FilterEngineConfig) {
+    match ENGINE.lock() {
+        Ok(mut slot) => {
+            *slot = engine;
+            if loaded > 0 {
+                log::info!(
+                    "filter engine rebuilt ({loaded} list(s), scriptlets={}) from {}",
+                    config.load_scriptlets,
+                    config.filters_dir.display()
+                );
+            } else {
+                log::info!("filter engine cleared (no EasyList lists enabled or files missing)");
+            }
+        }
+        Err(e) => log::warn!("filter engine rebuild: lock poisoned: {e}"),
+    }
+}
+
+/// Parse the enabled lists into a fresh Engine (slow; never on the UI thread).
+fn build_engine(config: &FilterEngineConfig) -> (Option<Engine>, u32) {
     let mut set = FilterSet::new(false);
     let mut loaded = 0u32;
 
@@ -44,31 +144,14 @@ pub fn rebuild(config: &FilterEngineConfig) {
         loaded += 1;
     }
 
-    let engine = if loaded == 0 {
-        None
-    } else {
-        let mut engine = Engine::new_with_filter_set(set);
-        if config.load_scriptlets {
-            attach_scriptlets(&mut engine, &config.filters_dir);
-        }
-        Some(engine)
-    };
-
-    match ENGINE.lock() {
-        Ok(mut slot) => {
-            *slot = engine;
-            if loaded > 0 {
-                log::info!(
-                    "filter engine rebuilt ({loaded} list(s), scriptlets={}) from {}",
-                    config.load_scriptlets,
-                    config.filters_dir.display()
-                );
-            } else {
-                log::info!("filter engine cleared (no EasyList lists enabled or files missing)");
-            }
-        }
-        Err(e) => log::warn!("filter engine rebuild: lock poisoned: {e}"),
+    if loaded == 0 {
+        return (None, 0);
     }
+    let mut engine = Engine::new_with_filter_set(set);
+    if config.load_scriptlets {
+        attach_scriptlets(&mut engine, &config.filters_dir);
+    }
+    (Some(engine), loaded)
 }
 
 fn load_list(set: &mut FilterSet, dir: &Path, name: &str, format: FilterFormat) -> bool {
@@ -264,4 +347,77 @@ fn js_string_literal(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "spatial-filter-test-{tag}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn wait_completed(at_least: u64) {
+        let worker = WORKER.get().expect("worker started");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut state = worker.state.lock().unwrap();
+        while state.completed < at_least {
+            let left = deadline.saturating_duration_since(Instant::now());
+            assert!(!left.is_zero(), "filter engine build timed out");
+            state = worker.changed.wait_timeout(state, left).unwrap().0;
+        }
+    }
+
+    #[test]
+    fn build_engine_loads_enabled_lists_only() {
+        let dir = temp_dir("build");
+        std::fs::write(dir.join("easylist.txt"), "||ads.example^\n").unwrap();
+        let config = FilterEngineConfig {
+            easylist: true,
+            easyprivacy: true, // file missing → skipped, not fatal
+            load_scriptlets: false,
+            filters_dir: dir.clone(),
+        };
+        let (engine, loaded) = build_engine(&config);
+        assert_eq!(loaded, 1);
+        let engine = engine.expect("engine built");
+        let req = Request::new("https://ads.example/x.js", "https://site.test/", "script", "GET")
+            .unwrap();
+        assert!(engine.check_network_request(&req).should_block());
+
+        let (none, loaded) = build_engine(&FilterEngineConfig {
+            easylist: false,
+            ..config
+        });
+        assert!(none.is_none());
+        assert_eq!(loaded, 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rebuild_runs_in_background_and_dedups() {
+        let dir = temp_dir("worker");
+        std::fs::write(dir.join("easylist.txt"), "||tracker.example^\n").unwrap();
+        let config = FilterEngineConfig {
+            easylist: true,
+            filters_dir: dir.clone(),
+            ..Default::default()
+        };
+        assert!(rebuild(&config));
+        // Same config again (e.g. custom host edit) → no second build.
+        assert!(!rebuild(&config));
+        wait_completed(1);
+        assert!(check_request(
+            "https://tracker.example/p.gif",
+            "https://site.test/",
+            cef::ResourceType::IMAGE
+        ));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

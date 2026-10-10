@@ -171,6 +171,15 @@ impl Hud {
         }
     }
 
+    pub fn visible(&self) -> bool {
+        self.visible
+    }
+
+    /// When `tick` may auto-hide the strip (frame loop wakes for it).
+    pub fn hide_deadline(&self) -> Option<Instant> {
+        self.hide_at.filter(|_| self.visible && !self.pointer_in_strip)
+    }
+
     pub fn tick(&mut self) {
         if let Some(t) = self.hide_at {
             if Instant::now() >= t && !self.pointer_in_strip {
