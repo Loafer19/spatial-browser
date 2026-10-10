@@ -181,6 +181,7 @@ pub fn apply(session: &mut Session, gpu: &GpuState, mut s: Stores<'_>) {
     find::apply_find(session, gpu);
     passwords::apply_save_prompt(session, gpu, s.pending_save_offer);
 
+    loads::apply_titles(session, s.history);
     loads::inject_load_end(session, s.history, s.userscripts, s.userstyles);
 
     scripts_page::drain(session, gpu, s.userscripts, s.userstyles);

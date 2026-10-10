@@ -370,6 +370,7 @@ pub(crate) mod tests {
                     &[HistoryEntry {
                         url: "https://a.test/".into(),
                         visited_at: 0,
+                        title: Some("A".into()),
                     }],
                 ),
             ),

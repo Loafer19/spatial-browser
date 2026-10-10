@@ -10,6 +10,8 @@ thread_local! {
     pub static CURSOR: RefCell<Option<CursorIcon>> = const { RefCell::new(None) };
     // (browser_id, progress 0..1)
     pub static PENDING_LOAD_PROGRESS: RefCell<Vec<(i32, f64)>> = const { RefCell::new(Vec::new()) };
+    // (browser_id, page title) for history.
+    pub static PENDING_TITLES: RefCell<Vec<(i32, String)>> = const { RefCell::new(Vec::new()) };
 }
 
 #[derive(Clone)]
@@ -32,6 +34,13 @@ wrap_display_handler! {
                 cursor.replace(cef_cursor_to_winit(type_));
             });
             true as _
+        }
+
+        fn on_title_change(&self, browser: Option<&mut Browser>, title: Option<&CefString>) {
+            let (Some(browser), Some(title)) = (browser, title) else {
+                return;
+            };
+            PENDING_TITLES.with_borrow_mut(|q| q.push((browser.identifier(), title.to_string())));
         }
 
         fn on_favicon_urlchange(

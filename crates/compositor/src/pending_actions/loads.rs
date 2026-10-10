@@ -1,6 +1,40 @@
 // Load progress, document-start/load-end injection, history records.
 
 use super::*;
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+thread_local! {
+    // Latest title per browser: a title often arrives before load-end,
+    // when the visit doesn't exist yet to receive it.
+    static PAGE_TITLES: RefCell<HashMap<i32, String>> = RefCell::new(HashMap::new());
+}
+
+/// Title changes → the page's latest history visit (and remembered for
+/// the visit its load-end will record).
+pub(super) fn apply_titles(session: &Session, history: &mut [HistoryEntry]) {
+    let titles = cef_bridge::PENDING_TITLES.with_borrow_mut(std::mem::take);
+    for (browser_id, title) in titles {
+        let Some(page) = session
+            .pages()
+            .iter()
+            .find(|p| p.browser.identifier() == browser_id && !p.ephemeral)
+        else {
+            continue;
+        };
+        history::set_title(history, &page.url(), &title);
+        PAGE_TITLES.with_borrow_mut(|t| {
+            // Bounded by open tiles: drop titles of closed ones.
+            t.retain(|id, _| {
+                session
+                    .pages()
+                    .iter()
+                    .any(|p| p.browser.identifier() == *id)
+            });
+            t.insert(browser_id, title);
+        });
+    }
+}
 
 /// Load events are drained a frame after CEF raised them; by then the frame
 /// may show another origin, which must not get scripts or a save banner
@@ -168,7 +202,8 @@ pub(super) fn inject_load_end(
                 }
             }
             if !page.ephemeral {
-                history::record(history, &url, now_unix_secs());
+                let title = PAGE_TITLES.with_borrow(|t| t.get(&browser_id).cloned());
+                history::record(history, &url, now_unix_secs(), title.as_deref());
             }
         }
     }
