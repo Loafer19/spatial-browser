@@ -5,7 +5,7 @@ use crate::output::Theme;
 use crate::persistence::bookmarks::host_of;
 use crate::persistence::downloads::DownloadRecord;
 
-/// Builds the downloads-list page's `data:` URL. `pub(crate)` so app.rs
+/// Builds the downloads-list page's spatial:// URL. `pub(crate)` so app.rs
 /// can rebuild this page in place after a remove (same close+respawn
 /// pattern as the bookmarks list — see refresh_bookmarks_page).
 pub(crate) fn page_url(theme: &Theme, downloads: &[DownloadRecord]) -> String {
@@ -70,5 +70,5 @@ pub(crate) fn page_url(theme: &Theme, downloads: &[DownloadRecord]) -> String {
         key_fg = theme.help_key_fg,
         heading = theme.help_heading,
     );
-    super::data_url(&html)
+    super::serve(super::kind::DOWNLOADS, html)
 }

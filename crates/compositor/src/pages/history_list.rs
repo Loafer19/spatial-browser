@@ -61,7 +61,7 @@ function applyGrouping(mode) {
 }
 </script>"#;
 
-/// Builds the history-list page's `data:` URL. `pub(crate)` so app.rs
+/// Builds the history-list page's spatial:// URL. `pub(crate)` so app.rs
 /// can rebuild this page in place after a remove/clear (same
 /// close+respawn pattern as the bookmarks list — see
 /// refresh_bookmarks_page).
@@ -150,5 +150,5 @@ pub(crate) fn page_url(theme: &Theme, history: &[HistoryEntry]) -> String {
         card_bg = theme.help_card_bg,
         card_border = theme.help_card_border,
     );
-    super::data_url(&html)
+    super::serve(super::kind::HISTORY, html)
 }

@@ -81,7 +81,7 @@ article { max-width: 40rem; margin: 0 auto; }
 
 ### Built-in / “default” pages
 
-Omnibox, bookmarks, history, downloads, workspaces, settings, help, switcher, and this scripts list are ephemeral `data:` HTML pages. Their real URLs are huge, so site globs never match them.
+Omnibox, bookmarks, history, downloads, workspaces, settings, help, switcher, and this scripts list are ephemeral built-in pages served from `spatial://page/<kind>/<token>`. Site globs never match them. Their CSP blocks `fetch`/XHR, `eval` and remote `@import`/fonts, so scripts and styles for them must be self-contained.
 
 For **both** scripts and styles use:
 
@@ -89,7 +89,7 @@ For **both** scripts and styles use:
 @match spatial-ui
 ```
 
-(`spatial:*` is an alias.) That matches **any** built-in UI page. You can also `@match data:*` for a raw `data:` glob; `spatial-ui` is the supported shortcut.
+(`spatial:*` is an alias.) That matches **any** built-in UI page.
 
 ---
 

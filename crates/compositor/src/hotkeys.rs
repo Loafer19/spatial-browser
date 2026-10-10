@@ -392,7 +392,7 @@ fn page_zoom(session: &Session, command: cef::ZoomCommand) {
 
 // --- Lists ---
 
-/// Bookmark focused page URL (refuses ephemeral data: pages).
+/// Bookmark focused page URL (refuses ephemeral built-in pages).
 fn bookmark_focused(session: &Session, bookmarks: &mut Vec<Bookmark>) {
     let Some(page) = session.pages().last() else {
         return;

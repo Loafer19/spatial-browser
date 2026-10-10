@@ -40,7 +40,7 @@ function go(raw) {
 }
 </script>"#;
 
-/// Omnibox `data:` URL (URL/search, @prefix engines, recent chips).
+/// Omnibox page URL (URL/search, @prefix engines, recent chips).
 pub fn page_url(theme: &Theme, typed_history: &[String], default_search_engine: &str) -> String {
     let mut chips = String::new();
     for entry in typed_history.iter().take(10) {
@@ -76,5 +76,5 @@ pub fn page_url(theme: &Theme, typed_history: &[String], default_search_engine: 
         card_bg = theme.help_card_bg,
         card_border = theme.help_card_border,
     );
-    super::data_url(&html)
+    super::serve(super::kind::OMNIBOX, html)
 }

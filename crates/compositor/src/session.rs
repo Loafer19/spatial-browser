@@ -195,7 +195,7 @@ impl Session {
     /// Pops the topmost page and tells CEF to close it, if any. Its rect
     /// and current URL are kept for `pop_closed` (Ctrl+Shift+T) first —
     /// unless it's an ephemeral utility page (bookmarks/history/
-    /// workspace list, etc.): those are generated `data:` blobs, not
+    /// workspace list, etc.): those are generated `spatial://` pages, not
     /// something a user would ever want "reopened" via undo (this is the
     /// same class of bug bookmark_focused already guards against for
     /// Ctrl+D).

@@ -4,14 +4,14 @@ use super::{html_escape, url_component, LIST_NAV_SCRIPT};
 use crate::output::Theme;
 use crate::persistence::vault::{self, VaultEntry};
 
-/// Tag on the unlocked list page's `data:` URL (outside the base64 body,
-/// which has no `-`, so it can't match by accident).
+/// Id of the list page heading (styling/userstyle hook only; detection
+/// goes by the URL's kind).
 const LIST_MARKER: &str = "sb-vault-list";
 
 /// Whether a page URL is the unlocked passwords list (shows entries, so it
 /// must be swapped for the unlock form on lock).
 pub(crate) fn is_list_url(url: &str) -> bool {
-    url.starts_with("data:") && url.contains(LIST_MARKER)
+    super::kind_of(url) == Some(super::kind::VAULT_LIST)
 }
 
 pub(crate) fn normalize_tab(tab: &str) -> &'static str {
@@ -88,7 +88,7 @@ pub(crate) fn unlock_url(theme: &Theme, create: bool, error: Option<&str>) -> St
         btn = if create { "Create vault" } else { "Unlock" },
         idle_min = vault::AUTO_LOCK_AFTER.as_secs() / 60,
     );
-    super::data_url(&html)
+    super::serve(super::kind::VAULT_UNLOCK, html)
 }
 
 fn tab_bar(theme: &Theme, active: &str) -> String {
@@ -312,7 +312,7 @@ pub(crate) fn page_url(
          {tabs}\
          {panel}\
          {list_nav}</body>",
-        body = super::body_open(theme, ""),
+        body = super::body_open(theme, &format!("data-view=\"{active_tab}\"")),
         heading = theme.help_heading,
         fg = theme.help_fg,
         border = theme.help_card_border,
@@ -320,7 +320,7 @@ pub(crate) fn page_url(
         tabs = tab_bar(theme, active_tab),
         list_nav = LIST_NAV_SCRIPT,
     );
-    super::tagged_data_url(LIST_MARKER, &html)
+    super::serve(super::kind::VAULT_LIST, html)
 }
 
 /// Host(+port) for list display — strip `https://` / `http://`.
@@ -333,11 +333,18 @@ fn display_host(origin: &str) -> &str {
 
 #[cfg(test)]
 mod tag_tests {
+    use crate::output::THEMES;
+
     #[test]
-    fn list_page_is_detected_by_tag() {
-        let url = super::super::tagged_data_url(super::LIST_MARKER, "<h1>x</h1>");
-        assert!(url.starts_with("data:text/html;charset=utf-8;tag=sb-vault-list;base64,"));
-        assert!(super::is_list_url(&url));
-        assert!(!super::is_list_url(&super::super::data_url("<h1 id=sb-vault-list>")));
+    fn list_page_is_detected_by_kind() {
+        let list = super::page_url(&THEMES[0], &[], &[], None, None, "saved");
+        assert!(list.starts_with("spatial://page/vault-list/"), "{list}");
+        assert!(super::is_list_url(&list));
+        let unlock = super::unlock_url(&THEMES[0], false, None);
+        assert!(unlock.starts_with("spatial://page/vault-unlock/"), "{unlock}");
+        assert!(!super::is_list_url(&unlock));
+        // The heading id alone (e.g. in a web page's URL) means nothing.
+        assert!(!super::is_list_url("https://a.test/#sb-vault-list"));
+        assert!(!super::is_list_url("data:text/html;tag=sb-vault-list;base64,PGgxPg=="));
     }
 }

@@ -3,7 +3,7 @@
 // own DOM, the page can't press Save itself or hide the prompt, and it
 // survives the post-login navigation. The password never reaches this HTML.
 
-use super::{data_url, html_escape};
+use super::{html_escape, kind, serve};
 use crate::output::Theme;
 
 /// `is_update`: the login would overwrite a saved entry's password, which
@@ -25,7 +25,9 @@ pub fn page_url(theme: &Theme, host: &str, username: &str, is_update: bool) -> S
     } else {
         format!("{} · ", html_escape(username))
     };
-    data_url(&format!(
+    serve(
+        kind::SAVE_PROMPT,
+        format!(
         "<body style=\"margin:0;padding:8px 10px;background:{bg};color:{fg};\
          font-family:ui-monospace,monospace;font-size:13px;display:flex;gap:8px;\
          align-items:center;box-sizing:border-box;height:100vh\">\
@@ -41,17 +43,18 @@ pub fn page_url(theme: &Theme, host: &str, username: &str, is_update: bool) -> S
         title = if is_update { "Update saved password?" } else { "Save password?" },
         primary = button(true),
         plain = button(false),
-    ))
+        ),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use crate::output::THEMES;
-    use crate::pages::tests::decode_data_url;
+    use crate::pages::tests::served_html;
 
     #[test]
     fn escapes_host_and_username() {
-        let html = decode_data_url(&super::page_url(&THEMES[0], "a.test", "<img src=x onerror=alert(1)>", false));
+        let html = served_html(&super::page_url(&THEMES[0], "a.test", "<img src=x onerror=alert(1)>", false));
         assert!(!html.contains("<img"));
         assert!(html.contains("&lt;img"));
     }

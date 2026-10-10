@@ -120,6 +120,13 @@ wrap_life_span_handler! {
             }
             true as _
         }
+
+        // Every close path ends here: drop the tile's built-in page HTML.
+        fn on_before_close(&self, browser: Option<&mut Browser>) {
+            if let Some(browser) = browser {
+                crate::spatial::forget_browser(browser.identifier());
+            }
+        }
     }
 }
 

@@ -1,5 +1,5 @@
-// Generated data: chrome pages. Every page's HTML goes through `data_url`
-// (base64 body) — never splice raw HTML after `data:text/html,`.
+// Generated built-in pages, served from memory at `spatial://page/…` via
+// `serve` (never `data:` URLs).
 // Escape every interpolated value for its context: `html_escape` for HTML
 // text/attributes, `js_string_literal` for JS strings (handlers and
 // `<script>`), `url_component` for `scheme://…?k=v` values.
@@ -20,51 +20,56 @@ pub mod switcher;
 pub mod userscripts_list;
 pub mod workspace_list;
 
-/// Wrap a built-in page's HTML in a `data:` URL.
-///
-/// The body is base64, not raw or percent-encoded HTML. Chromium
-/// percent-decodes a non-base64 `data:` body *before* the HTML parser sees
-/// it, so with a raw body any `%22%3E%3Cimg …%3E` that survived
-/// `html_escape` (which leaves `%` alone) turned back into live markup —
-/// e.g. a web page's link URL in the context menu. A raw body also loses
-/// everything after the first `#` (fragment start). Base64 has none of
-/// these failure modes: the decoded bytes are exactly `html`, whatever it
-/// contains, at ~1.33× size (percent-encoding every unsafe byte is up to
-/// 3×). `charset=utf-8` stays — without it Chromium decodes as Latin-1.
-pub(crate) fn data_url(html: &str) -> String {
-    encode_data_url("", html)
+/// Built-in page kinds — the `<kind>` in `spatial://page/<kind>/<token>`.
+pub(crate) mod kind {
+    pub const BOOKMARKS: &str = "bookmarks";
+    pub const CONTEXT_MENU: &str = "context-menu";
+    pub const DOWNLOADS: &str = "downloads";
+    pub const FIND_BAR: &str = "find-bar";
+    pub const HELP: &str = "help";
+    pub const HISTORY: &str = "history";
+    pub const OMNIBOX: &str = "omnibox";
+    pub const SAVE_PROMPT: &str = "save-prompt";
+    pub const SETTINGS: &str = "settings";
+    pub const SWITCHER: &str = "switcher";
+    pub const USERSCRIPTS: &str = "userscripts";
+    pub const VAULT_LIST: &str = "vault-list";
+    pub const VAULT_UNLOCK: &str = "vault-unlock";
+    pub const WORKSPACES: &str = "workspaces";
 }
 
-/// `data_url` with a `;tag=<tag>` media-type parameter the compositor can
-/// spot in the URL CEF reports back (`[a-z-]` only; Chromium ignores it).
-pub(crate) fn tagged_data_url(tag: &str, html: &str) -> String {
-    debug_assert!(tag.bytes().all(|b| b.is_ascii_lowercase() || b == b'-'));
-    encode_data_url(&format!(";tag={tag}"), html)
+/// Keeps a list's scroll position across refresh-in-place: remembers
+/// `scrollY` per kind and `data-view` (settings/passwords tab) in the
+/// tile's sessionStorage and restores it after `load` (after the list
+/// keyboard script has scrolled row 0 into view).
+const SCROLL_KEEP_SCRIPT: &str = r#"<script>(function(){
+var s;try{s=window.sessionStorage;}catch(e){return;}
+if(!s)return;
+var key='sb-scroll:'+(location.pathname.split('/')[1]||'')+':'+((document.body&&document.body.dataset.view)||'');
+addEventListener('scroll',function(){try{s.setItem(key,String(Math.round(scrollY)));}catch(e){}},{passive:true});
+addEventListener('load',function(){var y=0;try{y=+s.getItem(key)||0;}catch(e){}if(y>0)scrollTo(0,y);});
+})();</script>"#;
+
+/// Serve a built-in page's HTML at a fresh `spatial://page/<kind>/<token>`
+/// URL (see `cef_bridge::spatial`). The token is 128 random bits: the
+/// capability that lets the tile load it and makes its actions internal.
+/// The HTML is served byte for byte — no data: URL decoding, no URL length
+/// cap — under a strict CSP.
+pub(crate) fn serve(kind: &str, mut html: String) -> String {
+    use rand::Rng;
+    let mut bytes = [0u8; 16];
+    rand::rng().fill_bytes(&mut bytes);
+    let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    html.push_str(SCROLL_KEEP_SCRIPT);
+    cef_bridge::spatial::publish(kind, &token, html).unwrap_or_else(|| {
+        log::error!("invalid built-in page kind {kind:?}");
+        "about:blank".to_string()
+    })
 }
 
-fn encode_data_url(params: &str, html: &str) -> String {
-    let prefix = format!("data:text/html;charset=utf-8{params};base64,");
-    let mut out = String::with_capacity(prefix.len() + html.len().div_ceil(3) * 4);
-    out.push_str(&prefix);
-    base64_encode_into(html.as_bytes(), &mut out);
-    out
-}
-
-/// Standard (RFC 4648 §4) padded base64.
-fn base64_encode_into(bytes: &[u8], out: &mut String) {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    for chunk in bytes.chunks(3) {
-        let b0 = u32::from(chunk[0]);
-        let b1 = u32::from(chunk.get(1).copied().unwrap_or(0));
-        let b2 = u32::from(chunk.get(2).copied().unwrap_or(0));
-        let n = (b0 << 16) | (b1 << 8) | b2;
-        let sextet = |shift: u32| ALPHABET[((n >> shift) & 63) as usize] as char;
-        out.push(sextet(18));
-        out.push(sextet(12));
-        out.push(if chunk.len() > 1 { sextet(6) } else { '=' });
-        out.push(if chunk.len() > 2 { sextet(0) } else { '=' });
-    }
+/// Kind of a built-in page URL (`None` for anything else).
+pub(crate) fn kind_of(url: &str) -> Option<&str> {
+    cef_bridge::spatial::parse_page_url(url).map(|(kind, _)| kind)
 }
 
 /// Escape for HTML text and for double- or single-quoted attribute values.
@@ -243,70 +248,95 @@ pub(crate) mod tests {
     use super::*;
     use crate::output::THEMES;
 
-    /// Decode a `data_url` back to its HTML (test-only base64 decoder).
-    pub(crate) fn decode_data_url(url: &str) -> String {
-        // Media-type params (e.g. `;tag=...`) may sit before `;base64`.
-        let (meta, b64) = url.split_once(";base64,").expect("base64 data URL");
-        assert!(meta.starts_with("data:text/html;charset=utf-8"), "{meta}");
-        let val = |c: u8| -> u32 {
-            match c {
-                b'A'..=b'Z' => u32::from(c - b'A'),
-                b'a'..=b'z' => u32::from(c - b'a') + 26,
-                b'0'..=b'9' => u32::from(c - b'0') + 52,
-                b'+' => 62,
-                b'/' => 63,
-                _ => panic!("non-base64 byte {c:?}"),
-            }
-        };
-        assert_eq!(b64.len() % 4, 0);
-        let mut out = Vec::new();
-        for chunk in b64.as_bytes().chunks(4) {
-            let pad = chunk.iter().filter(|&&c| c == b'=').count();
-            let n = chunk[..4 - pad]
-                .iter()
-                .enumerate()
-                .fold(0u32, |n, (i, &c)| n | (val(c) << (18 - 6 * i)));
-            out.extend_from_slice(&n.to_be_bytes()[1..4 - pad]);
-        }
-        String::from_utf8(out).expect("utf-8")
+    /// The HTML a fresh (unbound) built-in page URL serves.
+    pub(crate) fn served_html(url: &str) -> String {
+        let body = cef_bridge::spatial::body(url, None).expect("served page");
+        String::from_utf8(body.as_bytes().to_vec()).expect("utf-8")
     }
 
     #[test]
-    fn data_url_round_trips_hostile_bodies() {
+    fn serve_keeps_hostile_bodies_byte_for_byte() {
         for html in [
             "",
-            "a",
-            "ab",
-            "abc",
             "<a href=\"context://open-link?url=%22%3E%3Cimg src=x onerror=alert(1)%3E\">x</a>",
             "100% <b>#fragment</b> %2523 %",
             "Привіт, світ — ünïcødé 🚚",
             "line\nbreak\ttab\r\n",
         ] {
-            let url = data_url(html);
-            let body = &url["data:text/html;charset=utf-8;base64,".len()..];
-            // Nothing for Chromium to percent-decode, no fragment, no whitespace.
-            assert!(
-                body.bytes().all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b)),
-                "{url}"
-            );
-            assert_eq!(decode_data_url(&url), html);
+            let url = serve(kind::HELP, html.to_string());
+            assert!(url.starts_with("spatial://page/help/"), "{url}");
+            let served = served_html(&url);
+            assert_eq!(&served[..html.len()], html);
+            assert_eq!(&served[html.len()..], SCROLL_KEEP_SCRIPT);
         }
     }
 
     #[test]
-    fn every_page_is_a_base64_data_url() {
-        let theme = THEMES[0];
-        for url in [
-            help::page_url(&theme),
-            switcher::page_url(&theme, &[(1, "https://a.test/#x".into())]),
-            omnibox::page_url(&theme, &["#1".into()], "https://e.test/?q="),
-            passwords_list::unlock_url(&theme, true, Some("#err")),
-        ] {
-            assert!(url.starts_with("data:text/html;charset=utf-8;base64,"));
-            assert!(!url.contains('#') && !url.contains('%'), "{url}");
-            assert!(decode_data_url(&url).contains("</body>"));
+    fn serve_issues_unique_well_formed_tokens() {
+        let a = serve(kind::HELP, String::new());
+        let b = serve(kind::HELP, String::new());
+        assert_ne!(a, b);
+        for url in [&a, &b] {
+            let (k, token) = cef_bridge::spatial::parse_page_url(url).expect("parses");
+            assert_eq!(k, kind::HELP);
+            assert_eq!(token.len(), 32);
         }
+        assert_eq!(kind_of(&a), Some(kind::HELP));
+        assert_eq!(kind_of("data:text/html,x"), None);
+        // A bad kind never yields a servable URL.
+        assert_eq!(serve("Not A Kind", String::new()), "about:blank");
+    }
+
+    #[test]
+    fn every_page_is_a_spatial_url() {
+        use crate::persistence::{downloads::DownloadRecord, history::HistoryEntry};
+        let theme = THEMES[0];
+        let workspaces: crate::persistence::workspaces::WorkspaceStore =
+            serde_json::from_str(r#"{"active":0,"slots":[]}"#).unwrap();
+        let pages = [
+            (kind::HELP, help::page_url(&theme)),
+            (kind::SWITCHER, switcher::page_url(&theme, &[(1, "https://a.test/#x".into())])),
+            (kind::OMNIBOX, omnibox::page_url(&theme, &["#1".into()], "https://e.test/?q=")),
+            (kind::VAULT_UNLOCK, passwords_list::unlock_url(&theme, true, Some("#err"))),
+            (
+                kind::VAULT_LIST,
+                passwords_list::page_url(&theme, &[], &[], Some("gen"), None, "generator"),
+            ),
+            (kind::FIND_BAR, find_bar::page_url(&theme)),
+            (kind::SAVE_PROMPT, save_prompt::page_url(&theme, "a.test", "u", true)),
+            (kind::CONTEXT_MENU, context_menu::page_url(&theme, &Default::default())),
+            (kind::BOOKMARKS, bookmarks_list::page_url(&theme, &[], Some("ok"))),
+            (
+                kind::DOWNLOADS,
+                downloads_list::page_url(
+                    &theme,
+                    &[DownloadRecord { url: "https://a.test/f".into(), path: "/tmp/f".into() }],
+                ),
+            ),
+            (
+                kind::HISTORY,
+                history_list::page_url(
+                    &theme,
+                    &[HistoryEntry { url: "https://a.test/".into(), visited_at: 0 }],
+                ),
+            ),
+            (kind::WORKSPACES, workspace_list::page_url(&theme, &workspaces)),
+            (kind::SETTINGS, settings_list::page_url(&theme, &Default::default())),
+            (kind::USERSCRIPTS, userscripts_list::page_url(&theme, &[], &[])),
+        ];
+        for (expected, url) in pages {
+            assert_eq!(kind_of(&url), Some(expected), "{url}");
+            assert!(served_html(&url).contains("</body>"), "{expected}");
+        }
+    }
+
+    #[test]
+    fn list_views_tag_their_tab_for_scroll_memory() {
+        let theme = THEMES[0];
+        let settings = settings_list::page_url(&theme, &Default::default());
+        assert!(served_html(&settings).contains("data-view=\"general\""));
+        let vault = passwords_list::page_url(&theme, &[], &[], None, None, "never");
+        assert!(served_html(&vault).contains("data-view=\"never\""));
     }
 
     #[test]
@@ -337,7 +367,7 @@ pub(crate) mod tests {
             link: Some("https://x.test/%22%3E%3Cimg src=x onerror=alert(1)%3E\"><b>".into()),
             ..Default::default()
         };
-        let html = decode_data_url(&context_menu::page_url(&THEMES[0], &ctx));
+        let html = served_html(&context_menu::page_url(&THEMES[0], &ctx));
         assert!(!html.contains("<img") && !html.contains("<b>"), "{html}");
         assert!(html.contains("context://open-link?url=https%3A%2F%2Fx.test%2F%2522%253E"));
     }
@@ -348,7 +378,7 @@ pub(crate) mod tests {
         let mut e = test_entry("id'); x('", "https://a.test\"><script>");
         e.username = "<img src=x onerror=1>".into();
         let never = vec!["https://n.test');alert(1);('".to_string()];
-        let saved = decode_data_url(&passwords_list::page_url(
+        let saved = served_html(&passwords_list::page_url(
             &THEMES[0],
             &[e],
             &never,
@@ -359,7 +389,7 @@ pub(crate) mod tests {
         assert!(!saved.contains("<img") && !saved.contains("\"><script>"), "{saved}");
         assert!(saved.contains("a.test&quot;&gt;&lt;script&gt;"));
         assert!(saved.contains("password://go/fill?id=id%27%29%3B%20x%28%27"));
-        let never_page = decode_data_url(&passwords_list::page_url(
+        let never_page = served_html(&passwords_list::page_url(
             &THEMES[0], &[], &never, None, None, "never",
         ));
         assert!(!never_page.contains("');alert(1)"), "{never_page}");

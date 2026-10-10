@@ -23,9 +23,8 @@ pub struct Theme {
     pub background_dot_color: [f32; 4],
     pub background_grid_spacing: f32,
     pub background_dot_radius: f32,
-    // CSS-ready rgb() strings (not hex — an unescaped `#` in a `data:`
-    // URL starts a fragment, silently truncating the rest of the
-    // document) for the F1 help page.
+    // CSS-ready rgb() strings for the built-in pages (rgb() dates from
+    // raw data: URLs, where `#` cut the document; harmless to keep).
     pub help_bg: &'static str,
     pub help_fg: &'static str,
     pub help_heading: &'static str,
@@ -33,8 +32,7 @@ pub struct Theme {
     pub help_card_border: &'static str,
     pub help_key_bg: &'static str,
     pub help_key_fg: &'static str,
-    // Error / destructive text in generated UI pages (rgb only — no `#`
-    // in data: URLs).
+    // Error / destructive text in generated UI pages.
     pub help_danger: &'static str,
 }
 

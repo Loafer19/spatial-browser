@@ -1,4 +1,4 @@
-// Right-click context menu — small ephemeral data: page at the cursor.
+// Right-click context menu — small ephemeral spatial:// page at the cursor.
 // Items depend on hit target (canvas / page / link / image / password).
 
 use super::{html_escape, url_component};
@@ -111,5 +111,5 @@ pub(crate) fn page_url(theme: &Theme, ctx: &MenuContext) -> String {
         card = theme.help_card_bg,
         heading = theme.help_heading,
     );
-    super::data_url(&html)
+    super::serve(super::kind::CONTEXT_MENU, html)
 }

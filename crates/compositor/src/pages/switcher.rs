@@ -49,7 +49,7 @@ function handleKey(event) {
 }
 </script>"#;
 
-/// Builds the switcher page's `data:` URL — one row per currently open,
+/// Builds the switcher page's spatial:// URL — one row per currently open,
 /// non-ephemeral page (`id` is CEF's own per-browser identifier, `url`
 /// its current URL). Ephemeral pages (F1 help, bookmarks list, this
 /// switcher itself) are excluded by the caller (hotkeys::open_switcher):
@@ -105,5 +105,5 @@ pub fn page_url(theme: &Theme, entries: &[(i32, String)]) -> String {
         key_bg = theme.help_key_bg,
         key_fg = theme.help_key_fg,
     );
-    super::data_url(&html)
+    super::serve(super::kind::SWITCHER, html)
 }

@@ -91,5 +91,5 @@ pub(crate) fn page_url(theme: &Theme, store: &WorkspaceStore) -> String {
         fg = theme.help_fg,
         heading = theme.help_heading,
     );
-    super::data_url(&html)
+    super::serve(super::kind::WORKSPACES, html)
 }

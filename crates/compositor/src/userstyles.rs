@@ -1,5 +1,5 @@
 // Stylus-style CSS from ~/.config/spatial-browser/userstyles/ (@match/@exclude;
-// spatial-ui / spatial:* for data: chrome pages). Disabled in userstyles_state.json.
+// spatial-ui / spatial:* for built-in spatial:// pages). Disabled in userstyles_state.json.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;

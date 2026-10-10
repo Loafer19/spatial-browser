@@ -621,6 +621,21 @@ wrap_request_handler! {
             };
             let url = cef::CefString::from(&request.url()).to_string();
             let id = browser.identifier();
+            if crate::spatial::is_spatial_url(&url) {
+                let is_main = frame.as_ref().is_some_and(|f| f.is_main() != 0);
+                let current = frame
+                    .as_ref()
+                    .map(|f| cef::CefString::from(&f.url()).to_string())
+                    .unwrap_or_default();
+                let direct = request.transition_type().get_raw()
+                    & TransitionType::DIRECT_LOAD_FLAG.get_raw()
+                    != 0;
+                if crate::spatial::navigation_allowed(is_main, direct, &current) {
+                    return false as _;
+                }
+                log::warn!("refused spatial:// navigation in browser {id} (main frame {is_main})");
+                return true as _;
+            }
             // Skip fake action schemes; they never carry tracking params.
             if url.starts_with("http://") || url.starts_with("https://") {
                 if let Some(cleaned) = clean_urls::clean(&url) {

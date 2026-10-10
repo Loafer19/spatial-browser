@@ -66,7 +66,7 @@ pub const HELP_GROUPS: &[(&str, &[(&str, &str)])] = &[
     ),
 ];
 
-/// F1 help `data:` URL using `theme` palette.
+/// F1 help page URL using `theme` palette.
 pub fn page_url(theme: &Theme) -> String {
     let mut rows = String::new();
     for (group, entries) in HELP_GROUPS {
@@ -99,5 +99,5 @@ pub fn page_url(theme: &Theme) -> String {
         heading = theme.help_heading,
         name = theme.name,
     );
-    super::data_url(&html)
+    super::serve(super::kind::HELP, html)
 }

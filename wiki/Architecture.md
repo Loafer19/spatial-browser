@@ -29,7 +29,7 @@
 
 ## UI model
 
-There is **no native chrome** (no address bar widgets). Utility UI is server-rendered `data:` HTML loaded as ordinary CEF pages:
+There is **no native chrome** (no address bar widgets). Utility UI is HTML the compositor renders and serves from memory under a registered `spatial://page/<kind>/<token>` scheme (no `data:` URLs, no URL-length limit; list actions refresh the tile in place), loaded as ordinary CEF pages:
 
 - Omnibox, bookmarks/history/downloads/workspaces/settings/userscripts lists, page switcher, F1 help
 - Actions signal back via fake URLs (`bookmark://…`, `settings://…`, `userscripts://…`, …)

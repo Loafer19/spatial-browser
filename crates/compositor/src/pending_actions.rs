@@ -222,7 +222,8 @@ fn frame_still_on(frame: &cef::Frame, url: &str) -> bool {
 }
 
 fn same_origin(a: &str, b: &str) -> bool {
-    match (a.starts_with("data:"), b.starts_with("data:")) {
+    // Built-in pages: one tile's refresh-in-place keeps it on `spatial:`.
+    match (a.starts_with("spatial:"), b.starts_with("spatial:")) {
         (true, true) => true,
         // Two non-web URLs both normalize to "": not a match.
         (false, false) => {
@@ -233,9 +234,10 @@ fn same_origin(a: &str, b: &str) -> bool {
     }
 }
 
-/// Who sent a `scheme://` action. Built-in pages are ephemeral `data:`
-/// tiles the compositor spawned; anything else is web content, which can
-/// navigate to these schemes too and must not drive the vault or settings.
+/// Who sent a `scheme://` action. Built-in pages are ephemeral tiles on a
+/// `spatial://page/…` URL whose token the compositor issued to that very
+/// browser; anything else is web content, which can navigate to these
+/// schemes too and must not drive the vault or settings.
 enum ActionSource {
     Internal,
     Web { origin: String },
@@ -247,13 +249,17 @@ fn action_source(session: &Session, browser_id: i32) -> Option<ActionSource> {
         .iter()
         .find(|p| p.browser.identifier() == browser_id)?;
     let url = page.url();
-    if page.ephemeral && url.starts_with("data:") {
+    if is_internal_page(page.ephemeral, &url, browser_id) {
         Some(ActionSource::Internal)
     } else {
         Some(ActionSource::Web {
             origin: vault::normalize_origin(&url),
         })
     }
+}
+
+fn is_internal_page(ephemeral: bool, url: &str, browser_id: i32) -> bool {
+    ephemeral && cef_bridge::spatial::issued_to(url, browser_id)
 }
 
 /// `Option::filter` predicate for actions only built-in pages may send.
@@ -1178,15 +1184,16 @@ fn handle_password_action(
             match result {
                 Ok(session_vault) => {
                     *vault = Some(session_vault);
-                    // Close unlock page if this came from it, then open list.
-                    if let Some(index) = session
-                        .pages()
-                        .iter()
-                        .position(|p| p.browser.identifier() == browser_id)
-                    {
-                        let _ = session.close_at(index);
-                    }
-                    hotkeys::open_passwords(session, gpu, vault.as_ref());
+                    // Turn the unlock tile into the list (opens one if gone).
+                    refresh_passwords_page(
+                        session,
+                        gpu,
+                        vault.as_ref(),
+                        None,
+                        None,
+                        "saved",
+                        browser_id,
+                    );
                     // Re-inject autofill on open pages so query works immediately.
                     reinject_autofill(session);
                 }
@@ -1703,18 +1710,8 @@ fn refresh_unlock_page(
     create: bool,
     error: Option<&str>,
 ) {
-    let Some(index) = session
-        .pages()
-        .iter()
-        .position(|p| p.browser.identifier() == browser_id)
-    else {
-        return;
-    };
-    let Some(rect) = session.close_at(index) else {
-        return;
-    };
     let url = pages::passwords_list::unlock_url(&session.theme(), create, error);
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+    show_in_place(session, gpu, browser_id, &url);
 }
 
 /// Drop the unlocked vault (key and entries zeroize on drop) and the secrets
@@ -1747,6 +1744,35 @@ fn lock_vault(
     for id in list_pages {
         refresh_passwords_page(session, gpu, None, None, None, "saved", id);
     }
+    // Open lists now hold the unlock form; wipe any list HTML still around
+    // (e.g. published for a spawn that never happened).
+    cef_bridge::spatial::remove_kind(pages::kind::VAULT_LIST);
+}
+
+/// Show `url` (a fresh `pages::serve` URL) in the built-in tile
+/// `browser_id`: same CEF browser, same tile, the tile's own token — no
+/// close/respawn flicker. Falls back to respawning at the same rect.
+fn show_in_place(session: &mut Session, gpu: &GpuState, browser_id: i32, url: &str) {
+    let Some(index) = session
+        .pages()
+        .iter()
+        .position(|p| p.browser.identifier() == browser_id)
+    else {
+        return;
+    };
+    let page = &session.pages()[index];
+    if page.ephemeral {
+        if let Some(frame) = page.browser.main_frame() {
+            if let Some(url) = cef_bridge::spatial::adopt(browser_id, url) {
+                frame.load_url(Some(&url.as_str().into()));
+                return;
+            }
+        }
+    }
+    let Some(rect) = session.close_at(index) else {
+        return;
+    };
+    session.add_page(browser::spawn(gpu, &gpu.window, url, rect, true));
 }
 
 fn refresh_passwords_page(
@@ -1758,18 +1784,15 @@ fn refresh_passwords_page(
     active_tab: &str,
     browser_id: i32,
 ) {
-    let Some(index) = session
+    if !session
         .pages()
         .iter()
-        .position(|p| p.browser.identifier() == browser_id)
-    else {
+        .any(|p| p.browser.identifier() == browser_id)
+    {
         // Action came from a normal page (e.g. generate from nowhere) — open list.
         hotkeys::open_passwords(session, gpu, vault);
         return;
-    };
-    let Some(rect) = session.close_at(index) else {
-        return;
-    };
+    }
     let url = match vault {
         Some(v) => pages::passwords_list::page_url(
             &session.theme(),
@@ -1781,7 +1804,7 @@ fn refresh_passwords_page(
         ),
         None => pages::passwords_list::unlock_url(&session.theme(), !vault::exists(), None),
     };
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+    show_in_place(session, gpu, browser_id, &url);
 }
 
 fn refresh_bookmarks_page(
@@ -1791,18 +1814,8 @@ fn refresh_bookmarks_page(
     status: Option<&str>,
     browser_id: i32,
 ) {
-    let Some(index) = session
-        .pages()
-        .iter()
-        .position(|p| p.browser.identifier() == browser_id)
-    else {
-        return;
-    };
-    let Some(rect) = session.close_at(index) else {
-        return;
-    };
     let url = pages::bookmarks_list::page_url(&session.theme(), bookmarks, status);
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+    show_in_place(session, gpu, browser_id, &url);
 }
 
 /// Like `refresh_bookmarks_page`, for downloads.
@@ -1812,18 +1825,8 @@ fn refresh_downloads_page(
     downloads: &[DownloadRecord],
     browser_id: i32,
 ) {
-    let Some(index) = session
-        .pages()
-        .iter()
-        .position(|p| p.browser.identifier() == browser_id)
-    else {
-        return;
-    };
-    let Some(rect) = session.close_at(index) else {
-        return;
-    };
     let url = pages::downloads_list::page_url(&session.theme(), downloads);
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+    show_in_place(session, gpu, browser_id, &url);
 }
 
 /// Like `refresh_bookmarks_page`, for history.
@@ -1833,18 +1836,8 @@ fn refresh_history_page(
     history: &[HistoryEntry],
     browser_id: i32,
 ) {
-    let Some(index) = session
-        .pages()
-        .iter()
-        .position(|p| p.browser.identifier() == browser_id)
-    else {
-        return;
-    };
-    let Some(rect) = session.close_at(index) else {
-        return;
-    };
     let url = pages::history_list::page_url(&session.theme(), history);
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+    show_in_place(session, gpu, browser_id, &url);
 }
 
 /// Like `refresh_bookmarks_page`, for workspaces (not used for Load).
@@ -1854,18 +1847,8 @@ fn refresh_workspaces_page(
     workspaces: &WorkspaceStore,
     browser_id: i32,
 ) {
-    let Some(index) = session
-        .pages()
-        .iter()
-        .position(|p| p.browser.identifier() == browser_id)
-    else {
-        return;
-    };
-    let Some(rect) = session.close_at(index) else {
-        return;
-    };
     let url = pages::workspace_list::page_url(&session.theme(), workspaces);
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+    show_in_place(session, gpu, browser_id, &url);
 }
 
 /// Like `refresh_bookmarks_page`, for settings.
@@ -1875,18 +1858,8 @@ fn refresh_settings_page(
     settings: &AppSettings,
     browser_id: i32,
 ) {
-    let Some(index) = session
-        .pages()
-        .iter()
-        .position(|p| p.browser.identifier() == browser_id)
-    else {
-        return;
-    };
-    let Some(rect) = session.close_at(index) else {
-        return;
-    };
     let url = pages::settings_list::page_url(&session.theme(), settings);
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+    show_in_place(session, gpu, browser_id, &url);
 }
 
 fn refresh_userscripts_page(
@@ -1896,18 +1869,8 @@ fn refresh_userscripts_page(
     styles: &[UserStyle],
     browser_id: i32,
 ) {
-    let Some(index) = session
-        .pages()
-        .iter()
-        .position(|p| p.browser.identifier() == browser_id)
-    else {
-        return;
-    };
-    let Some(rect) = session.close_at(index) else {
-        return;
-    };
     let url = pages::userscripts_list::page_url(&session.theme(), scripts, styles);
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+    show_in_place(session, gpu, browser_id, &url);
 }
 
 fn now_unix_secs() -> i64 {
@@ -2055,9 +2018,35 @@ mod tests {
         assert!(same_origin("https://a.test/x?y#z", "https://A.test/other"));
         assert!(!same_origin("https://a.test/", "https://b.test/"));
         assert!(!same_origin("http://a.test/", "https://a.test/"));
-        assert!(same_origin("data:text/html,one", "data:text/html,two"));
-        assert!(!same_origin("data:text/html,x", "https://a.test/"));
+        assert!(same_origin("spatial://page/help/a", "spatial://page/settings/b"));
+        assert!(!same_origin("spatial://page/help/a", "https://a.test/"));
+        assert!(!same_origin("https://page/", "spatial://page/help/a"));
         assert!(!same_origin("about:blank", "javascript:void(0)"));
+    }
+
+    #[test]
+    fn internal_only_with_issued_token_in_ephemeral_tile() {
+        let url = pages::serve(pages::kind::SETTINGS, String::new());
+        // Published but not yet loaded by any browser: nobody is trusted.
+        assert!(!is_internal_page(true, &url, 31_337));
+        assert!(cef_bridge::spatial::bind(&url, 31_337));
+        assert!(is_internal_page(true, &url, 31_337));
+        // Not ephemeral (a web tile that somehow shows it), or another browser.
+        assert!(!is_internal_page(false, &url, 31_337));
+        assert!(!is_internal_page(true, &url, 31_338));
+        // Same token under another kind, unknown token, and the old data: path.
+        let (_, token) = cef_bridge::spatial::parse_page_url(&url).unwrap();
+        let token = token.to_string();
+        assert!(!is_internal_page(true, &format!("spatial://page/vault-list/{token}"), 31_337));
+        assert!(!is_internal_page(
+            true,
+            "spatial://page/settings/00000000000000000000000000000000",
+            31_337
+        ));
+        assert!(!is_internal_page(true, "data:text/html;base64,PGgxPg==", 31_337));
+        // Closing the tile revokes it.
+        cef_bridge::spatial::forget_browser(31_337);
+        assert!(!is_internal_page(true, &url, 31_337));
     }
 
     #[test]
