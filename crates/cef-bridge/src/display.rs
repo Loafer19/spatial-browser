@@ -47,6 +47,7 @@ wrap_display_handler! {
                 .clone()
                 .into_iter()
                 .find(|u| u.starts_with("https://") || u.starts_with("http://") || u.starts_with("data:image/"));
+            log::debug!("favicon announced by browser {}: {first:?}", browser.identifier());
             if let Some(url) = first {
                 crate::favicon::PENDING_FAVICON_URLS
                     .with_borrow_mut(|q| q.push((browser.identifier(), url)));

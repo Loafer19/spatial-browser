@@ -46,17 +46,24 @@ wrap_download_image_callback! {
             http_status_code: ::std::os::raw::c_int,
             image: Option<&mut Image>,
         ) {
-            let Some(image) = image else { return };
+            let key = &self.handler.key;
+            let Some(image) = image else {
+                log::debug!("favicon {key}: no image (HTTP {http_status_code})");
+                return;
+            };
             if !(200..300).contains(&http_status_code) && http_status_code != 0 {
+                log::debug!("favicon {key}: HTTP {http_status_code}");
                 return;
             }
-            let Some(png) = image.as_png(1.0, true as _, None, None) else { return };
+            let Some(png) = image.as_png(1.0, true as _, None, None) else {
+                log::debug!("favicon {key}: image has no PNG representation");
+                return;
+            };
             let mut bytes = vec![0u8; png.size()];
             let read = png.data(Some(&mut bytes), 0);
             bytes.truncate(read);
             if !bytes.is_empty() {
-                let key = self.handler.key.clone();
-                PENDING_FAVICON_IMAGES.with_borrow_mut(|q| q.push((key, bytes)));
+                PENDING_FAVICON_IMAGES.with_borrow_mut(|q| q.push((key.clone(), bytes)));
             }
         }
     }

@@ -186,8 +186,13 @@ pub(super) fn capture_favicons(session: &Session) {
         else {
             continue;
         };
-        if let Some(key) = favicons::key(&page.url()).filter(|k| !favicons::is_fresh(k)) {
-            cef_bridge::fetch_favicon(&page.browser, &icon_url, key);
+        match favicons::key(&page.url()) {
+            Some(key) if !favicons::is_fresh(&key) => {
+                log::debug!("favicon: fetching {icon_url} for {key}");
+                cef_bridge::fetch_favicon(&page.browser, &icon_url, key);
+            }
+            Some(key) => log::debug!("favicon: {key} cached and fresh"),
+            None => log::debug!("favicon: no cache key for {}", page.url()),
         }
     }
     let captured = cef_bridge::PENDING_FAVICON_IMAGES.with_borrow_mut(std::mem::take);

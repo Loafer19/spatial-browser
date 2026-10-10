@@ -62,13 +62,18 @@ pub fn is_fresh(key: &str) -> bool {
 /// Store a captured PNG for `key` (oversized or non-PNG data is dropped).
 pub fn store(key: &str, png: &[u8]) {
     if png.len() > MAX_ICON_BYTES || !png.starts_with(b"\x89PNG\r\n\x1a\n") {
+        log::debug!(
+            "favicon {key}: dropped ({} bytes, not a small PNG)",
+            png.len()
+        );
         return;
     }
     let path = dir().join(file_name(key));
     if let Err(e) = store::write_atomic(&path, png, Backup::None) {
-        log::debug!("favicon {key}: {e}");
+        log::warn!("favicon {key}: couldn't write {path:?}: {e}");
         return;
     }
+    log::info!("favicon cached for {key} ({} bytes)", png.len());
     MEMORY.with_borrow_mut(|m| m.insert(key.to_string(), Some(data_uri_of(png))));
 }
 
