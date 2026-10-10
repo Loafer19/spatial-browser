@@ -26,13 +26,17 @@ use crate::userscripts;
 use crate::userstyles;
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 
-/// Stashed after a login form submit until the following page load.
+/// The compositor-shown "Save password?" offer. Kept until Save / Never /
+/// a newer offer: a web `password://save` is only honoured when it matches
+/// this exactly, so a page cannot write arbitrary credentials on its own.
 #[derive(Clone)]
 pub struct PendingSaveOffer {
     pub origin: String,
     pub username: String,
     pub password: String,
     pub id: String,
+    /// Banner already re-shown after the post-login navigation.
+    pub reshown: bool,
 }
 
 /// Open right-click menu (ephemeral page) and the page it applies to.

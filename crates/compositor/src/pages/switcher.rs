@@ -86,8 +86,8 @@ pub fn page_url(theme: &Theme, entries: &[(i32, String)]) -> String {
         ));
     }
 
-    format!(
-        "data:text/html;charset=utf-8,{script}\
+    let html = format!(
+        "{script}\
          <style>.switch-row:hover,.switch-active{{background:{key_bg}!important}}\
          .switch-row:hover span,.switch-active span{{color:{key_fg}!important}}</style>\
          {body_open}\
@@ -104,5 +104,6 @@ pub fn page_url(theme: &Theme, entries: &[(i32, String)]) -> String {
         card_border = theme.help_card_border,
         key_bg = theme.help_key_bg,
         key_fg = theme.help_key_fg,
-    )
+    );
+    super::data_url(&html)
 }

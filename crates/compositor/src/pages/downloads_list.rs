@@ -55,8 +55,8 @@ pub(crate) fn page_url(theme: &Theme, downloads: &[DownloadRecord]) -> String {
         ));
     }
 
-    format!(
-        "data:text/html;charset=utf-8,{nav_script}\
+    let html = format!(
+        "{nav_script}\
          <style>.dl-row:hover,.dl-row.list-active{{background:{key_bg}!important}}\
          .dl-row:hover span,.dl-row.list-active span{{color:{key_fg}!important}}\
          {icon_hover}</style>\
@@ -69,5 +69,6 @@ pub(crate) fn page_url(theme: &Theme, downloads: &[DownloadRecord]) -> String {
         key_bg = theme.help_key_bg,
         key_fg = theme.help_key_fg,
         heading = theme.help_heading,
-    )
+    );
+    super::data_url(&html)
 }

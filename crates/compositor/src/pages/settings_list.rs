@@ -317,8 +317,8 @@ pub(crate) fn page_url(theme: &Theme, settings: &AppSettings) -> String {
         _ => general_panel(theme, settings),
     };
 
-    format!(
-        "data:text/html;charset=utf-8,{nav_script}\
+    let html = format!(
+        "{nav_script}\
          <style>{icon_hover}\
          .list-row:hover,.list-row.list-active{{background:{key_bg}!important}}\
          .list-row:hover span,.list-row.list-active span,\
@@ -335,7 +335,8 @@ pub(crate) fn page_url(theme: &Theme, settings: &AppSettings) -> String {
         heading = theme.help_heading,
         tabs = tab_bar(theme, tab),
         panel = panel,
-    )
+    );
+    super::data_url(&html)
 }
 
 fn urlencoding_lite(s: &str) -> String {

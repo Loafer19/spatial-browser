@@ -537,25 +537,18 @@ pub fn apply(
                         0,
                     );
                     // Re-show save banner after login navigations wipe the DOM.
-                    if let Some(offer) = pending_save_offer.as_ref() {
+                    // Once only; the offer itself stays so its Save button
+                    // still validates (see web_password_action).
+                    if let Some(offer) = pending_save_offer.as_mut().filter(|o| !o.reshown) {
                         let page_origin = vault::normalize_origin(&url);
                         if page_origin == vault::normalize_origin(&offer.origin) {
-                            let payload = format!(
-                                "{{origin:{},username:{},password:{},id:{}}}",
-                                serde_json::to_string(&offer.origin).unwrap_or_default(),
-                                serde_json::to_string(&offer.username).unwrap_or_default(),
-                                serde_json::to_string(&offer.password).unwrap_or_default(),
-                                serde_json::to_string(&offer.id).unwrap_or_default(),
-                            );
-                            let js = format!(
-                                "window.__spatialAutofillShowSave && window.__spatialAutofillShowSave({payload});"
-                            );
+                            let js = show_save_js(offer);
                             frame.execute_java_script(
                                 Some(&js.as_str().into()),
                                 Some(&"".into()),
                                 0,
                             );
-                            *pending_save_offer = None;
+                            offer.reshown = true;
                         }
                     }
                 }
@@ -1049,9 +1042,11 @@ fn handle_context_action(
 }
 
 /// Web content only gets the autofill subset, always bound to its own
-/// main-frame origin — never one it names in the URL.
+/// main-frame origin — never one it names in the URL. `Save` additionally
+/// has to repeat the compositor's own pending offer verbatim.
 fn web_password_action(
     vault: Option<&VaultSession>,
+    offer: Option<&PendingSaveOffer>,
     origin: &str,
     action: PasswordAction,
 ) -> Option<PasswordAction> {
@@ -1076,18 +1071,30 @@ fn web_password_action(
             username,
             password,
         }),
-        // An id from another site's entry would overwrite it; save as new.
+        // Only the Save button of the banner the compositor showed: same
+        // origin, username and password as the pending offer. Anything else
+        // is a page writing to the vault on its own. The entry id is the
+        // one the compositor picked for the offer, not the request's.
         PasswordAction::Save {
-            username,
-            password,
-            id,
-            ..
-        } => Some(PasswordAction::Save {
-            origin,
-            username,
-            password,
-            id: id.filter(|id| owned_by_origin(id)),
-        }),
+            username, password, ..
+        } => {
+            let Some(offer) = offer.filter(|o| {
+                vault::normalize_origin(&o.origin) == origin
+                    && o.username == username
+                    && o.password == password
+            }) else {
+                log::warn!("dropped password://save from {origin}: no matching save offer");
+                return None;
+            };
+            // An id from another site's entry would overwrite it; save as new.
+            let id = Some(offer.id.clone()).filter(|id| !id.is_empty() && owned_by_origin(id));
+            Some(PasswordAction::Save {
+                origin,
+                username,
+                password,
+                id,
+            })
+        }
         PasswordAction::Never { .. } => Some(PasswordAction::Never { origin }),
         _ => {
             log::warn!("dropped password:// action from web origin {origin}");
@@ -1106,10 +1113,12 @@ fn handle_password_action(
     source: ActionSource,
     action: PasswordAction,
 ) {
+    let internal = matches!(source, ActionSource::Internal);
     let action = match source {
         ActionSource::Internal => action,
         ActionSource::Web { origin } => {
-            match web_password_action(vault.as_ref(), &origin, action) {
+            match web_password_action(vault.as_ref(), pending_save_offer.as_ref(), &origin, action)
+            {
                 Some(action) => action,
                 None => return,
             }
@@ -1187,11 +1196,35 @@ fn handle_password_action(
                 .iter()
                 .find(|p| p.browser.identifier() == browser_id && !p.ephemeral)
                 .or_else(|| session.pages().iter().rev().find(|p| !p.ephemeral));
-            if let Some(page) = target {
-                if let Some(frame) = page.browser.main_frame() {
-                    let js = fill_entry_js(&entry);
-                    frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
+            let Some(page) = target else {
+                return;
+            };
+            // The page owns `__spatialAutofillFill` and can read whatever
+            // it is handed — only ever fill the entry's own site.
+            let page_url = page.url();
+            if !fill_allowed(&entry.origin, &page_url) {
+                log::warn!(
+                    "refused fill of {} entry into {}",
+                    entry.origin,
+                    vault::normalize_origin(&page_url)
+                );
+                if internal {
+                    let status = format!("Open {} first", entry.origin);
+                    refresh_passwords_page(
+                        session,
+                        gpu,
+                        vault.as_ref(),
+                        generated_password.as_deref(),
+                        Some(&status),
+                        "saved",
+                        browser_id,
+                    );
                 }
+                return;
+            }
+            if let Some(frame) = page.browser.main_frame() {
+                let js = fill_entry_js(&entry);
+                frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
             }
         }
         PasswordAction::SaveOffer {
@@ -1219,31 +1252,24 @@ fn handle_password_action(
                 .map(|e| e.id.clone())
                 .unwrap_or_default();
             // Keep across the login navigation; also try to show now (SPA).
-            *pending_save_offer = Some(PendingSaveOffer {
-                origin: origin.clone(),
-                username: username.clone(),
-                password: password.clone(),
-                id: id.clone(),
-            });
+            let offer = PendingSaveOffer {
+                origin,
+                username,
+                password,
+                id,
+                reshown: false,
+            };
             if let Some(page) = session
                 .pages()
                 .iter()
                 .find(|p| p.browser.identifier() == browser_id)
             {
                 if let Some(frame) = page.browser.main_frame() {
-                    let payload = format!(
-                        "{{origin:{},username:{},password:{},id:{}}}",
-                        serde_json::to_string(&origin).unwrap_or_default(),
-                        serde_json::to_string(&username).unwrap_or_default(),
-                        serde_json::to_string(&password).unwrap_or_default(),
-                        serde_json::to_string(&id).unwrap_or_default(),
-                    );
-                    let js = format!(
-                        "window.__spatialAutofillShowSave && window.__spatialAutofillShowSave({payload});"
-                    );
+                    let js = show_save_js(&offer);
                     frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
                 }
             }
+            *pending_save_offer = Some(offer);
         }
         PasswordAction::Save {
             origin,
@@ -1502,6 +1528,23 @@ fn suggest_fill_js(matches: &[&VaultEntry]) -> Option<String> {
     ))
 }
 
+fn show_save_js(offer: &PendingSaveOffer) -> String {
+    let payload = serde_json::json!({
+        "origin": offer.origin,
+        "username": offer.username,
+        "password": offer.password,
+        "id": offer.id,
+    });
+    format!("window.__spatialAutofillShowSave && window.__spatialAutofillShowSave({payload});")
+}
+
+/// A vault entry may only be filled into a page on its own site (same
+/// `host_key`) that is also an autofill origin (HTTPS / local HTTP).
+fn fill_allowed(entry_origin: &str, page_url: &str) -> bool {
+    let key = vault::host_key(entry_origin);
+    !key.is_empty() && vault::is_autofill_origin(page_url) && key == vault::host_key(page_url)
+}
+
 fn fill_entry_js(entry: &VaultEntry) -> String {
     let obj = serde_json::json!({
         "username": entry.username,
@@ -1732,7 +1775,7 @@ mod tests {
     }
 
     fn web(v: Option<&VaultSession>, action: PasswordAction) -> Option<PasswordAction> {
-        web_password_action(v, "https://site.test", action)
+        web_password_action(v, None, "https://site.test", action)
     }
 
     #[test]
@@ -1753,23 +1796,82 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn web_save_cannot_target_foreign_entry() {
-        let v = vault();
-        let save = |id: &str| PasswordAction::Save {
-            origin: "https://bank.test".into(),
+    fn offer(origin: &str, id: &str) -> PendingSaveOffer {
+        PendingSaveOffer {
+            origin: origin.into(),
             username: "u".into(),
             password: "p".into(),
-            id: Some(id.into()),
-        };
+            id: id.into(),
+            reshown: false,
+        }
+    }
+
+    fn save(username: &str, password: &str, id: Option<&str>) -> PasswordAction {
+        PasswordAction::Save {
+            origin: "https://bank.test".into(),
+            username: username.into(),
+            password: password.into(),
+            id: id.map(Into::into),
+        }
+    }
+
+    fn web_with_offer(
+        v: &VaultSession,
+        offer: Option<&PendingSaveOffer>,
+        action: PasswordAction,
+    ) -> Option<PasswordAction> {
+        web_password_action(Some(v), offer, "https://site.test", action)
+    }
+
+    #[test]
+    fn web_save_rejected_without_matching_offer() {
+        let v = vault();
+        // No offer at all: a page cannot write to the vault on its own.
+        assert!(web_with_offer(&v, None, save("u", "p", None)).is_none());
+        // Offer exists, but the page asks for different credentials.
+        let o = offer("https://site.test", "");
+        assert!(web_with_offer(&v, Some(&o), save("u", "other", None)).is_none());
+        assert!(web_with_offer(&v, Some(&o), save("other", "p", None)).is_none());
+        // Offer for another site.
+        let foreign = offer("https://bank.test", "");
+        assert!(web_with_offer(&v, Some(&foreign), save("u", "p", None)).is_none());
+    }
+
+    #[test]
+    fn web_save_accepted_with_matching_offer() {
+        let v = vault();
+        let o = offer("https://site.test", "");
         assert!(matches!(
-            web(Some(&v), save("bank")),
+            web_with_offer(&v, Some(&o), save("u", "p", Some("bank"))),
             Some(PasswordAction::Save { origin, id: None, .. }) if origin == "https://site.test"
         ));
+        // The id comes from the compositor's offer, not the request…
+        let o = offer("https://site.test", "mine");
         assert!(matches!(
-            web(Some(&v), save("mine")),
+            web_with_offer(&v, Some(&o), save("u", "p", Some("bank"))),
             Some(PasswordAction::Save { id: Some(id), .. }) if id == "mine"
         ));
+        // …and still never targets another site's entry.
+        let o = offer("https://site.test", "bank");
+        assert!(matches!(
+            web_with_offer(&v, Some(&o), save("u", "p", None)),
+            Some(PasswordAction::Save { id: None, .. })
+        ));
+    }
+
+    #[test]
+    fn fill_only_into_entry_site() {
+        assert!(fill_allowed("https://www.site.test", "https://site.test/login"));
+        assert!(fill_allowed("https://site.test", "https://www.site.test/"));
+        assert!(fill_allowed("http://192.168.1.1", "http://192.168.1.1/admin"));
+        assert!(!fill_allowed("https://bank.test", "https://evil.test/"));
+        assert!(!fill_allowed("https://bank.test", "https://bank.test.evil.test/"));
+        assert!(!fill_allowed("https://bank.test", "https://bank.test@evil.test/"));
+        assert!(!fill_allowed("https://bank.test", "https://login.bank.test/"));
+        // Same host, but public HTTP: MITM-able, no autofill.
+        assert!(!fill_allowed("https://bank.test", "http://bank.test/"));
+        assert!(!fill_allowed("https://bank.test", "data:text/html,https://bank.test"));
+        assert!(!fill_allowed("", "https://site.test/"));
     }
 
     #[test]
@@ -1814,7 +1916,7 @@ mod tests {
             test_entry("plain", "http://site.test"),
             test_entry("router", "http://192.168.1.1"),
         ]);
-        let http = |action| web_password_action(Some(&v), "http://site.test", action);
+        let http = |action| web_password_action(Some(&v), None, "http://site.test", action);
         assert!(http(PasswordAction::Query { origin: String::new() }).is_none());
         assert!(http(PasswordAction::Fill { id: "plain".into() }).is_none());
         assert!(http(PasswordAction::SaveOffer {
@@ -1824,7 +1926,7 @@ mod tests {
         })
         .is_none());
 
-        let lan = |action| web_password_action(Some(&v), "http://192.168.1.1", action);
+        let lan = |action| web_password_action(Some(&v), None, "http://192.168.1.1", action);
         assert!(matches!(
             lan(PasswordAction::Fill { id: "router".into() }),
             Some(PasswordAction::Fill { .. })

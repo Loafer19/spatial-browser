@@ -5,8 +5,10 @@ use crate::output::Theme;
 
 /// Separate script after SCRIPT to set DEFAULT_ENGINE (keeps SCRIPT a plain const).
 fn default_engine_override(default_engine: &str) -> String {
-    let js_escaped = default_engine.replace('\\', "\\\\").replace('\'', "\\'");
-    format!("<script>DEFAULT_ENGINE = '{js_escaped}';</script>")
+    format!(
+        "<script>DEFAULT_ENGINE = {};</script>",
+        js_string_literal(default_engine)
+    )
 }
 
 /// Plain const (not format!) so JS braces need no `{{` escaping.
@@ -54,8 +56,8 @@ pub fn page_url(theme: &Theme, typed_history: &[String], default_search_engine: 
         ));
     }
 
-    format!(
-        "data:text/html;charset=utf-8,{script}{engine_override}\
+    let html = format!(
+        "{script}{engine_override}\
          <body style=\"margin:0;padding:64px 48px;background:{bg};color:{fg};\
          font-family:ui-monospace,monospace;font-size:15px\">\
          <form onsubmit=\"go(document.getElementById('q').value);return false\">\
@@ -73,5 +75,6 @@ pub fn page_url(theme: &Theme, typed_history: &[String], default_search_engine: 
         fg = theme.help_fg,
         card_bg = theme.help_card_bg,
         card_border = theme.help_card_border,
-    )
+    );
+    super::data_url(&html)
 }

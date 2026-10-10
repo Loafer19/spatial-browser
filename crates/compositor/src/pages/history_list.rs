@@ -110,16 +110,8 @@ pub(crate) fn page_url(theme: &Theme, history: &[HistoryEntry]) -> String {
         ));
     }
 
-    // `class="rows-container"` rather than only `id="rows"`, so the
-    // mode-toggle CSS rule below can target it as `.rows-container` —
-    // an `#rows` *selector* would put a literal `#` in the data: URL
-    // itself, and an unescaped `#` there starts a fragment, silently
-    // truncating the rest of the document (same hazard as a hex color
-    // — see other pages/ files). `getElementById('rows')` in SCRIPT is
-    // unaffected: that `#` would only be a problem if it appeared in
-    // the URL's actual text, not inside a JS string literal.
-    format!(
-        "data:text/html;charset=utf-8,{script}{nav_script}\
+    let html = format!(
+        "{script}{nav_script}\
          <style>\
          .hist-row:hover,.hist-row.list-active{{background:{key_bg}!important}}\
          .hist-row:hover span,.hist-row.list-active span{{color:{key_fg}!important}}\
@@ -127,7 +119,7 @@ pub(crate) fn page_url(theme: &Theme, history: &[HistoryEntry]) -> String {
          .hist-header{{margin:16px 0 0;font-size:13px;text-transform:uppercase;\
          letter-spacing:0.05em;opacity:0.8;color:{heading}}}\
          .hist-header:first-child{{margin-top:0}}\
-         .rows-container.mode-date .hist-date{{display:none}}\
+         #rows.mode-date .hist-date{{display:none}}\
          .group-toggle button{{background:{card_bg};color:{fg};opacity:0.7;\
          border:1px solid {card_border};border-radius:6px;padding:5px 12px;\
          font:inherit;font-size:13px;cursor:pointer}}\
@@ -145,7 +137,7 @@ pub(crate) fn page_url(theme: &Theme, history: &[HistoryEntry]) -> String {
          <button data-mode=\"date\" onclick=\"applyGrouping('date')\">By day</button>\
          <button data-mode=\"host\" onclick=\"applyGrouping('host')\">By site</button>\
          </div>\
-         <div id=\"rows\" class=\"rows-container\" \
+         <div id=\"rows\" \
          style=\"display:flex;flex-direction:column;gap:8px\">{rows}</div></body>",
         script = SCRIPT,
         nav_script = LIST_NAV_SCRIPT,
@@ -157,5 +149,6 @@ pub(crate) fn page_url(theme: &Theme, history: &[HistoryEntry]) -> String {
         heading = theme.help_heading,
         card_bg = theme.help_card_bg,
         card_border = theme.help_card_border,
-    )
+    );
+    super::data_url(&html)
 }

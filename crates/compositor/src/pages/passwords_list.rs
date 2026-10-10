@@ -1,6 +1,6 @@
 // Ctrl+Shift+P vault UI (`password://…`); chrome from Theme.
 
-use super::{html_escape, LIST_NAV_SCRIPT};
+use super::{html_escape, url_component, LIST_NAV_SCRIPT};
 use crate::output::Theme;
 use crate::persistence::vault::VaultEntry;
 
@@ -37,8 +37,8 @@ pub(crate) fn unlock_url(theme: &Theme, create: bool, error: Option<&str>) -> St
     };
     let create_flag = if create { "1" } else { "0" };
     let create_js = if create { "true" } else { "false" };
-    format!(
-        "data:text/html;charset=utf-8,{body}\
+    let html = format!(
+        "{body}\
          <h1 style=\"margin:0 0 8px;color:{heading_c};font-size:20px\">{heading}</h1>\
          <p style=\"opacity:0.7;margin:0 0 12px;font-size:13px;color:{fg}\">\
          Local encrypted vault (AES-GCM). Unlocks for this session only.</p>\
@@ -76,13 +76,13 @@ pub(crate) fn unlock_url(theme: &Theme, create: bool, error: Option<&str>) -> St
         accent = theme.help_key_bg,
         key_fg = theme.help_key_fg,
         btn = if create { "Create vault" } else { "Unlock" },
-    )
+    );
+    super::data_url(&html)
 }
 
 fn tab_bar(theme: &Theme, active: &str) -> String {
     // Same pattern as Settings: navigate via password://tab/… so the active
-    // tab survives refresh. Avoid in-page JS with `#…` selectors — an
-    // unescaped `#` truncates `data:` URLs (see pages/mod.rs).
+    // tab survives refresh.
     let mut html = String::from(
         "<div style=\"display:flex;gap:6px;margin:0 0 16px;flex-wrap:wrap\">",
     );
@@ -146,7 +146,9 @@ pub(crate) fn page_url(
         let origin_full = html_escape(&e.origin);
         let site = html_escape(display_host(&e.origin));
         let user = html_escape(&e.username);
-        let id = html_escape(&e.id);
+        // Ids come from CSV imports too — percent-encode, never splice raw.
+        let fill_href = format!("password://go/fill?id={}", url_component(&e.id));
+        let delete_href = format!("password://go/delete?id={}", url_component(&e.id));
         let email_line = e
             .email
             .as_deref()
@@ -173,7 +175,7 @@ pub(crate) fn page_url(
             )
         };
         rows.push_str(&format!(
-            "<div class=\"list-row\" data-open=\"password://go/fill?id={id}\" \
+            "<div class=\"list-row\" data-open=\"{fill_href}\" \
              style=\"padding:10px 14px;background:{card};border:1px solid {border};\
              border-radius:{radius};display:flex;gap:10px;align-items:center;min-width:0\">\
              <div style=\"flex:1;min-width:0\">\
@@ -182,10 +184,10 @@ pub(crate) fn page_url(
              {secondary}\
              </div>\
              <div style=\"display:flex;gap:6px;flex-shrink:0\">\
-             <button type=\"button\" onclick=\"event.stopPropagation();location='password://go/fill?id={id}'\" \
+             <button type=\"button\" onclick=\"event.stopPropagation();location='{fill_href}'\" \
              style=\"padding:4px 10px;border-radius:{radius_inner};border:1px solid {border};\
              background:{accent};color:{key_fg};cursor:pointer;font-size:12px;white-space:nowrap\">Fill</button>\
-             <button type=\"button\" onclick=\"event.stopPropagation();location='password://go/delete?id={id}'\" \
+             <button type=\"button\" onclick=\"event.stopPropagation();location='{delete_href}'\" \
              style=\"padding:4px 10px;border-radius:{radius_inner};border:1px solid {border};\
              background:transparent;color:{fg};cursor:pointer;font-size:12px;white-space:nowrap\">Delete</button>\
              </div></div>",
@@ -207,11 +209,12 @@ pub(crate) fn page_url(
     }
     for o in never_save {
         let esc = html_escape(o);
+        let origin_enc = url_component(o);
         never_rows.push_str(&format!(
             "<div style=\"display:flex;gap:8px;align-items:center;padding:6px 0;min-width:0\">\
              <span style=\"flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;\
               white-space:nowrap;color:{fg}\" title=\"{esc}\">{esc}</span>\
-             <button type=\"button\" onclick=\"location='password://go/remove-never?origin={esc}'\" \
+             <button type=\"button\" onclick=\"location='password://go/remove-never?origin={origin_enc}'\" \
              style=\"flex-shrink:0;font-size:12px;cursor:pointer;color:{accent};white-space:nowrap\">Remove</button></div>",
             fg = theme.help_fg,
             accent = theme.help_key_bg,
@@ -227,7 +230,7 @@ pub(crate) fn page_url(
                  style=\"padding:6px 12px;border-radius:{radius_inner};border:none;background:{accent};\
                  color:{key_fg};cursor:pointer\">Copy</button>",
                 g = html_escape(g),
-                enc = urlencoding_minimal(g),
+                enc = url_component(g),
                 card = theme.help_card_bg,
                 border = theme.help_card_border,
                 fg = theme.help_fg,
@@ -285,8 +288,8 @@ pub(crate) fn page_url(
         _ => format!("<div style=\"display:flex;flex-direction:column;gap:8px\">{rows}</div>"),
     };
 
-    format!(
-        "data:text/html;charset=utf-8,{body}\
+    let html = format!(
+        "{body}\
          <h1 style=\"margin:0 0 8px;color:{heading};font-size:20px\">Passwords</h1>\
          <p style=\"opacity:0.7;font-size:13px;margin:0 0 12px;color:{fg}\">\
          Local vault · Focus a login field for a fill suggestion</p>\
@@ -299,7 +302,8 @@ pub(crate) fn page_url(
         fg = theme.help_fg,
         tabs = tab_bar(theme, active_tab),
         list_nav = LIST_NAV_SCRIPT,
-    )
+    );
+    super::data_url(&html)
 }
 
 /// Host(+port) for list display — strip `https://` / `http://`.
@@ -308,15 +312,4 @@ fn display_host(origin: &str) -> &str {
         .strip_prefix("https://")
         .or_else(|| origin.strip_prefix("http://"))
         .unwrap_or(origin)
-}
-
-fn urlencoding_minimal(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }
