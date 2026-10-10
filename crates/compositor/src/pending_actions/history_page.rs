@@ -37,6 +37,8 @@ pub(super) fn drain(session: &mut Session, gpu: &GpuState, history: &mut Vec<His
             }
             HistoryPageAction::Clear => {
                 history.clear();
+                // The icon cache lists visited sites too.
+                favicons::clear();
                 history::save(history);
                 refresh_history_page(session, gpu, history, browser_id);
             }

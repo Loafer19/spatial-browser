@@ -34,6 +34,25 @@ wrap_display_handler! {
             true as _
         }
 
+        fn on_favicon_urlchange(
+            &self,
+            browser: Option<&mut Browser>,
+            icon_urls: Option<&mut CefStringList>,
+        ) {
+            let (Some(browser), Some(icon_urls)) = (browser, icon_urls) else {
+                return;
+            };
+            // CEF's list here is borrowed: iterate a (non-owning) copy.
+            let first = icon_urls
+                .clone()
+                .into_iter()
+                .find(|u| u.starts_with("https://") || u.starts_with("http://") || u.starts_with("data:image/"));
+            if let Some(url) = first {
+                crate::favicon::PENDING_FAVICON_URLS
+                    .with_borrow_mut(|q| q.push((browser.identifier(), url)));
+            }
+        }
+
         fn on_loading_progress_change(
             &self,
             browser: Option<&mut Browser>,

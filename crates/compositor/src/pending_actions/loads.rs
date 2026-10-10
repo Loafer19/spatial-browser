@@ -173,3 +173,25 @@ pub(super) fn inject_load_end(
         }
     }
 }
+
+/// Icon announced by a page → capture it from the browser cache (no new
+/// request) unless a fresh copy is cached; captured PNGs → the cache.
+pub(super) fn capture_favicons(session: &Session) {
+    let announced = cef_bridge::PENDING_FAVICON_URLS.with_borrow_mut(std::mem::take);
+    for (browser_id, icon_url) in announced {
+        let Some(page) = session
+            .pages()
+            .iter()
+            .find(|p| p.browser.identifier() == browser_id && !p.ephemeral)
+        else {
+            continue;
+        };
+        if let Some(key) = favicons::key(&page.url()).filter(|k| !favicons::is_fresh(k)) {
+            cef_bridge::fetch_favicon(&page.browser, &icon_url, key);
+        }
+    }
+    let captured = cef_bridge::PENDING_FAVICON_IMAGES.with_borrow_mut(std::mem::take);
+    for (key, png) in captured {
+        favicons::store(&key, &png);
+    }
+}

@@ -13,6 +13,7 @@ use crate::persistence::{
     bookmarks::{self, Bookmark},
     bookmarks_chrome,
     downloads::{self, DownloadRecord},
+    favicons,
     history::{self, HistoryEntry},
     settings::{self, AppSettings},
     typed_history,
@@ -163,6 +164,7 @@ pub fn apply(session: &mut Session, gpu: &GpuState, mut s: Stores<'_>) {
     clipboard_bridge::deliver_paste(session);
 
     loads::apply_load_progress(session);
+    loads::capture_favicons(session);
 
     bookmark_page::drain(session, gpu, s.bookmarks);
 

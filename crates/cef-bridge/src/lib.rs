@@ -9,6 +9,7 @@ mod client;
 pub mod clipboard;
 mod display;
 mod download;
+mod favicon;
 mod filter_engine;
 mod find;
 mod life_span;
@@ -25,6 +26,7 @@ pub use clean_urls::set_enabled as set_clean_urls_enabled;
 pub use client::*;
 pub use display::*;
 pub use download::*;
+pub use favicon::{fetch_favicon, PENDING_FAVICON_IMAGES, PENDING_FAVICON_URLS};
 pub use filter_engine::{
     cosmetic_hide_css, cosmetic_inject_js, rebuild as rebuild_filter_engine, scriptlet_inject_js,
     scriptlet_js, set_cosmetic_enabled, set_scriptlets_enabled, wait_idle as wait_filter_engine,

@@ -28,11 +28,11 @@ const MAX_KIND_LEN: usize = 32;
 /// roomy enough for the compositor's parallel tests). Oldest beyond it go.
 const MAX_UNBOUND: usize = 64;
 
-/// No network access beyond images (favicon tiles load
-/// `https://<host>/favicon.ico`); inline script/style only.
+/// No network access at all: inline script/style, images only as data:
+/// URIs (favicon tiles come from the local cache).
 pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; \
      script-src 'unsafe-inline'; style-src 'unsafe-inline'; \
-     img-src data: https: http:; base-uri 'none'; frame-ancestors 'none'";
+     img-src data:; base-uri 'none'; frame-ancestors 'none'";
 
 /// Page HTML, wiped when the last holder (registry or in-flight response)
 /// drops it — the passwords page carries usernames and generated passwords.

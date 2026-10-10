@@ -4,6 +4,7 @@
 pub mod bookmarks;
 pub mod bookmarks_chrome;
 pub mod downloads;
+pub mod favicons;
 pub mod history;
 pub mod settings;
 pub mod store;

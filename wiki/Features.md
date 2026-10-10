@@ -15,6 +15,8 @@ Type a URL or search. Prefixes: `@g`, `@y`, `@ddg`, `@bing`, `@wiki`. Typed hist
 
 Browser bookmarks import — [[Getting-Started]].
 
+Site icons in these lists come from a local cache (`~/.config/spatial-browser/favicons/`), captured from the browser cache when you visit a page and refreshed weekly. Opening a list never contacts the listed sites; a site you haven't visited since shows its letter. Clearing history also clears the icon cache.
+
 ## Workspaces (live slots)
 
 Numbered **live slots** (default three), not named one-shot snapshots.
