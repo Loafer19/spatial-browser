@@ -1,7 +1,6 @@
 // Ctrl+F find bar: a small ephemeral page above the searched tile. Sends
 // `find://go/...`; the compositor answers with `__found(active, count)`.
 // No user data is interpolated: the query lives only in the page's input.
-// Raw data: body, so no `#` or `%` anywhere below.
 
 use crate::output::Theme;
 
@@ -35,8 +34,8 @@ pub fn page_url(theme: &Theme) -> String {
         card_border = theme.help_card_border,
         fg = theme.help_fg,
     );
-    format!(
-        "data:text/html;charset=utf-8,{script}\
+    super::data_url(&format!(
+        "{script}\
          <body style=\"margin:0;padding:8px 10px;background:{bg};color:{fg};\
          font-family:ui-monospace,monospace;font-size:14px;display:flex;gap:8px;\
          align-items:center;box-sizing:border-box;height:100vh\">\
@@ -55,7 +54,7 @@ pub fn page_url(theme: &Theme) -> String {
         fg = theme.help_fg,
         card_bg = theme.help_card_bg,
         card_border = theme.help_card_border,
-    )
+    ))
 }
 
 #[cfg(test)]
@@ -63,10 +62,7 @@ mod tests {
     use crate::output::THEMES;
 
     #[test]
-    fn raw_data_body_has_no_fragment_or_escape_chars() {
-        let url = super::page_url(&THEMES[0]);
-        let body = url.strip_prefix("data:text/html;charset=utf-8,").unwrap();
-        assert!(!body.contains('#'), "a raw # would cut the data: URL");
-        assert!(!body.contains('%'), "a raw % would be percent-decoded");
+    fn is_a_base64_data_url() {
+        assert!(super::page_url(&THEMES[0]).starts_with("data:text/html;charset=utf-8;base64,"));
     }
 }

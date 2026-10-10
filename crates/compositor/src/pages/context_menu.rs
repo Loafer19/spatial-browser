@@ -48,7 +48,7 @@ fn items(ctx: &MenuContext) -> Vec<(&'static str, String)> {
                 let enc = url_component(url);
                 items.push(("Copy page URL", format!("context://copy?text={enc}")));
             }
-            let enc = urlencoding_minimal(url);
+            let enc = url_component(url);
             items.push(("Open page in system browser", format!("context://external?url={enc}")));
         }
         items.push(("Reader mode", "context://reader".into()));
