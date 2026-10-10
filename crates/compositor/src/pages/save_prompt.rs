@@ -6,7 +6,9 @@
 use super::{data_url, html_escape};
 use crate::output::Theme;
 
-pub fn page_url(theme: &Theme, host: &str, username: &str) -> String {
+/// `is_update`: the login would overwrite a saved entry's password, which
+/// the prompt says plainly so an unexpected offer stands out.
+pub fn page_url(theme: &Theme, host: &str, username: &str, is_update: bool) -> String {
     let button = |primary: bool| {
         format!(
             "padding:6px 12px;border-radius:6px;border:1px solid {border};cursor:pointer;font:inherit;{look}",
@@ -28,7 +30,7 @@ pub fn page_url(theme: &Theme, host: &str, username: &str) -> String {
          font-family:ui-monospace,monospace;font-size:13px;display:flex;gap:8px;\
          align-items:center;box-sizing:border-box;height:100vh\">\
          <span style=\"flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">\
-         <b>Save password?</b> <span style=\"opacity:0.75\">{who}{host}</span></span>\
+         <b>{title}</b> <span style=\"opacity:0.75\">{who}{host}</span></span>\
          <button autofocus onclick=\"location='password://go/prompt-save'\" style=\"{primary}\">Save</button>\
          <button onclick=\"location='password://go/prompt-never'\" style=\"{plain}\">Never</button>\
          <button onclick=\"location='password://go/prompt-dismiss'\" style=\"{plain}\">Not now</button>\
@@ -36,6 +38,7 @@ pub fn page_url(theme: &Theme, host: &str, username: &str) -> String {
         bg = theme.help_bg,
         fg = theme.help_fg,
         host = html_escape(host),
+        title = if is_update { "Update saved password?" } else { "Save password?" },
         primary = button(true),
         plain = button(false),
     ))
@@ -48,7 +51,7 @@ mod tests {
 
     #[test]
     fn escapes_host_and_username() {
-        let html = decode_data_url(&super::page_url(&THEMES[0], "a.test", "<img src=x onerror=alert(1)>"));
+        let html = decode_data_url(&super::page_url(&THEMES[0], "a.test", "<img src=x onerror=alert(1)>", false));
         assert!(!html.contains("<img"));
         assert!(html.contains("&lt;img"));
     }

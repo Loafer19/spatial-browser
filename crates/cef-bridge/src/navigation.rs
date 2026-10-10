@@ -576,6 +576,19 @@ fn parse_password_action(url: &str) -> Option<PasswordAction> {
     None
 }
 
+/// Which frames may send `password://`: the main frame (built-in pages,
+/// the find/save tiles) or the autofill bridge's hidden iframe — a fresh,
+/// still-blank direct child of the main frame. A cross-origin ad iframe has
+/// its own URL, and any iframe it creates has the ad as its parent, so
+/// neither can offer or fill logins in the name of the top-level site.
+fn signal_frame_ok(is_main: bool, parent_is_main: bool, current_url: &str) -> bool {
+    // A fresh iframe may report its pending password:// URL instead of the
+    // initial about:blank; either way it has never held web content.
+    is_main
+        || (parent_is_main
+            && (matches!(current_url, "" | "about:blank") || current_url.starts_with("password://")))
+}
+
 /// Parse `clipboard://copy?text=...` (OSR has no OS clipboard surface).
 fn parse_clipboard_copy(url: &str) -> Option<String> {
     let query = url.strip_prefix("clipboard://copy?")?;
@@ -646,7 +659,17 @@ wrap_request_handler! {
                 return true as _;
             }
             if let Some(action) = parse_password_action(&url) {
-                PENDING_PASSWORD_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
+                let frame = frame.as_deref();
+                let ok = frame.is_some_and(|f| {
+                    let parent_is_main = f.parent().is_some_and(|p| p.is_main() != 0);
+                    let current = cef::CefString::from(&f.url()).to_string();
+                    signal_frame_ok(f.is_main() != 0, parent_is_main, &current)
+                });
+                if ok {
+                    PENDING_PASSWORD_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
+                } else {
+                    log::warn!("dropped password:// from a subframe of browser {id}");
+                }
                 return true as _;
             }
             if let Some(action) = parse_context_action(&url) {
@@ -761,6 +784,17 @@ mod tests {
         assert!(matches!(parse_password_action("password://go/lock"), Some(PasswordAction::Lock)));
         assert!(parse_password_action("password://go/locked").is_none());
         assert!(parse_password_action("https://password.test/go/fill?id=1").is_none());
+    }
+
+    #[test]
+    fn password_signals_only_from_main_or_bridge_iframe() {
+        assert!(signal_frame_ok(true, false, "https://bank.test/"));
+        assert!(signal_frame_ok(false, true, "about:blank"));
+        assert!(signal_frame_ok(false, true, ""));
+        // Ad iframe navigating itself.
+        assert!(!signal_frame_ok(false, true, "https://ads.test/slot"));
+        // Iframe created inside an ad iframe.
+        assert!(!signal_frame_ok(false, false, "about:blank"));
     }
 
     #[test]

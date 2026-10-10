@@ -1308,6 +1308,7 @@ fn handle_password_action(
                 &session.theme(),
                 vault::host_key(&origin).as_str(),
                 &username,
+                !id.is_empty(),
             );
             let prompt = browser::spawn(
                 gpu,
