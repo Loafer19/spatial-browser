@@ -104,6 +104,26 @@ fn ensure_filter_lists_dir() -> std::path::PathBuf {
     dest
 }
 
+/// Load events are drained a frame after CEF raised them; by then the frame
+/// may show another origin, which must not get scripts or a save banner
+/// (with its password) meant for the queued URL.
+fn frame_still_on(frame: &cef::Frame, url: &str) -> bool {
+    let current = cef::CefString::from(&frame.url()).to_string();
+    let same = same_origin(&current, url);
+    if !same {
+        log::debug!("skip inject for {url}: frame now on {current}");
+    }
+    same
+}
+
+fn same_origin(a: &str, b: &str) -> bool {
+    match (a.starts_with("data:"), b.starts_with("data:")) {
+        (true, true) => true,
+        (false, false) => vault::normalize_origin(a) == vault::normalize_origin(b),
+        _ => false,
+    }
+}
+
 /// Who sent a `scheme://` action. Built-in pages are ephemeral `data:`
 /// tiles the compositor spawned; anything else is web content, which can
 /// navigate to these schemes too and must not drive the vault or settings.
@@ -372,7 +392,7 @@ pub fn apply(
                 page.load_active.set(true);
                 page.load_progress.set(0.0);
             }
-            if let Some(frame) = page.browser.main_frame() {
+            if let Some(frame) = page.browser.main_frame().filter(|f| frame_still_on(f, &url)) {
                 // EasyList cosmetic hides + optional ##+js scriptlets.
                 if !page.ephemeral {
                     if let Some(css) = cef_bridge::cosmetic_hide_css(&url) {
@@ -409,7 +429,7 @@ pub fn apply(
             .iter()
             .find(|p| p.browser.identifier() == browser_id)
         {
-            if let Some(frame) = page.browser.main_frame() {
+            if let Some(frame) = page.browser.main_frame().filter(|f| frame_still_on(f, &url)) {
                 frame.execute_java_script(
                     Some(&clipboard_bridge::COPY_BRIDGE_SCRIPT.into()),
                     Some(&"".into()),
@@ -1711,6 +1731,15 @@ mod tests {
             lan(PasswordAction::Fill { id: "router".into() }),
             Some(PasswordAction::Fill { .. })
         ));
+    }
+
+    #[test]
+    fn same_origin_for_injection() {
+        assert!(same_origin("https://a.test/x?y#z", "https://A.test/other"));
+        assert!(!same_origin("https://a.test/", "https://b.test/"));
+        assert!(!same_origin("http://a.test/", "https://a.test/"));
+        assert!(same_origin("data:text/html,one", "data:text/html,two"));
+        assert!(!same_origin("data:text/html,x", "https://a.test/"));
     }
 
     #[test]
