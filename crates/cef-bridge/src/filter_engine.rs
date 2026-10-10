@@ -40,6 +40,8 @@ struct WorkerState {
     requested: Option<FilterEngineConfig>,
     /// Builds finished (installed or superseded); lets tests wait.
     completed: u64,
+    /// A build is running on the worker right now.
+    building: bool,
 }
 
 static WORKER: OnceLock<Arc<Worker>> = OnceLock::new();
@@ -59,6 +61,30 @@ pub fn rebuild(config: &FilterEngineConfig) -> bool {
     state.requested = Some(config.clone());
     state.pending = Some(config.clone());
     worker.changed.notify_all();
+    true
+}
+
+/// Block until no rebuild is queued or running, at most `timeout`. Used at
+/// startup so restored pages don't load before EasyList is in place.
+/// Returns false on timeout.
+pub fn wait_idle(timeout: std::time::Duration) -> bool {
+    let Some(worker) = WORKER.get() else {
+        return true;
+    };
+    let deadline = std::time::Instant::now() + timeout;
+    let Ok(mut state) = worker.state.lock() else {
+        return false;
+    };
+    while state.pending.is_some() || state.building {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        state = match worker.changed.wait_timeout(state, left) {
+            Ok((state, _)) => state,
+            Err(_) => return false,
+        };
+    }
     true
 }
 
@@ -82,6 +108,7 @@ fn worker_loop(worker: &Worker) {
             };
             loop {
                 if let Some(config) = state.pending.take() {
+                    state.building = true;
                     break config;
                 }
                 state = match worker.changed.wait(state) {
@@ -101,6 +128,7 @@ fn worker_loop(worker: &Worker) {
             install(engine, loaded, &config);
         }
         state.completed += 1;
+        state.building = false;
         worker.changed.notify_all();
     }
 }

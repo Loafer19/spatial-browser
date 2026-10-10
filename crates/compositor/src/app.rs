@@ -347,6 +347,11 @@ impl ApplicationHandler for App {
         // Prefer the active live slot when it has been visited; otherwise
         // fall back to the legacy session file / first-run defaults, then
         // capture into the active slot so slots become the source of truth.
+        // Restored pages start loading below: give the EasyList build queued
+        // in App::default a moment so their first load is filtered.
+        if !cef_bridge::wait_filter_engine(std::time::Duration::from_millis(1500)) {
+            log::warn!("filter engine still building; restored pages load unfiltered");
+        }
         if self.workspaces.active_slot().visited {
             let slot = self.workspaces.active_slot().clone();
             self.session = Session::new(Vec::new(), Viewport::default(), THEMES[0]);
