@@ -104,6 +104,41 @@ fn ensure_filter_lists_dir() -> std::path::PathBuf {
     dest
 }
 
+/// Who sent a `scheme://` action. Built-in pages are ephemeral `data:`
+/// tiles the compositor spawned; anything else is web content, which can
+/// navigate to these schemes too and must not drive the vault or settings.
+enum ActionSource {
+    Internal,
+    Web { origin: String },
+}
+
+fn action_source(session: &Session, browser_id: i32) -> Option<ActionSource> {
+    let page = session
+        .pages()
+        .iter()
+        .find(|p| p.browser.identifier() == browser_id)?;
+    let url = page.url();
+    if page.ephemeral && url.starts_with("data:") {
+        Some(ActionSource::Internal)
+    } else {
+        Some(ActionSource::Web {
+            origin: vault::normalize_origin(&url),
+        })
+    }
+}
+
+/// `Option::filter` predicate for actions only built-in pages may send.
+fn from_internal(session: &Session, browser_id: i32, scheme: &str) -> bool {
+    let internal = matches!(
+        action_source(session, browser_id),
+        Some(ActionSource::Internal)
+    );
+    if !internal {
+        log::warn!("dropped {scheme} action from non-internal browser {browser_id}");
+    }
+    internal
+}
+
 /// Drain PENDING_* once per RedrawRequested, before rendering.
 pub fn apply(
     session: &mut Session,
@@ -168,7 +203,9 @@ pub fn apply(
     }
 
     // bookmark://… → act; refresh the requesting list page in place.
-    if let Some((browser_id, action)) = PENDING_BOOKMARK.with_borrow_mut(|pending| pending.take()) {
+    if let Some((browser_id, action)) = PENDING_BOOKMARK
+        .with_borrow_mut(|pending| pending.take())
+        .filter(|(id, _)| from_internal(session, *id, "bookmark://")) {
         match action {
             BookmarkAction::Open(index) => {
                 if let Some(bookmark) = bookmarks.get(index) {
@@ -200,7 +237,9 @@ pub fn apply(
     }
 
     // omnibox://go → log typed text; close+respawn at resolved URL.
-    if let Some((browser_id, submit)) = PENDING_OMNIBOX.with_borrow_mut(|pending| pending.take()) {
+    if let Some((browser_id, submit)) = PENDING_OMNIBOX
+        .with_borrow_mut(|pending| pending.take())
+        .filter(|(id, _)| from_internal(session, *id, "omnibox://")) {
         typed_history::record(typed_history, &submit.raw);
         if let Some(index) = session
             .pages()
@@ -214,7 +253,9 @@ pub fn apply(
     }
 
     // switcher://go/{id} → front+pan target; close switcher (not undo stack).
-    if let Some((switcher_id, target_id)) = PENDING_SWITCH.with_borrow_mut(|pending| pending.take())
+    if let Some((switcher_id, target_id)) = PENDING_SWITCH
+        .with_borrow_mut(|pending| pending.take())
+        .filter(|(id, _)| from_internal(session, *id, "switcher://"))
     {
         if let Some(target_index) = session
             .pages()
@@ -271,7 +312,9 @@ pub fn apply(
 
     // download://…
     if let Some((browser_id, action)) =
-        PENDING_DOWNLOAD_ACTION.with_borrow_mut(|pending| pending.take())
+        PENDING_DOWNLOAD_ACTION
+        .with_borrow_mut(|pending| pending.take())
+        .filter(|(id, _)| from_internal(session, *id, "download://"))
     {
         match action {
             DownloadPageAction::Open(index) => {
@@ -425,7 +468,9 @@ pub fn apply(
     }
 
     if let Some((browser_id, action)) =
-        PENDING_USERSCRIPT_ACTION.with_borrow_mut(|pending| pending.take())
+        PENDING_USERSCRIPT_ACTION
+        .with_borrow_mut(|pending| pending.take())
+        .filter(|(id, _)| from_internal(session, *id, "userscripts://"))
     {
         match action {
             UserscriptsPageAction::Reload => {
@@ -451,19 +496,26 @@ pub fn apply(
     if let Some((browser_id, action)) =
         PENDING_PASSWORD_ACTION.with_borrow_mut(|pending| pending.take())
     {
-        handle_password_action(
-            session,
-            gpu,
-            vault,
-            generated_password,
-            pending_save_offer,
-            browser_id,
-            action,
-        );
+        if let Some(source) = action_source(session, browser_id) {
+            handle_password_action(
+                session,
+                gpu,
+                vault,
+                generated_password,
+                pending_save_offer,
+                browser_id,
+                source,
+                action,
+            );
+        }
     }
 
     if let Some((browser_id, action)) =
-        PENDING_CONTEXT_ACTION.with_borrow_mut(|pending| pending.take())
+        PENDING_CONTEXT_ACTION
+        .with_borrow_mut(|pending| pending.take())
+        .filter(|(id, action)| {
+            matches!(action, ContextAction::Hit { .. }) || from_internal(session, *id, "context://")
+        })
     {
         handle_context_action(
             session,
@@ -483,7 +535,9 @@ pub fn apply(
 
     // history://…
     if let Some((browser_id, action)) =
-        PENDING_HISTORY_ACTION.with_borrow_mut(|pending| pending.take())
+        PENDING_HISTORY_ACTION
+        .with_borrow_mut(|pending| pending.take())
+        .filter(|(id, _)| from_internal(session, *id, "history://"))
     {
         match action {
             HistoryPageAction::Open(index) => {
@@ -510,7 +564,9 @@ pub fn apply(
 
     // workspace://…
     if let Some((browser_id, action)) =
-        PENDING_WORKSPACE_ACTION.with_borrow_mut(|pending| pending.take())
+        PENDING_WORKSPACE_ACTION
+        .with_borrow_mut(|pending| pending.take())
+        .filter(|(id, _)| from_internal(session, *id, "workspace://"))
     {
         match action {
             WorkspacePageAction::Load(index) => {
@@ -555,7 +611,9 @@ pub fn apply(
 
     // settings://…
     if let Some((browser_id, action)) =
-        PENDING_SETTINGS_ACTION.with_borrow_mut(|pending| pending.take())
+        PENDING_SETTINGS_ACTION
+        .with_borrow_mut(|pending| pending.take())
+        .filter(|(id, _)| from_internal(session, *id, "settings://"))
     {
         match action {
             SettingsPageAction::ToggleAdBlock => {
@@ -872,6 +930,50 @@ fn handle_context_action(
     }
 }
 
+/// Web content only gets the autofill subset, always bound to its own
+/// main-frame origin — never one it names in the URL.
+fn web_password_action(
+    vault: Option<&VaultSession>,
+    origin: &str,
+    action: PasswordAction,
+) -> Option<PasswordAction> {
+    // Every autofill action is a no-op while locked; stay silent.
+    let v = vault?;
+    let owned_by_origin = |id: &str| {
+        v.get(id)
+            .is_some_and(|e| vault::host_key(&e.origin) == vault::host_key(origin))
+    };
+    let origin = origin.to_string();
+    match action {
+        PasswordAction::Query { .. } => Some(PasswordAction::Query { origin }),
+        PasswordAction::Fill { id } if owned_by_origin(&id) => Some(PasswordAction::Fill { id }),
+        PasswordAction::SaveOffer {
+            username, password, ..
+        } => Some(PasswordAction::SaveOffer {
+            origin,
+            username,
+            password,
+        }),
+        // An id from another site's entry would overwrite it; save as new.
+        PasswordAction::Save {
+            username,
+            password,
+            id,
+            ..
+        } => Some(PasswordAction::Save {
+            origin,
+            username,
+            password,
+            id: id.filter(|id| owned_by_origin(id)),
+        }),
+        PasswordAction::Never { .. } => Some(PasswordAction::Never { origin }),
+        _ => {
+            log::warn!("dropped password:// action from web origin {origin}");
+            None
+        }
+    }
+}
+
 fn handle_password_action(
     session: &mut Session,
     gpu: &GpuState,
@@ -879,8 +981,18 @@ fn handle_password_action(
     generated_password: &mut Option<String>,
     pending_save_offer: &mut Option<PendingSaveOffer>,
     browser_id: i32,
+    source: ActionSource,
     action: PasswordAction,
 ) {
+    let action = match source {
+        ActionSource::Internal => action,
+        ActionSource::Web { origin } => {
+            match web_password_action(vault.as_ref(), &origin, action) {
+                Some(action) => action,
+                None => return,
+            }
+        }
+    };
     match action {
         PasswordAction::Unlock {
             password,

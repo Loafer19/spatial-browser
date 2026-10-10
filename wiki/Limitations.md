@@ -47,6 +47,6 @@ Open codecs that *are* present (VP8/VP9/AV1) do not help when the site only offe
 
 **Workaround:** open Twitch (and similar) in system Chrome/Firefox. Enabling codecs requires a **custom CEF/Chromium build** (`proprietary_codecs=true`, `ffmpeg_branding=Chrome`) plus awareness of patent/licensing constraints when redistributing. PyPI Qt WebEngine wheels have the same codec gap unless the distro build includes openh264.
 
-## Security-related switches
+## Security model
 
-Child-process command line currently includes aggressive flags used during embedding bring-up (`ignore-certificate-errors`, etc.). Treat as a personal tool; don’t assume hardened multi-user browser defaults.
+Child processes run with Chromium's default same-origin policy and TLS checks (no `disable-web-security` / `ignore-certificate-errors`). Built-in pages talk to the compositor via fake `scheme://` navigations; only ephemeral `data:` tiles the compositor spawned may send them. Web pages get just the autofill subset (`password://` query/fill/save, bound to the page's own main-frame origin) and `context://hit`. Still a personal tool — no per-site process isolation guarantees beyond Chromium's defaults, no sandbox hardening review.

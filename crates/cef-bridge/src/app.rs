@@ -105,11 +105,9 @@ wrap_browser_process_handler! {
                 return;
             };
 
-            command_line.append_switch(Some(&"disable-web-security".into()));
-            command_line.append_switch(Some(&"allow-running-insecure-content".into()));
+            // No SOP/TLS relaxations here: pages share one process tree with
+            // the vault and the scheme:// action bridge.
             command_line.append_switch(Some(&"disable-session-crashed-bubble".into()));
-            command_line.append_switch(Some(&"ignore-certificate-errors".into()));
-            command_line.append_switch(Some(&"ignore-ssl-errors".into()));
             // Same media flags as browser process (VAAPI is in the GPU process).
             command_line.append_switch_with_value(
                 Some(&"disable-features".into()),

@@ -104,6 +104,10 @@ pub fn now_unix() -> i64 {
 
 /// Create a new empty vault encrypted with `password`.
 pub fn create(password: &str) -> Result<VaultSession, VaultError> {
+    // Never silently replace an existing vault with an empty one.
+    if exists() {
+        return Err(VaultError::Io("A vault already exists".into()));
+    }
     let mut salt = [0u8; SALT_LEN];
     rand::rng().fill_bytes(&mut salt);
     let key = derive_key(password, &salt)?;
