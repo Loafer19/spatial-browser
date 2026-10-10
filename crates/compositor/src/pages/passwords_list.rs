@@ -2,7 +2,17 @@
 
 use super::{html_escape, LIST_NAV_SCRIPT};
 use crate::output::Theme;
-use crate::persistence::vault::VaultEntry;
+use crate::persistence::vault::{self, VaultEntry};
+
+/// Element id on the unlocked list page. Plain `[a-z-]` so it survives any
+/// percent-encoding CEF applies to the `data:` URL it reports back.
+const LIST_MARKER: &str = "sb-vault-list";
+
+/// Whether a page URL is the unlocked passwords list (shows entries, so it
+/// must be swapped for the unlock form on lock).
+pub(crate) fn is_list_url(url: &str) -> bool {
+    url.starts_with("data:") && url.contains(LIST_MARKER)
+}
 
 pub(crate) fn normalize_tab(tab: &str) -> &'static str {
     match tab {
@@ -41,7 +51,7 @@ pub(crate) fn unlock_url(theme: &Theme, create: bool, error: Option<&str>) -> St
         "data:text/html;charset=utf-8,{body}\
          <h1 style=\"margin:0 0 8px;color:{heading_c};font-size:20px\">{heading}</h1>\
          <p style=\"opacity:0.7;margin:0 0 12px;font-size:13px;color:{fg}\">\
-         Local encrypted vault (AES-GCM). Unlocks for this session only.</p>\
+         Local encrypted vault (AES-GCM). Locks after {idle_min} min idle or on Ctrl+Shift+L.</p>\
          <p id=\"err\" style=\"color:{danger};margin:0 0 12px;min-height:1.2em\">{err_text}</p>\
          <form id=\"vault-form\">\
          <label style=\"display:block;margin:0 0 4px;opacity:0.8;color:{fg}\">Master password</label>\
@@ -76,6 +86,7 @@ pub(crate) fn unlock_url(theme: &Theme, create: bool, error: Option<&str>) -> St
         accent = theme.help_key_bg,
         key_fg = theme.help_key_fg,
         btn = if create { "Create vault" } else { "Unlock" },
+        idle_min = vault::AUTO_LOCK_AFTER.as_secs() / 60,
     )
 }
 
@@ -287,7 +298,12 @@ pub(crate) fn page_url(
 
     format!(
         "data:text/html;charset=utf-8,{body}\
-         <h1 style=\"margin:0 0 8px;color:{heading};font-size:20px\">Passwords</h1>\
+         <div style=\"display:flex;align-items:center;gap:12px;margin:0 0 8px\">\
+         <h1 id=\"{LIST_MARKER}\" style=\"margin:0;flex:1;color:{heading};font-size:20px\">Passwords</h1>\
+         <a href=\"password://go/lock\" title=\"Lock vault (Ctrl+Shift+L)\" \
+         style=\"text-decoration:none;padding:6px 12px;border-radius:8px;\
+         border:1px solid {border};background:{card};color:{fg};font-size:13px;\
+         font-weight:600\">Lock</a></div>\
          <p style=\"opacity:0.7;font-size:13px;margin:0 0 12px;color:{fg}\">\
          Local vault · Focus a login field for a fill suggestion</p>\
          {status_html}\
@@ -297,6 +313,8 @@ pub(crate) fn page_url(
         body = super::body_open(theme, ""),
         heading = theme.help_heading,
         fg = theme.help_fg,
+        border = theme.help_card_border,
+        card = theme.help_card_bg,
         tabs = tab_bar(theme, active_tab),
         list_nav = LIST_NAV_SCRIPT,
     )

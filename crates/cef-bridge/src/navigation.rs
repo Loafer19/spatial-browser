@@ -368,6 +368,8 @@ pub enum PasswordAction {
     },
     /// Open the passwords list after a successful unlock.
     OpenList,
+    /// Lock the vault now (drop the key; list pages fall back to unlock).
+    Lock,
 }
 
 thread_local! {
@@ -523,6 +525,9 @@ fn parse_password_action(url: &str) -> Option<PasswordAction> {
     }
     if rest == "open-list" {
         return Some(PasswordAction::OpenList);
+    }
+    if rest == "lock" || rest == "lock/" {
+        return Some(PasswordAction::Lock);
     }
     None
 }
@@ -702,6 +707,8 @@ mod tests {
     fn password_required_params_and_unknown_actions() {
         assert!(parse_password_action("password://go/fill?nope=1").is_none());
         assert!(parse_password_action("password://go/explode?x=1").is_none());
+        assert!(matches!(parse_password_action("password://go/lock"), Some(PasswordAction::Lock)));
+        assert!(parse_password_action("password://go/locked").is_none());
         assert!(parse_password_action("https://password.test/go/fill?id=1").is_none());
     }
 

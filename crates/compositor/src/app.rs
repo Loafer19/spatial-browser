@@ -27,7 +27,7 @@ use crate::userstyles;
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 
 /// Stashed after a login form submit until the following page load.
-#[derive(Clone)]
+#[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct PendingSaveOffer {
     pub origin: String,
     pub username: String,

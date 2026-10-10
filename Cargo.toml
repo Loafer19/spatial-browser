@@ -10,3 +10,11 @@ members = [
 too_many_arguments = "allow"
 # RunAt mirrors userscript `@run-at document-*` names.
 enum_variant_names = "allow"
+
+# Vault Argon2id (64 MiB, t=3) takes many seconds unoptimized; keep unlock
+# and the vault tests fast in dev/test builds.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

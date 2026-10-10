@@ -32,6 +32,7 @@ pub const HELP_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+Shift+1–9", "Move page to workspace slot"),
             ("Ctrl+Shift+U", "Scripts & styles list"),
             ("Ctrl+Shift+P", "Passwords / vault"),
+            ("Ctrl+Shift+L", "Lock password vault"),
             ("Ctrl+,", "Settings"),
         ],
     ),

@@ -3,6 +3,7 @@
 use super::vault::{self, VaultEntry, VaultError, VaultSession};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ImportStats {
@@ -38,7 +39,12 @@ pub fn import_path(session: &mut VaultSession, path: &str) -> Result<ImportStats
         return Err("empty path".into());
     }
     let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let text = String::from_utf8(bytes).map_err(|_| "CSV is not UTF-8".to_string())?;
+    // The whole export is plaintext passwords; scrub it once parsed. (The csv
+    // reader's internal record buffers are not reachable.)
+    let text = Zeroizing::new(String::from_utf8(bytes).map_err(|e| {
+        e.into_bytes().zeroize();
+        "CSV is not UTF-8".to_string()
+    })?);
     let entries = parse_login_csv(&text).map_err(|e| e.to_string())?;
     if entries.is_empty() {
         return Err("no login rows found (Chrome or Bitwarden CSV?)".into());
@@ -163,9 +169,11 @@ impl VaultSession {
                     stats.skipped += 1;
                     continue;
                 }
-                existing.password = entry.password;
+                // Swap rather than move: `entry` drops (and scrubs) the old
+                // values at the end of this iteration.
+                std::mem::swap(&mut existing.password, &mut entry.password);
                 if entry.notes.is_some() {
-                    existing.notes = entry.notes;
+                    std::mem::swap(&mut existing.notes, &mut entry.notes);
                 }
                 existing.updated_at = now;
                 stats.updated += 1;
