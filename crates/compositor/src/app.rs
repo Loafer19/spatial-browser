@@ -87,7 +87,7 @@ pub struct App {
     pending_save_offer: Option<PendingSaveOffer>,
     context_menu: Option<ContextMenuState>,
     /// Wait for context://hit after right-click before opening menu.
-    pending_context_hit: Option<(i32, (f32, f32))>,
+    pending_context_hit: Option<crate::pending_actions::ContextHitRequest>,
     mouse: MouseInput,
     touch: TouchInput,
     keyboard: KeyboardInput,
@@ -700,7 +700,11 @@ impl ApplicationHandler for App {
                             } else {
                                 let local_x = (cursor_world.0 - page.rect.x) / scale as f32;
                                 let local_y = (cursor_world.1 - page.rect.y) / scale as f32;
-                                self.pending_context_hit = Some((browser_id, self.cursor_window));
+                                self.pending_context_hit = Some(crate::pending_actions::ContextHitRequest {
+                                    browser_id,
+                                    screen_pos: self.cursor_window,
+                                    at: std::time::Instant::now(),
+                                });
                                 if let Some(frame) = page.browser.main_frame() {
                                     let js = format!(
                                         "window.__spatialContextHitAt && window.__spatialContextHitAt({local_x},{local_y});"

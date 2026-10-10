@@ -117,6 +117,23 @@ fn ensure_filter_lists_dir() -> std::path::PathBuf {
     dest
 }
 
+/// A right-click on a page, waiting for that page's `context://hit` reply.
+pub struct ContextHitRequest {
+    pub browser_id: i32,
+    pub screen_pos: (f32, f32),
+    pub at: std::time::Instant,
+}
+
+impl ContextHitRequest {
+    /// The hit script answers within a frame or two; anything later (or
+    /// from another page) was not caused by this click.
+    const MAX_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
+
+    fn accepts(&self, browser_id: i32, now: std::time::Instant) -> bool {
+        self.browser_id == browser_id && now.duration_since(self.at) <= Self::MAX_DELAY
+    }
+}
+
 /// Ctrl+F bar: its `find://` actions, CEF's match counts, and keeping the
 /// bar glued above its page (or tearing both down when either is gone).
 fn apply_find(session: &mut Session, gpu: &GpuState) {
@@ -264,7 +281,7 @@ pub fn apply(
     generated_password: &mut Option<String>,
     pending_save_offer: &mut Option<PendingSaveOffer>,
     context_menu: &mut Option<ContextMenuState>,
-    pending_context_hit: &mut Option<(i32, (f32, f32))>,
+    pending_context_hit: &mut Option<ContextHitRequest>,
 ) {
     // Lock before anything below can read the vault this frame.
     let lock_requested = VAULT_LOCK_REQUESTED.with(|c| c.replace(false));
@@ -916,7 +933,7 @@ fn handle_context_action(
     gpu: &GpuState,
     vault: &mut Option<VaultSession>,
     context_menu: &mut Option<ContextMenuState>,
-    pending_context_hit: &mut Option<(i32, (f32, f32))>,
+    pending_context_hit: &mut Option<ContextHitRequest>,
     workspaces: &mut WorkspaceStore,
     workspace_runtime: &mut WorkspaceRuntime,
     typed_history: &[String],
@@ -931,10 +948,24 @@ fn handle_context_action(
             password_field,
             page_url,
         } => {
-            let (target_id, screen_pos) = match pending_context_hit.take() {
-                Some(v) => v,
-                None => (browser_id, (40.0, 40.0)),
+            // Only the page the user just right-clicked may open the menu;
+            // otherwise any page could pop it (UI spoofing) whenever it liked.
+            let Some(request) = pending_context_hit
+                .take()
+                .filter(|r| r.accepts(browser_id, std::time::Instant::now()))
+            else {
+                log::warn!("dropped context://hit from browser {browser_id} without a right-click");
+                return;
             };
+            let target_id = request.browser_id;
+            let screen_pos = request.screen_pos;
+            // The page reports its own URL; use the frame's real one.
+            let page_url = session
+                .pages()
+                .iter()
+                .find(|p| p.browser.identifier() == target_id)
+                .map(|p| p.url())
+                .unwrap_or(page_url);
             open_context_menu(
                 session,
                 gpu,
@@ -2017,6 +2048,15 @@ mod tests {
             lan(PasswordAction::Fill { id: "router".into() }),
             Some(PasswordAction::Fill { .. })
         ));
+    }
+
+    #[test]
+    fn context_hit_needs_the_clicked_page_and_a_fresh_click() {
+        let at = std::time::Instant::now();
+        let request = ContextHitRequest { browser_id: 7, screen_pos: (1.0, 2.0), at };
+        assert!(request.accepts(7, at + std::time::Duration::from_millis(50)));
+        assert!(!request.accepts(8, at));
+        assert!(!request.accepts(7, at + std::time::Duration::from_secs(2)));
     }
 
     #[test]
