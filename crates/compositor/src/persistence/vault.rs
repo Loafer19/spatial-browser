@@ -527,23 +527,31 @@ fn restrict_permissions(path: &Path) {
 /// Strip path/query; keep scheme + host (+ non-default port).
 pub fn normalize_origin(url_or_origin: &str) -> String {
     let s = url_or_origin.trim();
-    let rest = if let Some(r) = s.strip_prefix("https://") {
-        ("https", r)
-    } else if let Some(r) = s.strip_prefix("http://") {
-        ("http", r)
-    } else if s.contains("://") {
-        return s
-            .split_once("://")
-            .map(|(sch, r)| {
-                let hostport = r.split(['/', '?', '#']).next().unwrap_or(r);
-                format!("{sch}://{}", hostport.to_ascii_lowercase())
-            })
-            .unwrap_or_else(|| s.to_string());
-    } else {
-        return format!("https://{}", s.split(['/', '?', '#']).next().unwrap_or(s).to_ascii_lowercase());
+    let is_scheme = |sch: &str| {
+        let mut chars = sch.chars();
+        chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+            && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
     };
-    let (scheme, after) = rest;
+    let (scheme, after) = match s.split_once("://") {
+        Some((sch, rest)) if is_scheme(sch) => (sch.to_ascii_lowercase(), rest),
+        // `data:text/html,https://x` and the like: not an origin.
+        Some(_) => return String::new(),
+        None => {
+            // `data:`, `javascript:`, `about:`, `mailto:` … are not web
+            // origins; a bare `host:port` (digits after the colon) is.
+            if let Some((head, tail)) = s.split_once(':') {
+                let port = tail.split(['/', '?', '#']).next().unwrap_or("");
+                if is_scheme(head) && !(port.chars().all(|c| c.is_ascii_digit()) && !port.is_empty()) {
+                    return String::new();
+                }
+            }
+            ("https".to_string(), s)
+        }
+    };
     let hostport = after.split(['/', '?', '#']).next().unwrap_or(after);
+    if hostport.is_empty() {
+        return String::new();
+    }
     format!("{scheme}://{}", hostport.to_ascii_lowercase())
 }
 
@@ -936,6 +944,26 @@ mod tests {
         assert_eq!(host_key("https://www.example.com"), host_key("http://example.com"));
         assert_ne!(host_key("https://example.com:8443"), host_key("https://example.com"));
         assert_ne!(host_key("https://login.example.com"), host_key("https://example.com"));
+    }
+
+    #[test]
+    fn normalize_origin_rejects_non_web_urls() {
+        for bad in [
+            "data:text/html,https://bank.test",
+            "data:text/html;base64,PGgxPg==",
+            "javascript:alert(1)",
+            "about:blank",
+            "mailto:a@b.test",
+            "1http://x.test",
+            "https://",
+            "",
+        ] {
+            assert_eq!(normalize_origin(bad), "", "{bad}");
+        }
+        assert_eq!(normalize_origin("localhost:3000/x"), "https://localhost:3000");
+        assert_eq!(normalize_origin("HTTPS://Bank.Test/login"), "https://bank.test");
+        assert_eq!(normalize_origin("chrome-extension://abc/x"), "chrome-extension://abc");
+        assert_eq!(host_key("data:text/html,https://bank.test"), "");
     }
 
     #[test]

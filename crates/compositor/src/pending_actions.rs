@@ -224,7 +224,11 @@ fn frame_still_on(frame: &cef::Frame, url: &str) -> bool {
 fn same_origin(a: &str, b: &str) -> bool {
     match (a.starts_with("data:"), b.starts_with("data:")) {
         (true, true) => true,
-        (false, false) => vault::normalize_origin(a) == vault::normalize_origin(b),
+        // Two non-web URLs both normalize to "": not a match.
+        (false, false) => {
+            let origin = vault::normalize_origin(a);
+            !origin.is_empty() && origin == vault::normalize_origin(b)
+        }
         _ => false,
     }
 }
@@ -2046,6 +2050,7 @@ mod tests {
         assert!(!same_origin("http://a.test/", "https://a.test/"));
         assert!(same_origin("data:text/html,one", "data:text/html,two"));
         assert!(!same_origin("data:text/html,x", "https://a.test/"));
+        assert!(!same_origin("about:blank", "javascript:void(0)"));
     }
 
     #[test]
