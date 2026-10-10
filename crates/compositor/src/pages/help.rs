@@ -10,6 +10,7 @@ pub const HELP_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+Shift+T", "Reopen closed page"),
             ("Ctrl+W", "Close page"),
             ("Ctrl+R", "Reload page"),
+            ("Ctrl+F", "Find in page (Enter / Shift+Enter, Esc)"),
             ("Ctrl+V", "Paste from clipboard"),
             ("Ctrl+Shift+C", "Copy page URL"),
             ("Ctrl+Shift+R", "Toggle reader mode"),

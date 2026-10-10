@@ -2,6 +2,7 @@
 
 use crate::display::{DisplayHandlerBuilder, OsrDisplayHandler};
 use crate::download::{DownloadHandlerBuilder, OsrDownloadHandler};
+use crate::find::{FindHandlerBuilder, OsrFindHandler};
 use crate::life_span::{LifeSpanHandlerBuilder, OsrLifeSpanHandler};
 use crate::load::{LoadHandlerBuilder, OsrLoadHandler};
 use crate::navigation::{OsrRequestHandler, RequestHandlerBuilder};
@@ -16,6 +17,7 @@ wrap_client! {
         download_handler: cef::DownloadHandler,
         life_span_handler: cef::LifeSpanHandler,
         load_handler: cef::LoadHandler,
+        find_handler: cef::FindHandler,
     }
 
     impl Client {
@@ -42,6 +44,10 @@ wrap_client! {
         fn load_handler(&self) -> Option<cef::LoadHandler> {
             Some(self.load_handler.clone())
         }
+
+        fn find_handler(&self) -> Option<cef::FindHandler> {
+            Some(self.find_handler.clone())
+        }
     }
 }
 
@@ -54,6 +60,7 @@ impl ClientBuilder {
             DownloadHandlerBuilder::build(OsrDownloadHandler {}),
             LifeSpanHandlerBuilder::build(OsrLifeSpanHandler {}),
             LoadHandlerBuilder::build(OsrLoadHandler {}),
+            FindHandlerBuilder::build(OsrFindHandler {}),
         )
     }
 }

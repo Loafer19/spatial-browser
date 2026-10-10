@@ -27,7 +27,7 @@ impl Vertex {
 }
 
 /// World-space page rect (top-left, y-down). Render gets screen-space rects.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
     pub x: f32,
     pub y: f32,

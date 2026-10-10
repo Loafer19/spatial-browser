@@ -31,6 +31,7 @@ Pages live in **world space** on a pannable/zoomable canvas. Hit-testing and dra
 | `Ctrl+T` | New page (omnibox) |
 | `Ctrl+Shift+T` | Reopen closed page |
 | `Ctrl+W` | Close page |
+| `Ctrl+F` | Find in page (Enter next, Shift+Enter previous, Esc close) |
 | `Ctrl+R` | Reload |
 | `Ctrl+V` | Paste from clipboard |
 | `Ctrl+Shift+C` | Copy page URL |

@@ -23,6 +23,32 @@ pub struct Session {
     // Ctrl+Shift+T (see pop_closed). Not persisted — "undo close" only
     // makes sense within the current run.
     closed: Vec<(Rect, String)>,
+    // Open Ctrl+F bar, if any. Not persisted.
+    find: Option<FindBar>,
+}
+
+/// The find bar page and the page it searches.
+pub struct FindBar {
+    pub bar_id: i32,
+    pub target_id: i32,
+    /// Last query sent, so a repeat is a find-next rather than a new search.
+    pub last_query: Option<(String, bool)>,
+}
+
+/// Height of the find bar tile and its gap above the searched page.
+pub const FIND_BAR_HEIGHT: f32 = 48.0;
+const FIND_BAR_GAP: f32 = 8.0;
+
+/// Where the find bar sits for a target page: right-aligned just above it,
+/// so clicking into the page never covers it.
+pub fn find_bar_rect(target: Rect) -> Rect {
+    let w = target.w.clamp(200.0, 460.0);
+    Rect {
+        x: target.x + target.w - w,
+        y: target.y - FIND_BAR_HEIGHT - FIND_BAR_GAP,
+        w,
+        h: FIND_BAR_HEIGHT,
+    }
 }
 
 impl Session {
@@ -34,6 +60,7 @@ impl Session {
             dirty: false,
             zoomed_viewport: None,
             closed: Vec::new(),
+            find: None,
         }
     }
 
@@ -232,6 +259,32 @@ impl Session {
         }
         self.mark_dirty();
         Some(page)
+    }
+
+    pub fn find(&self) -> Option<&FindBar> {
+        self.find.as_ref()
+    }
+
+    pub fn find_mut(&mut self) -> Option<&mut FindBar> {
+        self.find.as_mut()
+    }
+
+    pub fn set_find(&mut self, find: Option<FindBar>) {
+        self.find = find;
+    }
+
+    /// Moves the page with `browser_id` to `rect` if it differs. Not a
+    /// layout change worth saving (only used for the ephemeral find bar).
+    pub fn place_page(&mut self, browser_id: i32, rect: Rect, scale_factor: f64) {
+        if let Some(page) = self
+            .pages
+            .iter_mut()
+            .find(|p| p.browser.identifier() == browser_id)
+        {
+            if page.rect != rect {
+                page.set_rect(rect, scale_factor);
+            }
+        }
     }
 
     /// Used by drag/resize, both of which always act on the topmost page

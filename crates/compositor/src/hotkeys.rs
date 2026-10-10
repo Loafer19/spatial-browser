@@ -66,6 +66,10 @@ pub fn handle(
 
     match event.physical_key {
         // --- Pages ---
+        PhysicalKey::Code(KeyCode::KeyF) if !modifiers.shift_key() => {
+            open_find(session, gpu);
+            true
+        }
         PhysicalKey::Code(KeyCode::KeyT) => {
             if modifiers.shift_key() {
                 reopen_closed(session, gpu);
@@ -258,6 +262,39 @@ pub(crate) fn open_new(
         &settings.default_search_engine,
     );
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
+/// Ctrl+F: find bar above the topmost content page (refocus if open).
+fn open_find(session: &mut Session, gpu: &GpuState) {
+    if let Some(bar_id) = session.find().map(|f| f.bar_id) {
+        if let Some(index) = session
+            .pages()
+            .iter()
+            .position(|p| p.browser.identifier() == bar_id)
+        {
+            session.bring_to_front(index);
+            return;
+        }
+    }
+    let Some(target) = session.pages().iter().rev().find(|p| !p.ephemeral) else {
+        return;
+    };
+    let target_id = target.browser.identifier();
+    let rect = crate::session::find_bar_rect(target.rect);
+    let bar = browser::spawn(
+        gpu,
+        &gpu.window,
+        &pages::find_bar::page_url(&session.theme()),
+        rect,
+        true,
+    );
+    let bar_id = bar.browser.identifier();
+    session.add_page(bar);
+    session.set_find(Some(crate::session::FindBar {
+        bar_id,
+        target_id,
+        last_query: None,
+    }));
 }
 
 /// Reopen most recently closed page at its former rect.

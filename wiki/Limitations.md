@@ -25,7 +25,7 @@ CEF’s own clipboard does not work in this OSR embedding. Copy/paste are reimpl
 
 ## Find-in-page
 
-`Ctrl+F` was built once, reverted as too buggy — not currently supported.
+`Ctrl+F` uses CEF's native find (highlights, match count, Enter / Shift+Enter, match case). The bar is a small tile above the searched page; it searches the page that was topmost when opened.
 
 ## Missing “browser chrome” features
 

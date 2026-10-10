@@ -5,6 +5,7 @@
 mod app;
 mod blocklist;
 mod filter_engine;
+mod find;
 mod clean_urls;
 mod client;
 mod display;
@@ -23,6 +24,7 @@ pub use filter_engine::{
 pub use clean_urls::set_enabled as set_clean_urls_enabled;
 pub use client::*;
 pub use display::*;
+pub use find::*;
 pub use download::*;
 pub use life_span::*;
 pub use load::*;

@@ -6,6 +6,7 @@ use crate::output::Theme;
 pub mod bookmarks_list;
 pub mod context_menu;
 pub mod downloads_list;
+pub mod find_bar;
 pub mod help;
 pub mod history_list;
 pub mod omnibox;

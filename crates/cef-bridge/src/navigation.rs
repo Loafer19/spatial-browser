@@ -375,6 +375,34 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
+/// Find bar actions (`find://go/search?q=..&dir=next|prev&case=0|1`,
+/// `find://go/close`). Path-style host avoids CEF's `x?` → `x/?` rewrite.
+pub enum FindAction {
+    Search {
+        text: String,
+        forward: bool,
+        match_case: bool,
+    },
+    Close,
+}
+
+thread_local! {
+    pub static PENDING_FIND_ACTION: RefCell<Option<(i32, FindAction)>> = const { RefCell::new(None) };
+}
+
+fn parse_find_action(url: &str) -> Option<FindAction> {
+    let rest = url.strip_prefix("find://go/")?;
+    if rest == "close" || rest == "close/" {
+        return Some(FindAction::Close);
+    }
+    let query = rest.strip_prefix("search?").or_else(|| rest.strip_prefix("search/?"))?;
+    Some(FindAction::Search {
+        text: query_param(query, "q").unwrap_or_default(),
+        forward: query_param(query, "dir").as_deref() != Some("prev"),
+        match_case: query_param(query, "case").as_deref() == Some("1"),
+    })
+}
+
 /// Context-menu actions (`context://...`).
 pub enum ContextAction {
     /// Element hit-test result from a page (async after right-click).
@@ -611,6 +639,10 @@ wrap_request_handler! {
                 PENDING_CONTEXT_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
                 return true as _;
             }
+            if let Some(action) = parse_find_action(&url) {
+                PENDING_FIND_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
+                return true as _;
+            }
             if let Some(text) = parse_clipboard_copy(&url) {
                 write_to_clipboard(&text);
                 return true as _;
@@ -703,6 +735,21 @@ mod tests {
         assert!(parse_password_action("password://go/fill?nope=1").is_none());
         assert!(parse_password_action("password://go/explode?x=1").is_none());
         assert!(parse_password_action("https://password.test/go/fill?id=1").is_none());
+    }
+
+    #[test]
+    fn find_actions() {
+        assert!(matches!(
+            parse_find_action("find://go/search?q=foo%20bar&dir=prev&case=1"),
+            Some(FindAction::Search { text, forward: false, match_case: true }) if text == "foo bar"
+        ));
+        assert!(matches!(
+            parse_find_action("find://go/search/?q=x"),
+            Some(FindAction::Search { forward: true, match_case: false, .. })
+        ));
+        assert!(matches!(parse_find_action("find://go/close"), Some(FindAction::Close)));
+        assert!(parse_find_action("find://go/explode").is_none());
+        assert!(parse_find_action("https://find.test/go/close").is_none());
     }
 
     #[test]
