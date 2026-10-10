@@ -23,9 +23,7 @@ fn path() -> PathBuf {
 
 /// Returns an empty list if there's no file yet or it fails to parse.
 pub fn load() -> Vec<DownloadRecord> {
-    std::fs::read(path())
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<DownloadsFile>(&bytes).ok())
+    super::store::load_json::<DownloadsFile>(&path(), "downloads")
         .map(|f| f.entries)
         .unwrap_or_default()
 }
@@ -41,19 +39,5 @@ pub fn save(downloads: &[DownloadRecord]) {
     let data = DownloadsFile {
         entries: downloads.to_vec(),
     };
-    let path = path();
-    if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            log::warn!("downloads save: couldn't create {parent:?}: {e}");
-            return;
-        }
-    }
-    match serde_json::to_vec_pretty(&data) {
-        Ok(bytes) => {
-            if let Err(e) = std::fs::write(&path, bytes) {
-                log::warn!("downloads save: couldn't write {path:?}: {e}");
-            }
-        }
-        Err(e) => log::warn!("downloads save: serialize failed: {e}"),
-    }
+    super::store::save_json(&path(), "downloads", &data);
 }

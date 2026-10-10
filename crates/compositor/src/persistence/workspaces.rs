@@ -86,18 +86,17 @@ impl WorkspaceStore {
     }
 
     pub fn load() -> Self {
-        let Some(bytes) = std::fs::read(path()).ok() else {
-            return Self::fresh();
-        };
-        if let Ok(store) = serde_json::from_slice::<WorkspaceStore>(&bytes) {
-            if store.version >= 2 && !store.slots.is_empty() {
-                return store.ensure_invariants();
+        super::store::load_with(&path(), "workspaces", |bytes| {
+            if let Ok(store) = serde_json::from_slice::<WorkspaceStore>(bytes) {
+                if store.version >= 2 && !store.slots.is_empty() {
+                    return Some(store.ensure_invariants());
+                }
             }
-        }
-        if let Ok(legacy) = serde_json::from_slice::<LegacyFile>(&bytes) {
-            return Self::from_legacy(legacy).ensure_invariants();
-        }
-        Self::fresh()
+            serde_json::from_slice::<LegacyFile>(bytes)
+                .ok()
+                .map(|legacy| Self::from_legacy(legacy).ensure_invariants())
+        })
+        .unwrap_or_else(Self::fresh)
     }
 
     fn from_legacy(legacy: LegacyFile) -> Self {
@@ -147,21 +146,7 @@ impl WorkspaceStore {
     }
 
     pub fn save(&self) {
-        let path = path();
-        if let Some(parent) = path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                log::warn!("workspaces save: couldn't create {parent:?}: {e}");
-                return;
-            }
-        }
-        match serde_json::to_vec_pretty(self) {
-            Ok(bytes) => {
-                if let Err(e) = std::fs::write(&path, bytes) {
-                    log::warn!("workspaces save: couldn't write {path:?}: {e}");
-                }
-            }
-            Err(e) => log::warn!("workspaces save: serialize failed: {e}"),
-        }
+        super::store::save_json(&path(), "workspaces", self);
     }
 
     pub fn active_slot(&self) -> &WorkspaceSlot {

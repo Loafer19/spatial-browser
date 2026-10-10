@@ -31,16 +31,11 @@ fn state_path() -> PathBuf {
 }
 
 fn load_state() -> StateFile {
-    let Ok(text) = std::fs::read_to_string(state_path()) else {
-        return StateFile::default();
-    };
-    serde_json::from_str(&text).unwrap_or_default()
+    crate::persistence::store::load_json(&state_path(), "userstyles state").unwrap_or_default()
 }
 
 fn save_state(state: &StateFile) {
-    if let Ok(text) = serde_json::to_string_pretty(state) {
-        let _ = std::fs::write(state_path(), text);
-    }
+    crate::persistence::store::save_json(&state_path(), "userstyles state", state);
 }
 
 pub fn load() -> Vec<UserStyle> {

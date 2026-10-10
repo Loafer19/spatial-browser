@@ -82,26 +82,10 @@ fn path() -> PathBuf {
 }
 
 pub fn load() -> AppSettings {
-    std::fs::read(path())
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    super::store::load_json(&path(), "settings")
         .unwrap_or_default()
 }
 
 pub fn save(settings: &AppSettings) {
-    let path = path();
-    if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            log::warn!("settings save: couldn't create {parent:?}: {e}");
-            return;
-        }
-    }
-    match serde_json::to_vec_pretty(settings) {
-        Ok(bytes) => {
-            if let Err(e) = std::fs::write(&path, bytes) {
-                log::warn!("settings save: couldn't write {path:?}: {e}");
-            }
-        }
-        Err(e) => log::warn!("settings save: serialize failed: {e}"),
-    }
+    super::store::save_json(&path(), "settings", settings);
 }

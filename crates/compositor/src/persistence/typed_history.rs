@@ -17,9 +17,7 @@ fn path() -> PathBuf {
 
 /// Returns an empty list if there's no file yet or it fails to parse.
 pub fn load() -> Vec<String> {
-    std::fs::read(path())
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<TypedHistoryFile>(&bytes).ok())
+    super::store::load_json::<TypedHistoryFile>(&path(), "typed history")
         .map(|f| f.entries)
         .unwrap_or_default()
 }
@@ -36,19 +34,5 @@ fn save(typed_history: &[String]) {
     let data = TypedHistoryFile {
         entries: typed_history.to_vec(),
     };
-    let path = path();
-    if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            log::warn!("typed history save: couldn't create {parent:?}: {e}");
-            return;
-        }
-    }
-    match serde_json::to_vec_pretty(&data) {
-        Ok(bytes) => {
-            if let Err(e) = std::fs::write(&path, bytes) {
-                log::warn!("typed history save: couldn't write {path:?}: {e}");
-            }
-        }
-        Err(e) => log::warn!("typed history save: serialize failed: {e}"),
-    }
+    super::store::save_json(&path(), "typed history", &data);
 }

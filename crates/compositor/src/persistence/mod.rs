@@ -6,6 +6,7 @@ pub mod bookmarks_chrome;
 pub mod downloads;
 pub mod history;
 pub mod settings;
+pub mod store;
 pub mod typed_history;
 pub mod vault;
 pub mod vault_csv;
@@ -54,27 +55,12 @@ pub fn save(session: &Session) {
             .collect(),
     };
 
-    let path = path();
-    if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            log::warn!("session save: couldn't create {parent:?}: {e}");
-            return;
-        }
-    }
-    match serde_json::to_vec_pretty(&data) {
-        Ok(bytes) => {
-            if let Err(e) = std::fs::write(&path, bytes) {
-                log::warn!("session save: couldn't write {path:?}: {e}");
-            }
-        }
-        Err(e) => log::warn!("session save: serialize failed: {e}"),
-    }
+    store::save_json(&path(), "session", &data);
 }
 
 /// Load session and spawn pages, or `None` → caller uses default layout.
 pub fn load(gpu: &GpuState, window: &Window) -> Option<Session> {
-    let bytes = std::fs::read(path()).ok()?;
-    let data: SessionFile = serde_json::from_slice(&bytes).ok()?;
+    let data: SessionFile = store::load_json(&path(), "session")?;
     let theme = THEMES
         .iter()
         .find(|t| t.name == data.theme)
