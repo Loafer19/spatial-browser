@@ -58,6 +58,13 @@ wrap_app! {
             );
         }
 
+        // Every process (browser, renderer, …) must see the same scheme list.
+        fn on_register_custom_schemes(&self, registrar: Option<&mut SchemeRegistrar>) {
+            if let Some(registrar) = registrar {
+                crate::spatial::register_scheme(registrar);
+            }
+        }
+
         fn browser_process_handler(&self) -> Option<cef::BrowserProcessHandler> {
             Some(BrowserProcessHandlerBuilder::build(
                 OsrBrowserProcessHandler::new(),
@@ -99,6 +106,7 @@ wrap_browser_process_handler! {
     impl BrowserProcessHandler {
         fn on_context_initialized(&self) {
             *self.handler.is_cef_ready.borrow_mut() = true;
+            crate::spatial::register_handler_factory();
         }
 
         // external_message_pump: tell the embedder loop when to call

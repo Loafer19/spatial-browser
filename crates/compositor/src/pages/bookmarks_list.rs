@@ -129,14 +129,14 @@ pub(crate) fn page_url(theme: &Theme, bookmarks: &[Bookmark], status: Option<&st
         heading = theme.help_heading,
         fg = theme.help_fg,
     );
-    super::data_url(&html)
+    super::serve(super::kind::BOOKMARKS, html)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::output::THEMES;
-    use crate::pages::tests::decode_data_url;
+    use crate::pages::tests::served_html;
 
     #[test]
     fn bookmark_label_folder_and_host_are_escaped() {
@@ -153,7 +153,7 @@ mod tests {
                 folder: None,
             },
         ];
-        let html = decode_data_url(&page_url(&THEMES[0], &marks, None));
+        let html = served_html(&page_url(&THEMES[0], &marks, None));
         for raw in ["<img src=x", "<script>f()", "<svg onload"] {
             assert!(!html.contains(raw), "{raw} in {html}");
         }

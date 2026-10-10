@@ -70,5 +70,5 @@ pub(crate) fn page_url(theme: &Theme, downloads: &[DownloadRecord]) -> String {
         key_fg = theme.help_key_fg,
         heading = theme.help_heading,
     );
-    super::data_url(&html)
+    super::serve(super::kind::DOWNLOADS, html)
 }

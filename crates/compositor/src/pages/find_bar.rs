@@ -34,7 +34,7 @@ pub fn page_url(theme: &Theme) -> String {
         card_border = theme.help_card_border,
         fg = theme.help_fg,
     );
-    super::data_url(&format!(
+    let html = format!(
         "{script}\
          <body style=\"margin:0;padding:8px 10px;background:{bg};color:{fg};\
          font-family:ui-monospace,monospace;font-size:14px;display:flex;gap:8px;\
@@ -54,7 +54,8 @@ pub fn page_url(theme: &Theme) -> String {
         fg = theme.help_fg,
         card_bg = theme.help_card_bg,
         card_border = theme.help_card_border,
-    ))
+    );
+    super::serve(super::kind::FIND_BAR, html)
 }
 
 #[cfg(test)]
@@ -62,7 +63,7 @@ mod tests {
     use crate::output::THEMES;
 
     #[test]
-    fn is_a_base64_data_url() {
-        assert!(super::page_url(&THEMES[0]).starts_with("data:text/html;charset=utf-8;base64,"));
+    fn is_a_spatial_page() {
+        assert!(super::page_url(&THEMES[0]).starts_with("spatial://page/find-bar/"));
     }
 }

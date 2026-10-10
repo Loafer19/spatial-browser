@@ -329,14 +329,14 @@ pub(crate) fn page_url(theme: &Theme, settings: &AppSettings) -> String {
          <div style=\"display:flex;flex-direction:column;gap:8px\">{panel}</div></body>",
         nav_script = LIST_NAV_SCRIPT,
         icon_hover = super::icon_button_hover_css(theme),
-        body_open = super::body_open(theme, ""),
+        body_open = super::body_open(theme, &format!("data-view=\"{tab}\"")),
         key_bg = theme.help_key_bg,
         key_fg = theme.help_key_fg,
         heading = theme.help_heading,
         tabs = tab_bar(theme, tab),
         panel = panel,
     );
-    super::data_url(&html)
+    super::serve(super::kind::SETTINGS, html)
 }
 
 fn urlencoding_lite(s: &str) -> String {

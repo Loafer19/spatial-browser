@@ -105,5 +105,5 @@ pub fn page_url(theme: &Theme, entries: &[(i32, String)]) -> String {
         key_bg = theme.help_key_bg,
         key_fg = theme.help_key_fg,
     );
-    super::data_url(&html)
+    super::serve(super::kind::SWITCHER, html)
 }

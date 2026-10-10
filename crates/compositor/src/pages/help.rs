@@ -99,5 +99,5 @@ pub fn page_url(theme: &Theme) -> String {
         heading = theme.help_heading,
         name = theme.name,
     );
-    super::data_url(&html)
+    super::serve(super::kind::HELP, html)
 }

@@ -76,5 +76,5 @@ pub fn page_url(theme: &Theme, typed_history: &[String], default_search_engine: 
         card_bg = theme.help_card_bg,
         card_border = theme.help_card_border,
     );
-    super::data_url(&html)
+    super::serve(super::kind::OMNIBOX, html)
 }

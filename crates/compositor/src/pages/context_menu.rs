@@ -111,5 +111,5 @@ pub(crate) fn page_url(theme: &Theme, ctx: &MenuContext) -> String {
         card = theme.help_card_bg,
         heading = theme.help_heading,
     );
-    super::data_url(&html)
+    super::serve(super::kind::CONTEXT_MENU, html)
 }

@@ -119,7 +119,7 @@ pub(crate) fn page_url(theme: &Theme, scripts: &[UserScript], styles: &[UserStyl
         body_open = super::body_open(theme, ""),
         heading = theme.help_heading,
     );
-    super::data_url(&html)
+    super::serve(super::kind::USERSCRIPTS, html)
 }
 
 fn urlencoding_path(s: &str) -> String {

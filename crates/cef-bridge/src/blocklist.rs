@@ -94,7 +94,8 @@ wrap_resource_request_handler! {
                 return ReturnValue::CONTINUE;
             };
             let url = cef::CefString::from(&request.url()).to_string();
-            if !ENABLED.load(Ordering::Relaxed) {
+            // Built-in pages: never subject to host lists or filter rules.
+            if !ENABLED.load(Ordering::Relaxed) || url.starts_with(crate::spatial::PAGE_URL_PREFIX) {
                 return ReturnValue::CONTINUE;
             }
             let referrer = cef::CefString::from(&request.referrer_url()).to_string();

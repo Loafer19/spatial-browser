@@ -150,5 +150,5 @@ pub(crate) fn page_url(theme: &Theme, history: &[HistoryEntry]) -> String {
         card_bg = theme.help_card_bg,
         card_border = theme.help_card_border,
     );
-    super::data_url(&html)
+    super::serve(super::kind::HISTORY, html)
 }

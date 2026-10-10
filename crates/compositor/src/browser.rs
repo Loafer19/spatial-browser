@@ -114,6 +114,14 @@ pub fn spawn(gpu: &GpuState, window: &Window, url: &str, rect: Rect, ephemeral: 
         None, // shared persistent global request context
     )
     .expect("failed to create CEF browser");
+    // Built-in page: from now on only this browser is served its token, and
+    // only its actions count as internal (pending_actions::action_source).
+    if ephemeral && cef_bridge::spatial::parse_page_url(url).is_some() {
+        let id = cef::ImplBrowser::identifier(&browser);
+        if !cef_bridge::spatial::bind(url, id) {
+            log::warn!("built-in page token not bound to browser {id}");
+        }
+    }
 
     Page {
         browser,

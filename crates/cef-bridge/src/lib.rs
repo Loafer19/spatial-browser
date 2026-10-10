@@ -17,6 +17,7 @@ mod message_pump;
 mod navigation;
 mod paint_signal;
 mod render;
+pub mod spatial;
 
 pub use app::*;
 pub use blocklist::{set_custom_hosts, set_enabled, set_peter_lowe_enabled};
