@@ -23,7 +23,9 @@ fn socket_path() -> PathBuf {
 
 /// http(s) URLs among the launch arguments (CEF switches are skipped).
 pub fn launch_urls() -> Vec<String> {
-    web_urls(std::env::args().skip(1))
+    // args_os: a non-UTF-8 argument (e.g. a Latin-1 path from a file
+    // manager) must not panic before CEF is up; it's just not a URL.
+    web_urls(std::env::args_os().skip(1).filter_map(|a| a.into_string().ok()))
 }
 
 fn web_urls(items: impl IntoIterator<Item = String>) -> Vec<String> {

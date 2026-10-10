@@ -1358,6 +1358,11 @@ fn handle_password_action(
         PasswordAction::PromptDismiss => {
             close_save_prompt(session, pending_save_offer);
         }
+        PasswordAction::CopyGenerated => {
+            if let Some(pw) = generated_password.as_deref() {
+                cef_bridge::clipboard::copy_text(pw, true);
+            }
+        }
         PasswordAction::Save {
             origin,
             username,
@@ -1960,6 +1965,7 @@ mod tests {
         assert!(web(Some(&v), PasswordAction::PromptSave).is_none());
         assert!(web(Some(&v), PasswordAction::PromptNever).is_none());
         assert!(web(Some(&v), PasswordAction::PromptDismiss).is_none());
+        assert!(web(Some(&v), PasswordAction::CopyGenerated).is_none());
     }
 
     #[test]

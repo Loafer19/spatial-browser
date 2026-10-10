@@ -348,6 +348,9 @@ pub enum PasswordAction {
     PromptSave,
     PromptNever,
     PromptDismiss,
+    /// Generator page's Copy: the compositor copies its own generated
+    /// password (marked sensitive), so it never rides in a URL.
+    CopyGenerated,
     Delete {
         id: String,
     },
@@ -490,6 +493,7 @@ fn parse_password_action(url: &str) -> Option<PasswordAction> {
         "prompt-save" => return Some(PasswordAction::PromptSave),
         "prompt-never" => return Some(PasswordAction::PromptNever),
         "prompt-dismiss" => return Some(PasswordAction::PromptDismiss),
+        "copy-generated" => return Some(PasswordAction::CopyGenerated),
         _ => {}
     }
     if let Some(query) = password_action_query(rest, "unlock") {

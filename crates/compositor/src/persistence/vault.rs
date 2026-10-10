@@ -785,6 +785,30 @@ mod tests {
     }
 
     #[test]
+    fn header_is_bound_as_aad() {
+        // Decrypting with the right key but without the header as AAD must
+        // fail — otherwise header fields could be swapped freely.
+        let tmp = TempVault::new("aad");
+        let path = tmp.path();
+        create_at(&path, "password1", FAST).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let header = parse_header(&bytes).unwrap();
+        let key = derive_key("password1", &header.salt, header.kdf).unwrap();
+        let cipher = Aes256Gcm::new_from_slice(&key.0).unwrap();
+        let open = |aad: &[u8]| {
+            cipher.decrypt(
+                Nonce::from_slice(&header.nonce),
+                Payload {
+                    msg: &bytes[header.len..],
+                    aad,
+                },
+            )
+        };
+        assert!(open(&bytes[..header.len]).is_ok());
+        assert!(open(&[]).is_err());
+    }
+
+    #[test]
     fn tampered_header_fails_auth() {
         let tmp = TempVault::new("tamper");
         let path = tmp.path();

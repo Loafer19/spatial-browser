@@ -237,11 +237,10 @@ pub(crate) fn page_url(
             format!(
                 "<p style=\"margin:8px 0;padding:8px 10px;background:{card};border-radius:{radius_inner};\
                  border:1px solid {border};color:{fg};font-family:monospace;word-break:break-all\">{g}</p>\
-                 <button type=\"button\" onclick=\"location='clipboard://copy?text={enc}'\" \
+                 <button type=\"button\" onclick=\"location='password://go/copy-generated'\" \
                  style=\"padding:6px 12px;border-radius:{radius_inner};border:none;background:{accent};\
                  color:{key_fg};cursor:pointer\">Copy</button>",
                 g = html_escape(g),
-                enc = url_component(g),
                 card = theme.help_card_bg,
                 border = theme.help_card_border,
                 fg = theme.help_fg,
