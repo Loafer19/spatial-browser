@@ -39,5 +39,5 @@ pub fn save(downloads: &[DownloadRecord]) {
     let data = DownloadsFile {
         entries: downloads.to_vec(),
     };
-    super::store::save_json(&path(), "downloads", &data);
+    super::store::save_json_bg(&path(), "downloads", &data, super::store::Backup::None);
 }

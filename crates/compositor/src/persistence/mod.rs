@@ -55,7 +55,7 @@ pub fn save(session: &Session) {
             .collect(),
     };
 
-    store::save_json(&path(), "session", &data);
+    store::save_json_bg(&path(), "session", &data, store::Backup::Keep);
 }
 
 /// Load session and spawn pages, or `None` → caller uses default layout.

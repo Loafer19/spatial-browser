@@ -404,6 +404,7 @@ impl ApplicationHandler for App {
                 self.workspaces.capture_active_from_session(&self.session);
                 self.workspaces.save();
                 persistence::save(&self.session);
+                persistence::store::flush();
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {

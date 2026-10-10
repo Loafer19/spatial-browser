@@ -35,7 +35,7 @@ fn load_state() -> StateFile {
 }
 
 fn save_state(state: &StateFile) {
-    crate::persistence::store::save_json(&state_path(), "userstyles state", state);
+    crate::persistence::store::save_json(&state_path(), "userstyles state", state, crate::persistence::store::Backup::Keep);
 }
 
 pub fn load() -> Vec<UserStyle> {

@@ -87,5 +87,5 @@ pub fn load() -> AppSettings {
 }
 
 pub fn save(settings: &AppSettings) {
-    super::store::save_json(&path(), "settings", settings);
+    super::store::save_json(&path(), "settings", settings, super::store::Backup::Keep);
 }

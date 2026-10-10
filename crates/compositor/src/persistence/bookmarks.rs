@@ -37,7 +37,7 @@ pub fn save(bookmarks: &[Bookmark]) {
     let data = BookmarksFile {
         bookmarks: bookmarks.to_vec(),
     };
-    super::store::save_json(&path(), "bookmarks", &data);
+    super::store::save_json(&path(), "bookmarks", &data, super::store::Backup::Keep);
 }
 
 /// Bare host from a URL — the fallback display label, and used to guess

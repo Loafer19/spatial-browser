@@ -34,5 +34,5 @@ fn save(typed_history: &[String]) {
     let data = TypedHistoryFile {
         entries: typed_history.to_vec(),
     };
-    super::store::save_json(&path(), "typed history", &data);
+    super::store::save_json_bg(&path(), "typed history", &data, super::store::Backup::None);
 }

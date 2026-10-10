@@ -56,7 +56,7 @@ fn load_state() -> StateFile {
 }
 
 fn save_state(state: &StateFile) {
-    crate::persistence::store::save_json(&state_path(), "userscripts state", state);
+    crate::persistence::store::save_json(&state_path(), "userscripts state", state, crate::persistence::store::Backup::Keep);
 }
 
 /// Load `.js` scripts; missing/unreadable/matchless files are skipped.

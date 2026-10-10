@@ -146,7 +146,7 @@ impl WorkspaceStore {
     }
 
     pub fn save(&self) {
-        super::store::save_json(&path(), "workspaces", self);
+        super::store::save_json_bg(&path(), "workspaces", self, super::store::Backup::Keep);
     }
 
     pub fn active_slot(&self) -> &WorkspaceSlot {

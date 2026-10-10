@@ -49,5 +49,5 @@ pub fn save(history: &[HistoryEntry]) {
     let data = HistoryFile {
         entries: history.to_vec(),
     };
-    super::store::save_json(&path(), "history", &data);
+    super::store::save_json_bg(&path(), "history", &data, super::store::Backup::None);
 }
