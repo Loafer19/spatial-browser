@@ -42,11 +42,7 @@ wrap_display_handler! {
             let (Some(browser), Some(icon_urls)) = (browser, icon_urls) else {
                 return;
             };
-            // CEF's list here is borrowed: iterate a (non-owning) copy.
-            let first = icon_urls
-                .clone()
-                .into_iter()
-                .find(|u| u.starts_with("https://") || u.starts_with("http://") || u.starts_with("data:image/"));
+            let first = first_icon_url(icon_urls);
             log::debug!("favicon announced by browser {}: {first:?}", browser.identifier());
             if let Some(url) = first {
                 crate::favicon::PENDING_FAVICON_URLS
@@ -66,6 +62,18 @@ wrap_display_handler! {
                 .with_borrow_mut(|q| q.push((browser.identifier(), progress)));
         }
     }
+}
+
+/// First usable icon URL from the list CEF hands to on_favicon_urlchange.
+///
+/// The list is CEF's (a `BorrowedMut` wrapper). `CefStringList::clone()`
+/// turns it into a `Borrowed` copy that `into_iter()` reads as empty, so
+/// take the wrapper itself instead: dropping a borrowed wrapper doesn't
+/// free CEF's list, and the default left behind is just an empty wrapper.
+fn first_icon_url(icon_urls: &mut CefStringList) -> Option<String> {
+    std::mem::take(icon_urls).into_iter().find(|u| {
+        u.starts_with("https://") || u.starts_with("http://") || u.starts_with("data:image/")
+    })
 }
 
 impl DisplayHandlerBuilder {
@@ -125,5 +133,27 @@ fn cef_cursor_to_winit(type_: CursorType) -> CursorIcon {
         CursorType::DND_NONE => CursorIcon::NoDrop,
         CursorType::DND_LINK => CursorIcon::Alias,
         _ => CursorIcon::Default,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_icon_url_reads_a_borrowed_cef_list() {
+        // Own a real list, then hand out a borrowed wrapper like CEF does.
+        let mut owned = CefStringList::new();
+        owned.append("chrome://favicon/x");
+        owned.append("https://a.test/favicon.ico");
+        owned.append("https://a.test/apple-touch-icon.png");
+        let raw: *mut cef::sys::_cef_string_list_t = (&mut owned).into();
+        let mut borrowed = CefStringList::from(raw);
+        assert_eq!(
+            first_icon_url(&mut borrowed).as_deref(),
+            Some("https://a.test/favicon.ico")
+        );
+        // The owner's list is untouched; taking the owned wrapper frees it once.
+        assert_eq!(std::mem::take(&mut owned).into_iter().count(), 3);
     }
 }
