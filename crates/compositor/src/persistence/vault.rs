@@ -273,6 +273,49 @@ pub fn normalize_origin(url_or_origin: &str) -> String {
     format!("{scheme}://{}", hostport.to_ascii_lowercase())
 }
 
+/// Whether a page origin may get autofill: HTTPS anywhere, plain HTTP only
+/// for this machine and the local network (routers, NAS, dev servers), where
+/// there is no CA to buy a certificate from. Public HTTP is MITM-able.
+pub fn is_autofill_origin(origin: &str) -> bool {
+    // Needs an explicit scheme: normalize_origin reads `data:...` as a bare
+    // host and would call it https.
+    if !origin.trim_start().contains("://") {
+        return false;
+    }
+    let origin = normalize_origin(origin);
+    let Some((scheme, hostport)) = origin.split_once("://") else {
+        return false;
+    };
+    match scheme {
+        "https" => true,
+        "http" => is_local_host(host_of(hostport)),
+        _ => false,
+    }
+}
+
+/// Host part of `host[:port]`, `[v6]:port` or `user@host`.
+fn host_of(hostport: &str) -> &str {
+    let hostport = hostport.rsplit_once('@').map_or(hostport, |(_, h)| h);
+    if let Some(rest) = hostport.strip_prefix('[') {
+        return rest.split_once(']').map_or(rest, |(h, _)| h);
+    }
+    hostport.split_once(':').map_or(hostport, |(h, _)| h)
+}
+
+fn is_local_host(host: &str) -> bool {
+    if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        Ok(std::net::IpAddr::V6(ip)) => {
+            // ::1, fc00::/7 unique-local, fe80::/10 link-local.
+            ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00 || (ip.segments()[0] & 0xffc0) == 0xfe80
+        }
+        Err(_) => false,
+    }
+}
+
 /// Match key for autofill: hostname without leading `www.`, ignoring scheme.
 /// So `https://www.example.com` and `http://example.com` share a vault entry.
 pub fn host_key(url_or_origin: &str) -> String {
@@ -356,6 +399,39 @@ mod tests {
         assert_eq!(host_key("https://www.example.com"), host_key("http://example.com"));
         assert_ne!(host_key("https://example.com:8443"), host_key("https://example.com"));
         assert_ne!(host_key("https://login.example.com"), host_key("https://example.com"));
+    }
+
+    #[test]
+    fn autofill_origin_is_https_or_local_http() {
+        for ok in [
+            "https://bank.test",
+            "https://bank.test:8443/login",
+            "http://localhost:3000",
+            "http://app.localhost",
+            "http://router.local",
+            "http://127.0.0.1:8080",
+            "http://192.168.1.1",
+            "http://10.0.0.5",
+            "http://172.16.0.1",
+            "http://169.254.1.1",
+            "http://[::1]:8080",
+            "http://[fd12::1]",
+        ] {
+            assert!(is_autofill_origin(ok), "{ok}");
+        }
+        for bad in [
+            "http://bank.test",
+            "http://8.8.8.8",
+            "http://172.32.0.1",
+            "http://localhost.evil.test",
+            "http://192.168.1.1.evil.test",
+            "http://[2001:db8::1]",
+            "ftp://192.168.1.1",
+            "data:text/html,x",
+            "",
+        ] {
+            assert!(!is_autofill_origin(bad), "{bad}");
+        }
     }
 
     #[test]

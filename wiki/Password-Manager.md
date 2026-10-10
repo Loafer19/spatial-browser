@@ -42,6 +42,8 @@ Injected bridge (with clipboard bridge) on normal pages:
 
 Built-in `spatial-ui` pages are **not** autofilled.
 
+**Where it works:** HTTPS pages, plus plain HTTP only on this machine and the local network — `localhost` / `*.localhost`, `*.local`, loopback, private (10/8, 172.16/12, 192.168/16) and link-local addresses, IPv6 ULA/link-local. Public `http://` sites get no suggestions and no save prompt: anyone on the path can read or rewrite those pages. Entries match by host (`www.` ignored), and a page can only query, fill or save entries for its own main-frame origin.
+
 ## Security notes
 
 - Personal local tool; master password never leaves the machine

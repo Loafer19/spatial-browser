@@ -937,7 +937,11 @@ fn web_password_action(
     origin: &str,
     action: PasswordAction,
 ) -> Option<PasswordAction> {
-    // Every autofill action is a no-op while locked; stay silent.
+    // Every autofill action is a no-op while locked or on public HTTP;
+    // stay silent (focus on any field sends a query).
+    if !vault::is_autofill_origin(origin) {
+        return None;
+    }
     let v = vault?;
     let owned_by_origin = |id: &str| {
         v.get(id)
@@ -1684,6 +1688,29 @@ mod tests {
         for action in denied {
             assert!(web(Some(&v), action).is_none());
         }
+    }
+
+    #[test]
+    fn public_http_gets_no_autofill_local_http_does() {
+        let v = VaultSession::for_test(vec![
+            test_entry("plain", "http://site.test"),
+            test_entry("router", "http://192.168.1.1"),
+        ]);
+        let http = |action| web_password_action(Some(&v), "http://site.test", action);
+        assert!(http(PasswordAction::Query { origin: String::new() }).is_none());
+        assert!(http(PasswordAction::Fill { id: "plain".into() }).is_none());
+        assert!(http(PasswordAction::SaveOffer {
+            origin: String::new(),
+            username: "u".into(),
+            password: "p".into(),
+        })
+        .is_none());
+
+        let lan = |action| web_password_action(Some(&v), "http://192.168.1.1", action);
+        assert!(matches!(
+            lan(PasswordAction::Fill { id: "router".into() }),
+            Some(PasswordAction::Fill { .. })
+        ));
     }
 
     #[test]
