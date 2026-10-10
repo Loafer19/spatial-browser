@@ -415,11 +415,20 @@ pub fn apply(
         match action {
             DownloadPageAction::Open(index) => {
                 if let Some(download) = downloads.get(index) {
-                    if let Err(e) = std::process::Command::new("xdg-open")
-                        .arg(&download.path)
-                        .spawn()
-                    {
-                        log::warn!("xdg-open failed for {:?}: {e}", download.path);
+                    // File for safe types, its folder for executables/scripts/
+                    // unknown; None if the record points outside ~/Downloads.
+                    match cef_bridge::download_open_target(&download.path) {
+                        Some(target) => {
+                            if let Err(e) =
+                                std::process::Command::new("xdg-open").arg(&target).spawn()
+                            {
+                                log::warn!("xdg-open failed for {target:?}: {e}");
+                            }
+                        }
+                        None => log::warn!(
+                            "refused to open download {:?}: missing or outside downloads dir",
+                            download.path
+                        ),
                     }
                 }
             }

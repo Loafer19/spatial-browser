@@ -287,13 +287,23 @@ impl Session {
         }
     }
 
-    /// Used by drag/resize, both of which always act on the topmost page
-    /// (bring_to_front happens at gesture start).
-    pub fn set_topmost_rect(&mut self, rect: Rect, scale_factor: f64) {
-        if let Some(page) = self.pages.last_mut() {
-            page.set_rect(rect, scale_factor);
-            self.mark_dirty();
-        }
+    /// Rect of the page with this CEF browser id, if it's still open.
+    pub fn rect_of(&self, browser_id: i32) -> Option<Rect> {
+        index_by_browser_id(&self.pages, browser_id, |p| p.browser.identifier())
+            .map(|i| self.pages[i].rect)
+    }
+
+    /// Drag/resize target: the page captured by browser id at gesture start,
+    /// not whatever is topmost now (a popup may have landed on top, or the
+    /// page may have been closed mid-gesture). False if it's gone.
+    pub fn set_rect_of(&mut self, browser_id: i32, rect: Rect, scale_factor: f64) -> bool {
+        let Some(i) = index_by_browser_id(&self.pages, browser_id, |p| p.browser.identifier())
+        else {
+            return false;
+        };
+        self.pages[i].set_rect(rect, scale_factor);
+        self.mark_dirty();
+        true
     }
 
     pub fn pan_viewport_to(&mut self, offset: (f32, f32)) {
@@ -399,5 +409,32 @@ impl Session {
             }
         }
         self.mark_dirty();
+    }
+}
+
+/// Z-order index of the item whose browser id is `browser_id`. Generic over
+/// the item so the lookup is testable without a live CEF `Page`.
+fn index_by_browser_id<T>(items: &[T], browser_id: i32, id_of: impl Fn(&T) -> i32) -> Option<usize> {
+    items.iter().position(|item| id_of(item) == browser_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gesture_target_follows_id_not_z_order() {
+        // (browser id) in z-order, topmost last; gesture started on id 7.
+        let mut pages = vec![3, 7];
+        assert_eq!(index_by_browser_id(&pages, 7, |p| *p), Some(1));
+        // A popup spawned mid-drag lands on top: still targets id 7.
+        pages.push(42);
+        assert_eq!(index_by_browser_id(&pages, 7, |p| *p), Some(1));
+        // Ctrl+W closed the dragged page: gesture must end, not move id 42.
+        pages.retain(|p| *p != 7);
+        assert_eq!(index_by_browser_id(&pages, 7, |p| *p), None);
+        // Last page closed mid-drag: no panic, just None.
+        pages.clear();
+        assert_eq!(index_by_browser_id(&pages, 7, |p| *p), None);
     }
 }
