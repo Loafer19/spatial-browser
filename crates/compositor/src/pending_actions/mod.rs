@@ -31,8 +31,8 @@ use cef_bridge::{
     PENDING_BOOKMARK, PENDING_CONTEXT_ACTION, PENDING_DOWNLOADS, PENDING_DOWNLOAD_ACTION,
     PENDING_FIND_ACTION, PENDING_FIND_RESULTS, PENDING_HISTORY_ACTION, PENDING_LOAD_PROGRESS,
     PENDING_LOAD_START, PENDING_LOAD_STATE, PENDING_OMNIBOX, PENDING_OMNIBOX_SUGGEST,
-    PENDING_PASSWORD_ACTION, PENDING_POPUPS, PENDING_SETTINGS_ACTION, PENDING_SWITCH,
-    PENDING_USERSCRIPT_ACTION, PENDING_VISITS, PENDING_WORKSPACE_ACTION,
+    PENDING_PASSWORD_ACTION, PENDING_POPUPS, PENDING_SETTINGS_ACTION, PENDING_USERSCRIPT_ACTION,
+    PENDING_VISITS, PENDING_WORKSPACE_ACTION,
 };
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -44,6 +44,7 @@ mod download_page;
 mod find;
 mod history_page;
 mod loads;
+mod palette;
 mod passwords;
 mod scripts_page;
 mod settings_page;
@@ -54,6 +55,8 @@ use passwords::*;
 
 // Used from app.rs / hotkeys.rs.
 pub(crate) use context::{dismiss_context_menu, open_context_menu, ContextHitRequest};
+pub(crate) use loads::page_title;
+pub(crate) use palette::{close_palette, palette_opened};
 pub(crate) use passwords::request_vault_lock;
 pub(crate) use settings_page::sync_blocklist_settings;
 
@@ -169,7 +172,7 @@ pub fn apply(session: &mut Session, gpu: &GpuState, mut s: Stores<'_>) {
     spawning::drain_omnibox(session, gpu, s.typed_history);
     spawning::drain_omnibox_suggest(session, s.history, s.typed_history);
 
-    spawning::drain_switcher(session, gpu);
+    palette::drain(session, gpu, &mut s);
 
     download_page::drain(session, s.downloads);
 

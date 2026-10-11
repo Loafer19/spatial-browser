@@ -1,4 +1,4 @@
-// Built-in list page actions (bookmarks, omnibox, switcher, downloads,
+// Built-in list page actions (bookmarks, omnibox, palette, downloads,
 // history, workspaces, settings, userscripts).
 
 use super::query::{percent_decode, query_param};
@@ -73,13 +73,56 @@ pub(super) fn parse_omnibox_submit(url: &str) -> Option<OmniboxSubmit> {
     })
 }
 
-thread_local! {
-    // (switcher browser_id, target browser_id)
-    pub static PENDING_SWITCH: RefCell<Option<(i32, i32)>> = const { RefCell::new(None) };
+/// Action from a `palette://...` navigation (Ctrl+K command palette).
+pub enum PaletteAction {
+    /// Front and pan to the open tile with this browser id.
+    Go(i32),
+    /// Run the palette command with this id (on the tile that was focused
+    /// when the palette opened).
+    Run(String),
+    /// Open a bookmark / history URL in a new tile.
+    Open(String),
+    /// Escape: close the palette.
+    Close,
 }
 
-pub(super) fn parse_switch_target(url: &str) -> Option<i32> {
-    url.strip_prefix("switcher://go/")?.parse().ok()
+thread_local! {
+    // (palette browser_id, action)
+    pub static PENDING_PALETTE_ACTION: RefCell<Option<(i32, PaletteAction)>> =
+        const { RefCell::new(None) };
+}
+
+/// Longest command id `palette://run/<id>` accepts.
+const MAX_COMMAND_ID_LEN: usize = 40;
+
+/// Public for the compositor's palette tests (ids must survive parsing).
+pub fn parse_palette_action(url: &str) -> Option<PaletteAction> {
+    let rest = url.strip_prefix("palette://")?;
+    if let Some(id) = rest.strip_prefix("go/") {
+        return id.trim_end_matches('/').parse().ok().map(PaletteAction::Go);
+    }
+    if let Some(id) = rest.strip_prefix("run/") {
+        let id = id.trim_end_matches('/');
+        let valid = !id.is_empty()
+            && id.len() <= MAX_COMMAND_ID_LEN
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+        return valid.then(|| PaletteAction::Run(id.to_string()));
+    }
+    // CEF may canonicalize `open?` to `open/?`.
+    if let Some(query) = rest
+        .strip_prefix("open?")
+        .or_else(|| rest.strip_prefix("open/?"))
+    {
+        return query_param(query, "url")
+            .filter(|u| !u.trim().is_empty())
+            .map(PaletteAction::Open);
+    }
+    if rest.trim_end_matches('/') == "close" {
+        return Some(PaletteAction::Close);
+    }
+    None
 }
 
 /// Action from a `download://...` navigation. Completed entries go by list

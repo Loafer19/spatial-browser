@@ -28,7 +28,7 @@ pub const HELP_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+B", "Bookmarks list"),
             ("Ctrl+J", "Downloads list"),
             ("Ctrl+H", "History list"),
-            ("Ctrl+K", "Switch to an open page"),
+            ("Ctrl+K", "Command palette"),
             ("Ctrl+Shift+W", "Workspace list"),
             ("Ctrl+N", "New workspace"),
             ("Ctrl+1–9", "Switch workspace slot"),

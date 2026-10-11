@@ -5,6 +5,7 @@ mod app;
 mod autofill_bridge;
 mod browser;
 mod clipboard_bridge;
+mod commands;
 mod external;
 mod file_dialog;
 mod frame_pacer;

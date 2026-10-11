@@ -124,7 +124,7 @@ impl Session {
     }
 
     /// A rect for a centered utility page (bookmarks/downloads/
-    /// history/help/switcher list) of `size` (physical pixels, already
+    /// history/help/palette list) of `size` (physical pixels, already
     /// clamped by the caller) — centered in the current view, converted
     /// to world space so it lands in view regardless of current
     /// pan/zoom. `screen_size` is the window's physical size.

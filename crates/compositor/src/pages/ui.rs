@@ -434,7 +434,7 @@ mod tests {
         let theme = THEMES[0];
         let html = Doc::new(&theme, "T <x>")
             .view("saved")
-            .escape("switcher://close")
+            .escape("palette://close")
             .render(html! { p { "hi" } });
         assert!(html.starts_with("<!DOCTYPE html>"));
         assert!(html.contains("<title>T &lt;x&gt;</title>"));
@@ -442,7 +442,7 @@ mod tests {
         assert!(html.contains("color-scheme:dark"));
         assert!(html.contains("window.ui = {"));
         assert!(html.contains("data-view=\"saved\""));
-        assert!(html.contains("data-escape=\"switcher://close\""));
+        assert!(html.contains("data-escape=\"palette://close\""));
         assert!(html.contains("id=\"ui-keys\""));
     }
 
