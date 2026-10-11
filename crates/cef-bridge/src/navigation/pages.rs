@@ -426,3 +426,40 @@ pub(super) fn parse_userscripts_action(url: &str) -> Option<UserscriptsPageActio
     }
     None
 }
+
+/// Action from the built-in site-info page (`site://…`). Carries the page
+/// URL it is about; only http(s) URLs are accepted.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SiteAction {
+    /// Remove every history visit on this URL's host.
+    ForgetHistory(String),
+    /// Bookmark this URL (with title), or remove its bookmark.
+    ToggleBookmark { url: String, title: String },
+}
+
+thread_local! {
+    pub static PENDING_SITE_ACTION: RefCell<Option<(i32, SiteAction)>> = const { RefCell::new(None) };
+}
+
+/// Longest URL a site action may carry.
+pub const MAX_SITE_URL: usize = 8192;
+
+pub fn parse_site_action(url: &str) -> Option<SiteAction> {
+    let rest = url.strip_prefix("site://")?;
+    let web_url = |query: &str| {
+        query_param(query, "url").filter(|u| {
+            (u.starts_with("https://") || u.starts_with("http://"))
+                && u.len() <= MAX_SITE_URL
+                && !u.chars().any(char::is_control)
+        })
+    };
+    if let Some(query) = action_query(rest, "forget-history") {
+        return web_url(query).map(SiteAction::ForgetHistory);
+    }
+    if let Some(query) = action_query(rest, "toggle-bookmark") {
+        let url = web_url(query)?;
+        let title = query_param(query, "title").unwrap_or_default();
+        return Some(SiteAction::ToggleBookmark { url, title });
+    }
+    None
+}

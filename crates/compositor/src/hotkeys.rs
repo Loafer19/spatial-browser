@@ -472,11 +472,47 @@ pub(crate) fn cycle_theme(session: &mut Session) {
 }
 
 pub(crate) fn open_help(session: &mut Session, gpu: &GpuState) {
+    let rect = centered_tile(session, gpu);
+    let url = pages::help::page_url(&session.theme());
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
+fn centered_tile(session: &Session, gpu: &GpuState) -> crate::output::Rect {
     let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.6).clamp(420.0, 720.0);
     let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
-    let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
-    let url = pages::help::page_url(&session.theme());
+    session.centered_rect((size.width as f32, size.height as f32), (w, h))
+}
+
+pub(crate) fn open_about(session: &mut Session, gpu: &GpuState) {
+    let rect = centered_tile(session, gpu);
+    let url = pages::about::page_url(&session.theme());
+    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
+/// Site info for the topmost web page (http/https only).
+pub(crate) fn open_site_info(
+    session: &mut Session,
+    gpu: &GpuState,
+    s: &crate::pending_actions::Stores<'_>,
+) {
+    let Some(url) = session
+        .pages()
+        .iter()
+        .rev()
+        .find(|p| !p.ephemeral)
+        .map(|p| p.url())
+        .filter(|u| u.starts_with("https://") || u.starts_with("http://"))
+    else {
+        log::info!("site info: no web page focused");
+        return;
+    };
+    let rect = centered_tile(session, gpu);
+    let url = pages::site_info::page_url(
+        &session.theme(),
+        &url,
+        &crate::pending_actions::site_context(s),
+    );
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 

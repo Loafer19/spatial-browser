@@ -54,6 +54,9 @@ pub(crate) enum Command {
     // Other
     CycleTheme,
     Help,
+    About,
+    /// Site info for the focused page.
+    SiteInfo,
 }
 
 impl Command {
@@ -76,6 +79,7 @@ impl Command {
                 | Command::ZoomOut
                 | Command::ZoomReset
                 | Command::BookmarkPage
+                | Command::SiteInfo
                 | Command::MoveToWorkspace(_)
                 | Command::ZoomToCanvas
         )
@@ -162,6 +166,8 @@ pub(crate) const PALETTE: &[PaletteCommand] = &[
     entry("scripts", Command::Scripts, "Scripts & styles", "userscripts userstyles css js", "Ctrl+Shift+U", Icon::Code, false),
     entry("lock-vault", Command::LockVault, "Lock password vault", "passwords secure", "Ctrl+Shift+L", Icon::Lock, false),
     entry("help", Command::Help, "Keyboard shortcuts", "help keys hotkeys", "F1", Icon::Info, false),
+    entry("site-info", Command::SiteInfo, "Site info", "page connection security permissions logins forget", "", Icon::Shield, false),
+    entry("about", Command::About, "About spatial-browser", "version cef chromium", "", Icon::Info, false),
 ];
 
 /// Do `command` on the focused (topmost) page / the canvas.
@@ -228,6 +234,8 @@ pub(crate) fn run(command: Command, session: &mut Session, gpu: &GpuState, s: &m
         Command::ResetCanvas => session.reset_viewport(),
         Command::CycleTheme => hotkeys::cycle_theme(session),
         Command::Help => hotkeys::open_help(session, gpu),
+        Command::About => hotkeys::open_about(session, gpu),
+        Command::SiteInfo => hotkeys::open_site_info(session, gpu, s),
     }
 }
 

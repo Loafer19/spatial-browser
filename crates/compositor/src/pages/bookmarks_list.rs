@@ -19,6 +19,9 @@ const CSS: &str = r#"
 .tree a:hover { background: var(--surface); }
 .tree a.on { background: var(--accent); color: var(--accent-fg); }
 .row.out { display: none; }
+.layout > div { min-width: 0; }
+.row .view { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.row .view .title, .row .view .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .sel { width: 16px; height: 16px; flex-shrink: 0; accent-color: var(--accent); }
 .row .folder-tag { font-size: 11px; }
 .edit { display: flex; align-items: center; gap: 4px; margin: 0; }
@@ -38,6 +41,8 @@ const SCRIPT: &str = r#"
   var cur = '';            // '' all · '\u0000' unfiled · path
   var armed = 0, armTimer = 0;
   function enc(s) { return encodeURIComponent(s); }
+  // Tree link → folder key ("Unfiled" has no data-folder: NUL can't live in HTML).
+  function key(a) { return 'unfiled' in a.dataset ? '\u0000' : a.dataset.folder; }
   function inFolder(f, root) { return f === root || f.indexOf(root + '/') === 0; }
   function selected() {
     return Array.prototype.map.call(document.querySelectorAll('.row .sel:checked'),
@@ -53,7 +58,7 @@ const SCRIPT: &str = r#"
   }
   function show(folder) {
     cur = folder;
-    document.querySelectorAll('.tree a').forEach(function (a) { a.classList.toggle('on', a.dataset.folder === folder); });
+    document.querySelectorAll('.tree a').forEach(function (a) { a.classList.toggle('on', key(a) === folder); });
     document.querySelectorAll('.list .row').forEach(function (r) {
       var f = r.dataset.folder || '';
       var hit = folder === '' || (folder === '\u0000' ? f === '' : inFolder(f, folder));
@@ -70,7 +75,7 @@ const SCRIPT: &str = r#"
   }
   document.addEventListener('click', function (e) {
     var t = e.target.closest && e.target.closest('.tree a');
-    if (t) { e.preventDefault(); show(t.dataset.folder); return; }
+    if (t) { e.preventDefault(); show(key(t)); return; }
     var r = e.target.closest && e.target.closest('[data-rename]');
     if (r) { e.preventDefault(); startRename(r.closest('.row')); return; }
     var del = e.target.closest && e.target.closest('[data-delete-selected]');
@@ -125,14 +130,15 @@ const SCRIPT: &str = r#"
   }, true);
   var saved = '';
   try { saved = sessionStorage.getItem('bm-folder') || ''; } catch (e) {}
-  if (saved && !document.querySelector('.tree a[data-folder="' + CSS.escape(saved) + '"]')) saved = '';
+  if (saved && !Array.prototype.some.call(document.querySelectorAll('.tree a'), function (a) { return key(a) === saved; })) saved = '';
   window.addEventListener('load', function () { show(saved); syncSel(); });
 })();
 "#;
 
-fn tree_item(folder: &str, label: &str, depth: usize, count: usize, icon: Icon) -> Markup {
+/// `folder`: `Some(path)` (`""` = all), `None` = unfiled.
+fn tree_item(folder: Option<&str>, label: &str, depth: usize, count: usize, icon: Icon) -> Markup {
     html! {
-        a href="#" data-folder=(folder) title=(label)
+        a href="#" data-folder=[folder] data-unfiled[folder.is_none()] title=(label)
             style=(format!("padding-left:{}px", 8 + depth * 14)) {
             (icon) span class="name" { (label) } span class="count" { (count) }
         }
@@ -194,12 +200,12 @@ pub(crate) fn page_url(theme: &Theme, marks: &[Bookmark], status: Option<&str>) 
             }
             div class="layout" {
                 nav class="tree" aria-label="Folders" {
-                    (tree_item("", "All bookmarks", 0, marks.len(), Icon::Star))
-                    (tree_item("\u{0}", "Unfiled", 0, unfiled, Icon::File))
+                    (tree_item(Some(""), "All bookmarks", 0, marks.len(), Icon::Star))
+                    (tree_item(None, "Unfiled", 0, unfiled, Icon::File))
                     @for (path, count) in &tree {
                         @let depth = path.matches('/').count();
                         @let name = path.rsplit('/').next().unwrap_or(path);
-                        (tree_item(path, name, depth, *count, Icon::Folder))
+                        (tree_item(Some(path), name, depth, *count, Icon::Folder))
                     }
                 }
                 div {

@@ -206,7 +206,7 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     true
 }
 
-fn url_matches_script(url: &str, ephemeral: bool, script: &UserScript) -> bool {
+pub(crate) fn url_matches_script(url: &str, ephemeral: bool, script: &UserScript) -> bool {
     if !script.enabled {
         return false;
     }

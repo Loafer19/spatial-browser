@@ -6,6 +6,7 @@
 // `js_string_literal` for JS strings, `url_component` for
 // `scheme://…?k=v` values, `ui::json_script` for data in `<script>`.
 
+pub mod about;
 pub mod bookmarks_list;
 pub mod context_menu;
 pub mod downloads_list;
@@ -19,6 +20,7 @@ pub mod palette;
 pub mod passwords_list;
 pub mod save_prompt;
 pub mod settings_list;
+pub mod site_info;
 pub mod ui;
 pub mod userscripts_list;
 pub mod workspace_list;
@@ -26,6 +28,7 @@ pub mod workspace_list;
 /// Built-in page kinds — the `<kind>` in `spatial://page/<kind>/<token>`.
 pub(crate) mod kind {
     /// Empty page a pre-started browser idles on (browser::warm pool).
+    pub const ABOUT: &str = "about";
     pub const BLANK: &str = "blank";
     pub const BOOKMARKS: &str = "bookmarks";
     pub const CONTEXT_MENU: &str = "context-menu";
@@ -37,6 +40,7 @@ pub(crate) mod kind {
     pub const PALETTE: &str = "palette";
     pub const SAVE_PROMPT: &str = "save-prompt";
     pub const SETTINGS: &str = "settings";
+    pub const SITE: &str = "site";
     pub const USERSCRIPTS: &str = "userscripts";
     pub const VAULT_LIST: &str = "vault-list";
     pub const VAULT_UNLOCK: &str = "vault-unlock";

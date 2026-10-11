@@ -298,3 +298,29 @@ fn bookmark_manager_actions() {
         assert!(parse_bookmark_action(bad).is_none(), "{bad}");
     }
 }
+
+#[test]
+fn site_actions_only_carry_web_urls() {
+    assert_eq!(
+        parse_site_action("site://forget-history?url=https%3A%2F%2Fa.test%2Fx"),
+        Some(SiteAction::ForgetHistory("https://a.test/x".into()))
+    );
+    assert_eq!(
+        parse_site_action("site://toggle-bookmark/?url=http%3A%2F%2Fb.test%2F&title=B%20%3C"),
+        Some(SiteAction::ToggleBookmark {
+            url: "http://b.test/".into(),
+            title: "B <".into()
+        })
+    );
+    for bad in [
+        "site://forget-history?url=javascript%3Aalert(1)",
+        "site://forget-history?url=spatial%3A%2F%2Fpage%2Fx%2Fy",
+        "site://forget-history?url=file%3A%2F%2F%2Fetc",
+        "site://forget-history?url=https%3A%2F%2Fa.test%2F%0A",
+        "site://forget-history",
+        "site://toggle-bookmark?title=x",
+        "site://nope?url=https%3A%2F%2Fa.test",
+    ] {
+        assert_eq!(parse_site_action(bad), None, "{bad}");
+    }
+}

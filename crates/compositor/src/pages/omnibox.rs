@@ -117,8 +117,8 @@ const CSS: &str = r#"
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .omni:focus-within { border-color: var(--accent); box-shadow: var(--ring); }
 .omni svg { width: 22px; height: 22px; opacity: .6; flex-shrink: 0; }
-.omni input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--fg);
-  font: inherit; font-size: 18px; }
+.omni input { flex: 1; min-width: 0; border: 0 !important; outline: 0; box-shadow: none !important;
+  background: transparent !important; color: var(--fg); font: inherit; font-size: 18px; padding: 0; height: auto; }
 #suggest { margin-top: 6px; }
 .sg { display: flex; gap: 12px; align-items: baseline; padding: 8px 16px; border-radius: var(--radius-sm);
   cursor: pointer; overflow: hidden; white-space: nowrap; }

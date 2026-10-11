@@ -101,6 +101,10 @@ wrap_request_handler! {
                 PENDING_WORKSPACE_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
                 return true as _;
             }
+            if let Some(action) = parse_site_action(&url) {
+                PENDING_SITE_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
+                return true as _;
+            }
             if let Some(action) = parse_settings_action(&url) {
                 PENDING_SETTINGS_ACTION.with_borrow_mut(|pending| *pending = Some((id, action)));
                 return true as _;

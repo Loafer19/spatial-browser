@@ -174,6 +174,23 @@ fn samples(theme: &Theme) -> Vec<(&'static str, String)> {
             "palette-empty",
             palette::page_url(theme, &[], &[], &[], "https://duckduckgo.com/?q="),
         ),
+        ("about", about::page_url(theme)),
+        (
+            "site-info",
+            site_info::page_url(
+                theme,
+                "https://github.com/Loafer19/spatial-browser/pulls",
+                &site_info::SiteContext {
+                    history: &history(),
+                    bookmarks: &bookmarks(),
+                    vault: None,
+                    scripts: &[],
+                    styles: &[],
+                    settings: &crate::persistence::settings::AppSettings::default(),
+                    now: crate::persistence::vault::now_unix(),
+                },
+            ),
+        ),
         (
             "omnibox",
             omnibox::page_url(

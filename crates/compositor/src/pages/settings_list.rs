@@ -28,7 +28,9 @@ body.searching .section-block > h2 .tab-name { display: inline; }
 .row .switch { pointer-events: none; }
 .row .check { color: var(--accent); display: inline-flex; width: 18px; height: 18px; }
 .row .check svg { width: 18px; height: 18px; }
-.inline-form { display: flex; gap: 8px; margin: 6px 0 10px; }
+.inline-form { display: flex; gap: 8px; margin: 6px 0 4px; }
+.inline-form.row { padding: 0; background: none; border: 0; }
+.section-block { margin-bottom: 18px; }
 .inline-form input { flex: 1; min-width: 0; }
 .note { margin: 4px 2px 10px; }
 "#;
