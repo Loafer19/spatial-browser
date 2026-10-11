@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.10.0
 
 Built-in pages overhaul: every `spatial://` page now uses one design system
 (ui.css themed by the current theme, shared keyboard model, maud templates
