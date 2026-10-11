@@ -64,8 +64,7 @@ struct LegacyEntry {
 }
 
 fn path() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME not set");
-    PathBuf::from(home).join(".config/spatial-browser/workspaces.json")
+    crate::persistence::config_path("workspaces.json")
 }
 
 impl WorkspaceStore {

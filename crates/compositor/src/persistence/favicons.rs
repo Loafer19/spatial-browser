@@ -24,8 +24,7 @@ thread_local! {
 }
 
 fn dir() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME not set");
-    PathBuf::from(home).join(".config/spatial-browser/favicons")
+    crate::persistence::config_path("favicons")
 }
 
 /// Cache key for a page URL or bare host; None for non-web input.

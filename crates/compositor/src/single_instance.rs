@@ -17,8 +17,7 @@ const MAX_URLS: usize = 20;
 const MAX_MESSAGE: u64 = 64 * 1024;
 
 fn socket_path() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME not set");
-    PathBuf::from(home).join(".config/spatial-browser/instance.sock")
+    crate::persistence::config_path("instance.sock")
 }
 
 /// http(s) URLs among the launch arguments (CEF switches are skipped).

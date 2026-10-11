@@ -77,8 +77,7 @@ impl AppSettings {
 }
 
 fn path() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME not set");
-    PathBuf::from(home).join(".config/spatial-browser/settings.json")
+    crate::persistence::config_path("settings.json")
 }
 
 pub fn load() -> AppSettings {

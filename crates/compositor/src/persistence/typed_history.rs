@@ -11,8 +11,7 @@ struct TypedHistoryFile {
 }
 
 fn path() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME not set");
-    PathBuf::from(home).join(".config/spatial-browser/typed_history.json")
+    crate::persistence::config_path("typed_history.json")
 }
 
 /// Returns an empty list if there's no file yet or it fails to parse.
