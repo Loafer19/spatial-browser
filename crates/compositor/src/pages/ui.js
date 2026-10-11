@@ -2,9 +2,10 @@
 // data and theme hooks. Inlined into every page by `ui::document`.
 //
 // Rows: `.row[data-open]` (Enter / click opens that URL) or `.row[data-nav]`
-// (selectable only). `data-delete` on a row: Delete removes it (after
-// `data-confirm`, if set). `input[data-filter]` filters rows client-side;
-// `body[data-escape]` is where Escape goes when nothing else wants it.
+// (selectable only). `data-delete` on a row: Delete removes it (with a
+// second Delete when `data-confirm` is set — no window.confirm in OSR).
+// `input[data-filter]` filters rows client-side; `body[data-escape]` is
+// where Escape goes when nothing else wants it.
 // Rust pushes data with `ui.push(name, value)`; pages subscribe with
 // `ui.on(name, fn)` (pushes before subscription are kept and replayed).
 (function () {
@@ -39,9 +40,20 @@
     else if (row.tagName === 'A' && row.href) go(row.href);
   }
 
+  // OSR tiles have no JS dialog handler (window.confirm never shows), so a
+  // row with `data-confirm` needs a second Delete within 2.5 s.
+  var armed = null;
+  var armedTimer = 0;
   function deleteRow(row) {
     if (!row || !row.dataset.delete) return;
-    if (row.dataset.confirm && !window.confirm(row.dataset.confirm)) return;
+    if (row.dataset.confirm && armed !== row) {
+      armed = row;
+      clearTimeout(armedTimer);
+      armedTimer = setTimeout(function () { armed = null; }, 2500);
+      window.ui.toast(row.dataset.confirm + ' \u2014 press Delete again');
+      return;
+    }
+    armed = null;
     go(row.dataset.delete);
   }
 
