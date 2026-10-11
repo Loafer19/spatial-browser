@@ -102,11 +102,15 @@ fn osr_setup(
         external_begin_frame_enabled: true as _,
         ..Default::default()
     };
-    if shared_texture {
-        log::info!("CEF OSR: shared GPU texture enabled");
-    } else {
-        log::info!("CEF OSR: CPU paint path");
-    }
+    // Per browser: debug only (startup options are logged once at info).
+    log::debug!(
+        "CEF OSR: {}",
+        if shared_texture {
+            "shared GPU texture"
+        } else {
+            "CPU paint path"
+        }
+    );
     let (render_handler, handles) = OsrRenderHandler::new(
         device.clone(),
         queue.clone(),
