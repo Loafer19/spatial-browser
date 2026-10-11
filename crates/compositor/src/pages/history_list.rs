@@ -1,17 +1,18 @@
 // Ctrl+H history list. Group/time formatting is client-side (local TZ via JS Date;
 // avoids Rust timezone crates). `history://…` → PENDING_HISTORY_ACTION.
 
-use super::{LIST_NAV_SCRIPT, TRASH_SVG_PATH};
+use super::ui::{self, html, Icon};
 use crate::output::Theme;
 use crate::persistence::bookmarks::host_of;
 use crate::persistence::history::HistoryEntry;
 
-/// Plain const; rows are built client-side from Rust-provided pages
-/// (`histResults`), local-time timestamps, client-side regrouping.
-const SCRIPT: &str = r#"<script>
+/// Rows are built client-side from Rust-provided pages (`histResults`),
+/// with local-time timestamps and client-side regrouping.
+const SCRIPT: &str = r#"
 function pad(n) { return String(n).padStart(2, '0'); }
 
 let loaded = 0, total = 0, query = '', waiting = false, searchTimer = null;
+let groupMode = 'flat';
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -23,58 +24,60 @@ function el(tag, cls, text) {
 function shortUrl(r) {
   const f = document.createDocumentFragment();
   if (r.http) {
-    const b = el('span', 'hist-http', 'http');
+    const b = el('span', 'badge danger http', 'http');
     b.title = 'Not encrypted (http)';
     f.appendChild(b);
   }
-  f.appendChild(el('span', 'hist-host', r.host));
-  f.appendChild(el('span', 'hist-rest', r.rest));
+  f.appendChild(el('span', 'h-host', r.host));
+  f.appendChild(el('span', 'h-rest', r.rest));
   return f;
 }
 
 function makeRow(r, icons) {
-  const row = el('div', 'hist-row list-row');
+  const row = el('div', 'row');
   row.dataset.timestamp = r.t;
   row.dataset.host = r.host;
   row.dataset.open = 'history://open/' + r.i;
+  // A collapsed row stands for every visit of its URL.
+  row.dataset.delete = (r.n > 1 ? 'history://remove-all/' : 'history://remove/') + r.i;
+  if (r.n > 1) row.dataset.confirm = 'Remove all ' + r.n + ' visits';
   row.title = r.url;
-  row.onclick = () => { location = 'history://open/' + r.i; };
-  const fav = el('span', 'fav');
-  fav.appendChild(el('span', 'fav-letter', (r.host[0] || '?').toUpperCase()));
+  const fav = el('span', 'favicon', (r.host.replace(/[^\p{L}\p{N}]/u, '')[0] || '?').toUpperCase());
+  fav.setAttribute('aria-hidden', 'true');
   const icon = icons[r.host];
   if (typeof icon === 'string' && icon.startsWith('data:image/png;base64,')) {
-    const img = el('img');
-    img.width = 20; img.height = 20; img.src = icon;
-    fav.appendChild(img);
+    const img = el('img'); img.alt = ''; img.src = icon; fav.appendChild(img);
   }
   row.appendChild(fav);
-  const text = el('span', 'hist-text');
+  const main = el('div', 'main');
   if (r.title) {
-    text.appendChild(el('span', 'hist-title', r.title));
-    const u = el('span', 'hist-url');
+    main.appendChild(el('span', 'title', r.title));
+    const u = el('span', 'sub');
     u.appendChild(shortUrl(r));
-    text.appendChild(u);
+    main.appendChild(u);
   } else {
-    const t = el('span', 'hist-title');
+    const t = el('span', 'title');
     t.appendChild(shortUrl(r));
-    text.appendChild(t);
+    main.appendChild(t);
   }
-  row.appendChild(text);
+  row.appendChild(main);
   if (r.n > 1) {
-    const c = el('span', 'hist-count hist-when', '\u00d7' + r.n);
+    const c = el('span', 'badge', '\u00d7' + r.n);
     c.title = r.n + ' visits';
     row.appendChild(c);
   }
   const d = new Date(r.t * 1000);
   row.dataset.date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  row.appendChild(el('span', 'hist-date hist-when', row.dataset.date));
-  row.appendChild(el('span', 'hist-time hist-when', `${pad(d.getHours())}:${pad(d.getMinutes())}`));
+  const meta = el('span', 'meta');
+  meta.appendChild(el('span', 'h-date', row.dataset.date + ' '));
+  meta.appendChild(el('span', '', `${pad(d.getHours())}:${pad(d.getMinutes())}`));
+  row.appendChild(meta);
+  const actions = el('div', 'actions');
   const remove = document.getElementById('trash-tpl').content.firstElementChild.cloneNode(true);
-  // A collapsed row stands for every visit of its URL.
-  remove.href = (r.n > 1 ? 'history://remove-all/' : 'history://remove/') + r.i;
-  if (r.n > 1) remove.title = 'Remove all ' + r.n + ' visits';
-  remove.onclick = e => e.stopPropagation();
-  row.appendChild(remove);
+  remove.href = row.dataset.delete;
+  remove.title = r.n > 1 ? 'Remove all ' + r.n + ' visits' : 'Remove from history';
+  actions.appendChild(remove);
+  row.appendChild(actions);
   return row;
 }
 
@@ -94,8 +97,9 @@ function histResults(res) {
   more.textContent = `Show more (${total - loaded} left)`;
   document.getElementById('empty').hidden = !(total === 0 && query === '');
   document.getElementById('no-match').hidden = !(total === 0 && query !== '');
+  document.querySelectorAll('[data-total]').forEach(e => { e.textContent = total; });
   applyGrouping(groupMode);
-  if (res.offset === 0) setListActive(0);
+  if (res.offset === 0) ui.setActive(0, false);
 }
 
 function requestRows(offset) {
@@ -104,11 +108,7 @@ function requestRows(offset) {
     (groupMode === 'flat' ? '&collapse=1' : '');
 }
 
-function showMore() {
-  if (!waiting && loaded < total) requestRows(loaded);
-}
-
-let groupMode = 'flat';
+function showMore() { if (!waiting && loaded < total) requestRows(loaded); }
 
 // "Recent" lists each URL once (latest visit, ×N); the grouped views list
 // every visit, so switching between them reloads rows from Rust.
@@ -116,28 +116,18 @@ function setMode(mode) {
   const reload = (mode === 'flat') !== (groupMode === 'flat');
   groupMode = mode;
   if (reload) requestRows(0); else applyGrouping(mode);
-  document.querySelectorAll('.group-toggle button').forEach(b => {
-    b.classList.toggle('active', b.dataset.mode === mode);
-  });
 }
 
 function applyGrouping(mode) {
   groupMode = mode;
   const container = document.getElementById('rows');
-  const rows = Array.from(container.querySelectorAll('.hist-row'));
-  container.querySelectorAll('.hist-header').forEach(h => h.remove());
+  const rows = Array.from(container.querySelectorAll('.row'));
+  container.querySelectorAll('.h-group').forEach(h => h.remove());
   container.classList.toggle('mode-date', mode === 'date');
-  document.querySelectorAll('.group-toggle button').forEach(b => {
-    b.classList.toggle('active', b.dataset.mode === mode);
+  document.querySelectorAll('[data-mode]').forEach(b => {
+    if (b.dataset.mode === mode) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
-
-  const addHeader = text => {
-    const h = document.createElement('div');
-    h.className = 'hist-header';
-    h.textContent = text;
-    container.appendChild(h);
-  };
-
+  const addHeader = text => container.appendChild(el('h2', 'h-group', text));
   if (mode === 'flat') {
     rows.forEach(r => container.appendChild(r));
   } else if (mode === 'date') {
@@ -160,30 +150,42 @@ function applyGrouping(mode) {
 
 // Search runs in Rust over the whole history (every word must appear in
 // the title or URL); debounced so typing doesn't flood navigations.
-function filterRows(value) {
+const box = document.querySelector('.search input');
+box.addEventListener('input', () => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => { query = value.trim(); requestRows(0); }, 150);
-}
-
-function searchKey(event) {
-  if (event.key === 'ArrowDown') { event.preventDefault(); setListActive(listActiveIndex + 1); }
-  else if (event.key === 'ArrowUp') { event.preventDefault(); setListActive(listActiveIndex - 1); }
-  else if (event.key === 'Enter') {
-    const row = listRows()[listActiveIndex];
-    if (row) location = row.dataset.open;
-  } else if (event.key === 'Escape' && event.target.value) {
-    event.preventDefault(); event.target.value = ''; filterRows('');
+  searchTimer = setTimeout(() => { query = box.value.trim(); requestRows(0); }, 150);
+});
+box.addEventListener('keydown', e => {
+  const list = ui.rows();
+  const i = list.indexOf(ui.active());
+  if (e.key === 'ArrowDown') { e.preventDefault(); ui.setActive(i + 1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); ui.setActive(i - 1); }
+  else if (e.key === 'Enter') { e.preventDefault(); const r = ui.active(); if (r) ui.go(r.dataset.open); }
+  else if (e.key === 'Escape' && box.value) {
+    e.preventDefault(); e.stopPropagation(); box.value = ''; query = ''; requestRows(0);
   }
-}
+});
+document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', e => {
+  e.preventDefault(); setMode(b.dataset.mode);
+}));
+document.getElementById('more').addEventListener('click', showMore);
+histResults(JSON.parse(document.getElementById('hist-initial').textContent));
+// Load the next page when "Show more" scrolls into view.
+new IntersectionObserver(entries => {
+  if (entries.some(e => e.isIntersecting)) showMore();
+}).observe(document.getElementById('more'));
+"#;
 
-function initHistory() {
-  histResults(INITIAL);
-  // Load the next page when the "Show more" button scrolls into view.
-  new IntersectionObserver(entries => {
-    if (entries.some(e => e.isIntersecting)) showMore();
-  }).observe(document.getElementById('more'));
-}
-</script>"#;
+const CSS: &str = r#"
+#rows { display: flex; flex-direction: column; gap: 2px; }
+#rows .row { cursor: pointer; }
+.h-rest { opacity: .6; }
+.h-group { margin-top: 16px; }
+#rows.mode-date .h-date { display: none; }
+.badge.http { margin-right: 6px; font-size: 10px; }
+#more { display: block; margin: 16px auto 0; }
+#more[hidden] { display: none; }
+"#;
 
 /// Rows per `history://search` answer (and on first paint).
 pub(crate) const PAGE_ROWS: usize = 100;
@@ -255,84 +257,39 @@ pub(crate) fn results_json(
     .to_string()
 }
 
-/// JSON made safe to sit inside a `<script>` element.
-fn script_json(json: &str) -> String {
-    json.replace('<', "\\u003c")
-        .replace('>', "\\u003e")
-        .replace('&', "\\u0026")
-}
-
 /// Builds the history-list page's spatial:// URL. `pub(crate)` so app.rs
 /// can rebuild this page in place after a remove/clear. Only the first
 /// PAGE_ROWS rows are embedded; the rest arrive via `history://search`.
 pub(crate) fn page_url(theme: &Theme, history: &[HistoryEntry]) -> String {
     // Opens on "Recent", which shows each URL once.
-    let initial = script_json(&results_json(history, "", 0, true));
-    let html = format!(
-        "{script}{nav_script}<script>const INITIAL = {initial};</script>\
-         <style>\
-         .hist-row{{display:flex;align-items:center;gap:10px;padding:8px 14px;cursor:pointer;\
-         background:{card_bg};border-radius:8px;border:1px solid {card_border}}}\
-         .hist-row:hover,.hist-row.list-active{{background:{key_bg}!important}}\
-         .hist-row:hover span,.hist-row.list-active span{{color:{key_fg}!important}}\
-         {icon_hover}\
-         .fav{{position:relative;width:20px;height:20px;flex-shrink:0}}\
-         .fav-letter,.fav img{{position:absolute;inset:0;border-radius:4px}}\
-         .fav-letter{{background:{key_bg};color:{key_fg};display:flex;align-items:center;\
-         justify-content:center;font-size:11px;font-weight:700}}\
-         .hist-when{{flex-shrink:0;color:{fg};opacity:0.6;font-size:12px;white-space:nowrap}}\
-         .hist-header{{margin:16px 0 0;font-size:13px;text-transform:uppercase;\
-         letter-spacing:0.05em;opacity:0.8;color:{heading}}}\
-         .hist-header:first-child{{margin-top:0}}\
-         #rows.mode-date .hist-date{{display:none}}\
-         .hist-text{{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}}\
-         .hist-title,.hist-url{{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:{fg}}}\
-         .hist-url{{font-size:12px;opacity:0.65}}\
-         .hist-rest{{opacity:0.55}}\
-         .hist-http{{font-size:10px;padding:1px 5px;margin-right:6px;border-radius:4px;\
-         border:1px solid {danger};color:{danger}!important;vertical-align:1px}}\
-         #q{{width:100%;box-sizing:border-box;background:{card_bg};color:{fg};\
-         border:1px solid {card_border};border-radius:8px;padding:8px 12px;font:inherit;\
-         margin-bottom:12px}}\
-         .group-toggle button,#more{{background:{card_bg};color:{fg};opacity:0.7;\
-         border:1px solid {card_border};border-radius:6px;padding:5px 12px;\
-         font:inherit;font-size:13px;cursor:pointer}}\
-         #more{{display:block;margin:16px auto 0}}#more[hidden]{{display:none}}\
-         .group-toggle button.active{{background:{key_bg};color:{key_fg};opacity:1;\
-         border-color:{key_bg}}}\
-         </style>\
-         {body_open}\
-         <template id=\"trash-tpl\">{trash}</template>\
-         <div style=\"display:flex;align-items:baseline;justify-content:space-between;\
-         margin:0 0 16px\">\
-         <h1 style=\"margin:0;color:{heading};font-size:20px\">History</h1>\
-         <a href=\"history://clear\" style=\"color:{fg};opacity:0.6;font-size:13px\">Clear all</a>\
-         </div>\
-         <input id=\"q\" type=\"search\" placeholder=\"Search all history (title or URL)\" autofocus \
-         oninput=\"filterRows(this.value)\" onkeydown=\"searchKey(event)\">\
-         <div class=\"group-toggle\" style=\"display:flex;gap:6px;margin-bottom:16px\">\
-         <button data-mode=\"flat\" onclick=\"setMode('flat')\" class=\"active\">Recent</button>\
-         <button data-mode=\"date\" onclick=\"setMode('date')\">By day</button>\
-         <button data-mode=\"host\" onclick=\"setMode('host')\">By site</button>\
-         </div>\
-         <div id=\"empty\" hidden>{empty}</div>\
-         <div id=\"rows\" style=\"display:flex;flex-direction:column;gap:8px\"></div>\
-         <p id=\"no-match\" hidden style=\"opacity:0.6\">No matches.</p>\
-         <button id=\"more\" hidden onclick=\"showMore()\">Show more</button></body>",
-        script = SCRIPT,
-        nav_script = LIST_NAV_SCRIPT,
-        icon_hover = super::icon_button_hover_css(theme),
-        body_open = super::body_open(theme, "onload=\"initHistory()\""),
-        trash = super::icon_link_button("#", "Remove from list", TRASH_SVG_PATH, "", theme),
-        empty = super::empty_state(theme, "No history yet."),
-        key_bg = theme.help_key_bg,
-        key_fg = theme.help_key_fg,
-        fg = theme.help_fg,
-        heading = theme.help_heading,
-        card_bg = theme.help_card_bg,
-        card_border = theme.help_card_border,
-        danger = theme.help_danger,
-    );
+    let initial: serde_json::Value =
+        serde_json::from_str(&results_json(history, "", 0, true)).unwrap_or_default();
+    let body = html! {
+        main class="page" {
+            (ui::head("History", Some(html! {
+                span data-total { (history.len()) } " entries · kept 90 days · " kbd { "Del" } " remove"
+            }), html! {
+                (ui::search("q", "", "Search all history (title or URL)", None))
+                a class="btn sm ghost danger" href="history://clear" { (Icon::Trash) "Clear all" }
+            }))
+            nav class="tabs" {
+                a class="tab" href="#" data-mode="flat" aria-current="page" { "Recent" }
+                a class="tab" href="#" data-mode="date" { "By day" }
+                a class="tab" href="#" data-mode="host" { "By site" }
+            }
+            template id="trash-tpl" { (ui::icon_link("#", "Remove from history", Icon::Trash, true)) }
+            div id="empty" hidden { (ui::empty(Icon::History, html! { "No history yet." })) }
+            div id="rows" class="list" {}
+            div id="no-match" hidden { (ui::empty(Icon::Search, html! { "No matches." })) }
+            button id="more" class="btn sm" type="button" hidden { "Show more" }
+            (ui::json_script("hist-initial", &initial))
+        }
+    };
+    let html = ui::Doc::new(theme, "History")
+        .no_row()
+        .css(CSS)
+        .script(SCRIPT)
+        .render(body);
     super::serve(super::kind::HISTORY, html)
 }
 

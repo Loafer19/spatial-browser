@@ -197,48 +197,10 @@ pub(crate) fn body_open(theme: &Theme, extra_attrs: &str) -> String {
     )
 }
 
-/// Empty-list placeholder (`text` is app-authored markup, not escaped).
-pub(crate) fn empty_state(theme: &Theme, text: &str) -> String {
-    format!(
-        "<p style=\"color:{fg};opacity:0.7\">{text}</p>",
-        fg = theme.help_fg
-    )
-}
-
 pub(crate) const TRASH_SVG_PATH: &str =
     "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z";
 
 pub(crate) const CHECKMARK_SVG_PATH: &str = "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z";
-
-/// Per-row icon `<a href>` (`extra_attrs` e.g. stopPropagation on delete).
-pub(crate) fn icon_link_button(
-    href: &str,
-    title: &str,
-    svg_path: &str,
-    extra_attrs: &str,
-    theme: &Theme,
-) -> String {
-    format!(
-        "<a href=\"{href}\" title=\"{title}\" class=\"bm-icon-btn\" {extra_attrs} \
-         style=\"flex-shrink:0;margin-left:4px;display:flex;align-items:center;\
-         justify-content:center;width:26px;height:26px;border-radius:6px;\
-         background:{bg};color:{fg};opacity:0.7;text-decoration:none\">\
-         <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"currentColor\">\
-         <path d=\"{svg_path}\"/></svg></a>",
-        bg = theme.help_bg,
-        fg = theme.help_fg,
-    )
-}
-
-/// `.bm-icon-btn:hover` rule body for splicing into page `<style>`.
-pub(crate) fn icon_button_hover_css(theme: &Theme) -> String {
-    format!(
-        ".bm-icon-btn:hover{{background:{key_bg}!important;color:{key_fg}!important;\
-         opacity:1!important}}",
-        key_bg = theme.help_key_bg,
-        key_fg = theme.help_key_fg,
-    )
-}
 
 #[cfg(test)]
 pub(crate) mod tests {
