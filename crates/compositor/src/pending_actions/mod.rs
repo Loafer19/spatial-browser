@@ -16,7 +16,7 @@ use crate::persistence::{
     favicons,
     history::{self, HistoryEntry},
     settings::{self, AppSettings},
-    typed_history,
+    suggest, typed_history,
     vault::{self, VaultEntry, VaultSession},
     vault_csv,
     workspaces::{self, WorkspaceRuntime, WorkspaceStore},
@@ -30,9 +30,9 @@ use cef_bridge::{
     PasswordAction, SettingsPageAction, UserscriptsPageAction, WorkspacePageAction,
     PENDING_BOOKMARK, PENDING_CONTEXT_ACTION, PENDING_DOWNLOADS, PENDING_DOWNLOAD_ACTION,
     PENDING_FIND_ACTION, PENDING_FIND_RESULTS, PENDING_HISTORY_ACTION, PENDING_LOAD_PROGRESS,
-    PENDING_LOAD_START, PENDING_LOAD_STATE, PENDING_OMNIBOX, PENDING_PASSWORD_ACTION,
-    PENDING_POPUPS, PENDING_SETTINGS_ACTION, PENDING_SWITCH, PENDING_USERSCRIPT_ACTION,
-    PENDING_VISITS, PENDING_WORKSPACE_ACTION,
+    PENDING_LOAD_START, PENDING_LOAD_STATE, PENDING_OMNIBOX, PENDING_OMNIBOX_SUGGEST,
+    PENDING_PASSWORD_ACTION, PENDING_POPUPS, PENDING_SETTINGS_ACTION, PENDING_SWITCH,
+    PENDING_USERSCRIPT_ACTION, PENDING_VISITS, PENDING_WORKSPACE_ACTION,
 };
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -167,6 +167,7 @@ pub fn apply(session: &mut Session, gpu: &GpuState, mut s: Stores<'_>) {
     bookmark_page::drain(session, gpu, s.bookmarks);
 
     spawning::drain_omnibox(session, gpu, s.typed_history);
+    spawning::drain_omnibox_suggest(session, s.history, s.typed_history);
 
     spawning::drain_switcher(session, gpu);
 

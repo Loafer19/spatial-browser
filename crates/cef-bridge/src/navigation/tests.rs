@@ -127,3 +127,17 @@ fn history_search_action() {
     ));
     assert!(parse_history_action("history://searching").is_none());
 }
+
+#[test]
+fn omnibox_suggest_action() {
+    assert_eq!(
+        parse_omnibox_suggest("omnibox://suggest?q=gith%20ub").as_deref(),
+        Some("gith ub")
+    );
+    assert_eq!(
+        parse_omnibox_suggest("omnibox://suggest/?q=x").as_deref(),
+        Some("x")
+    );
+    assert!(parse_omnibox_suggest("omnibox://go?q=x&url=y").is_none());
+    assert!(parse_omnibox_submit("omnibox://suggest?q=x").is_none());
+}
