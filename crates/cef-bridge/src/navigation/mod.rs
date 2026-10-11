@@ -21,6 +21,20 @@ pub use pages::*;
 pub use password::*;
 use query::query_param;
 
+/// A renderer process that went away under a tile.
+#[derive(Debug, Clone)]
+pub struct RenderCrash {
+    pub browser_id: i32,
+    pub status: String,
+    pub error_code: i32,
+}
+
+thread_local! {
+    /// Drained once per frame by the compositor (UI thread).
+    pub static PENDING_RENDER_CRASHES: std::cell::RefCell<Vec<RenderCrash>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Parse `clipboard://copy?text=...` (OSR has no OS clipboard surface).
 fn parse_clipboard_copy(url: &str) -> Option<String> {
     let query = url.strip_prefix("clipboard://copy?")?;
@@ -36,6 +50,33 @@ wrap_request_handler! {
     }
 
     impl RequestHandler {
+        // A renderer died (OOM, crash, killed). Chromium keeps the browser
+        // and every other renderer alive; the compositor reloads this tile
+        // with backoff (pending_actions::crash_recovery).
+        fn on_render_process_terminated(
+            &self,
+            browser: Option<&mut Browser>,
+            status: TerminationStatus,
+            error_code: ::std::os::raw::c_int,
+            _error_string: Option<&CefString>,
+        ) {
+            let Some(browser) = browser else {
+                return;
+            };
+            let crash = RenderCrash {
+                browser_id: browser.identifier(),
+                status: format!("{status:?}"),
+                error_code,
+            };
+            log::warn!(
+                "renderer for browser {} terminated: {} (code {})",
+                crash.browser_id,
+                crash.status,
+                crash.error_code
+            );
+            PENDING_RENDER_CRASHES.with_borrow_mut(|pending| pending.push(crash));
+        }
+
         fn on_before_browse(
             &self,
             browser: Option<&mut Browser>,

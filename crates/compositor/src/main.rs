@@ -12,6 +12,7 @@ mod frame_pacer;
 mod hotkeys;
 mod hud;
 mod input;
+mod lazy_load;
 mod minimap;
 mod output;
 mod pages;

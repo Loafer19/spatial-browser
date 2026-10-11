@@ -392,12 +392,11 @@ pub fn apply_slot_to_session(
     if slot.visited {
         session.set_viewport(slot.viewport);
         for p in &slot.pages {
-            session.add_page(crate::browser::spawn(
+            session.add_page(crate::browser::spawn_deferred(
                 gpu,
                 &gpu.window,
                 &p.url,
                 p.rect,
-                false,
             ));
         }
     } else {

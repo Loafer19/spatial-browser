@@ -57,3 +57,13 @@ There is **no native chrome** (no address bar widgets). Utility UI is HTML the c
 ## Profile
 
 All pages share one CEF profile under `~/.config/spatial-browser/cef_data` — cookies and logins persist across tiles and restarts.
+
+## Crash resilience
+
+What CEF 154 (Chromium 154) isolates, and what the compositor adds:
+
+- **Renderer processes** are per site (site isolation is on by default). A crashing or OOM-killed renderer (e.g. a heavy YouTube tab) takes only its own tiles down; CEF reports it via `CefRequestHandler::OnRenderProcessTerminated`. cef-bridge queues it (`PENDING_RENDER_CRASHES`); the compositor reloads **only that tile**, with backoff 1 s → 5 s → 30 s, and stops after 3 crashes in 10 min (reload by hand with `Ctrl+R`). Built-in tiles are not auto-reloaded.
+- **GPU process**: Chromium relaunches it after a crash, but after a few crashes it exits the whole *browser* process ("GPU process isn't usable. Goodbye."). We pass `--disable-gpu-process-crash-limit` so it keeps relaunching (falling back to software GL) instead. Our own compositor (wgpu) is independent of the Chromium GPU process; with `osr = gpu` shared textures a GPU-process restart only means a few missed frames.
+- **Browser process** crashes (e.g. the old SPA soft-nav null-deref) still end the app; `scripts/run.sh` relaunches it and logs to `restarts.log`.
+- **Restore without a storm**: restored tiles (session / workspace slot) start as blank browsers and load their URL only when on screen, topmost first, one load start per 150 ms. Off-screen tiles load when panned into view. Saves keep the real URL of tiles that haven't loaded yet.
+- Not available / not done: CEF has no per-tile process limit or memory cap API beyond Chromium switches (`--renderer-process-limit` would *merge* sites into shared processes, which weakens isolation, so it is not set). `OnRenderProcessUnresponsive` is left at the default (keep waiting).

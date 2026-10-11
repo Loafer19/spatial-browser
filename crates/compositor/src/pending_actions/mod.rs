@@ -178,6 +178,8 @@ pub fn apply(session: &mut Session, gpu: &GpuState, mut s: Stores<'_>) {
     passwords::poll_csv_file_pick(session, gpu, s.vault, s.generated_password);
     clipboard_bridge::deliver_paste(session);
 
+    crate::lazy_load::note_crashes(session);
+    crate::lazy_load::drain(session, gpu.size());
     loads::apply_load_progress(session);
     loads::capture_favicons(session);
 
