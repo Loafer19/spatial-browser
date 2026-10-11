@@ -92,7 +92,9 @@ function omniKey(event) {
     renderSuggest();
   }
 }
-function submit() {
+// Not `submit`: inside the form's inline onsubmit, `submit` resolves to
+// HTMLFormElement.submit() (native submit, no go()) before any global.
+function omniSubmit() {
   const q = document.getElementById('q');
   go(selected >= 0 && suggestions[selected] ? suggestions[selected].text : q.value);
 }
@@ -128,7 +130,7 @@ pub fn page_url(theme: &Theme, typed_history: &[String], default_search_engine: 
          .sg:hover,.sg-active{{background:{key_bg};color:{key_fg}}}\
          .sg-text{{overflow:hidden;text-overflow:ellipsis}}\
          .sg-title{{opacity:0.6;font-size:13px;overflow:hidden;text-overflow:ellipsis}}</style>\
-         <form onsubmit=\"submit();return false\">\
+         <form onsubmit=\"omniSubmit();return false\">\
          <input id=\"q\" autofocus autocomplete=\"off\" \
          oninput=\"askSuggest(this.value)\" onkeydown=\"omniKey(event)\" \
          placeholder=\"Search or type a URL &mdash; try @y, @ddg, @wiki, @bing...\" \
@@ -149,4 +151,32 @@ pub fn page_url(theme: &Theme, typed_history: &[String], default_search_engine: 
         key_fg = theme.help_key_fg,
     );
     super::serve(super::kind::OMNIBOX, html)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::output::THEMES;
+    use crate::pages::tests::served_html;
+
+    /// Inline handlers resolve names against the element (and its form)
+    /// before globals, so `onsubmit="submit()"` called the native
+    /// HTMLFormElement.submit() and Enter never reached `go()` (v0.9.0).
+    #[test]
+    fn submit_handler_calls_our_function_not_a_form_method() {
+        let html = served_html(&page_url(&THEMES[0], &[], "https://e.test/?q="));
+        let start = html.find("onsubmit=\"").expect("form has onsubmit") + 10;
+        let handler = &html[start..start + html[start..].find('"').unwrap()];
+        assert_eq!(handler, "omniSubmit();return false");
+        assert!(html.contains("function omniSubmit()"));
+        assert!(html.contains("omnibox://go?q="));
+        // Nothing in the page may define a global that a form/element
+        // property would shadow inside inline handlers.
+        for shadowed in ["submit", "reset", "action", "method", "elements"] {
+            assert!(
+                !html.contains(&format!("function {shadowed}(")),
+                "global `{shadowed}` is shadowed by the form in inline handlers"
+            );
+        }
+    }
 }
