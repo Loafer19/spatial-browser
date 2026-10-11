@@ -41,14 +41,15 @@ cargo test --workspace -j 2
 
 ## Release
 
-Pushing a version tag triggers GitHub Actions:
+1. Bump `version` in `crates/compositor/Cargo.toml` and `crates/cef-bridge/Cargo.toml` (and `Cargo.lock`), add a section to `CHANGELOG.md`, merge to `master`.
+2. Push a version tag from that commit; GitHub Actions does the rest:
 
 ```sh
 git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-Workflow builds, bundles, and attaches `spatial-browser-linux-x86_64.tar.gz` to the GitHub Release. App version is the **git tag**, not `Cargo.toml` (`0.1.0` crates). Edit the release body afterward if auto-notes are too thin (match the style of prior tags).
+Workflow builds, bundles, and attaches `spatial-browser-linux-x86_64.tar.gz` to the GitHub Release. Crate versions track the release tag since v0.9.0 (earlier tags shipped `0.1.0` crates). Paste the matching `CHANGELOG.md` section into the release body afterward if auto-notes are too thin (match the style of prior tags).
 
 ## License
 

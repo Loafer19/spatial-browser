@@ -60,12 +60,19 @@ function makeRow(r, icons) {
     text.appendChild(t);
   }
   row.appendChild(text);
+  if (r.n > 1) {
+    const c = el('span', 'hist-count hist-when', '\u00d7' + r.n);
+    c.title = r.n + ' visits';
+    row.appendChild(c);
+  }
   const d = new Date(r.t * 1000);
   row.dataset.date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   row.appendChild(el('span', 'hist-date hist-when', row.dataset.date));
   row.appendChild(el('span', 'hist-time hist-when', `${pad(d.getHours())}:${pad(d.getMinutes())}`));
   const remove = document.getElementById('trash-tpl').content.firstElementChild.cloneNode(true);
-  remove.href = 'history://remove/' + r.i;
+  // A collapsed row stands for every visit of its URL.
+  remove.href = (r.n > 1 ? 'history://remove-all/' : 'history://remove/') + r.i;
+  if (r.n > 1) remove.title = 'Remove all ' + r.n + ' visits';
   remove.onclick = e => e.stopPropagation();
   row.appendChild(remove);
   return row;
@@ -74,7 +81,8 @@ function makeRow(r, icons) {
 // One page of rows from Rust (`history://search`); offset 0 replaces.
 function histResults(res) {
   waiting = false;
-  if (res.query !== query) return; // stale answer to an older search
+  // Stale answer to an older search or the other view.
+  if (res.query !== query || res.collapse !== (groupMode === 'flat')) return;
   const container = document.getElementById('rows');
   if (res.offset === 0) { container.textContent = ''; loaded = 0; }
   if (res.offset !== loaded) return;
@@ -92,7 +100,8 @@ function histResults(res) {
 
 function requestRows(offset) {
   waiting = true;
-  location = 'history://search?q=' + encodeURIComponent(query) + '&offset=' + offset;
+  location = 'history://search?q=' + encodeURIComponent(query) + '&offset=' + offset +
+    (groupMode === 'flat' ? '&collapse=1' : '');
 }
 
 function showMore() {
@@ -100,6 +109,17 @@ function showMore() {
 }
 
 let groupMode = 'flat';
+
+// "Recent" lists each URL once (latest visit, ×N); the grouped views list
+// every visit, so switching between them reloads rows from Rust.
+function setMode(mode) {
+  const reload = (mode === 'flat') !== (groupMode === 'flat');
+  groupMode = mode;
+  if (reload) requestRows(0); else applyGrouping(mode);
+  document.querySelectorAll('.group-toggle button').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+}
 
 function applyGrouping(mode) {
   groupMode = mode;
@@ -193,8 +213,14 @@ pub(crate) fn short_url(url: &str) -> ShortUrl<'_> {
 /// JSON for `histResults`: one page of rows matching `query` from
 /// `offset`, plus the favicons they need (once per host). Only ever handed
 /// to the built-in history page, never to web content.
-pub(crate) fn results_json(history: &[HistoryEntry], query: &str, offset: usize) -> String {
-    let (hits, total) = crate::persistence::history::search(history, query, offset, PAGE_ROWS);
+pub(crate) fn results_json(
+    history: &[HistoryEntry],
+    query: &str,
+    offset: usize,
+    collapse: bool,
+) -> String {
+    let (hits, total) =
+        crate::persistence::history::search(history, query, offset, PAGE_ROWS, collapse);
     let mut icons = serde_json::Map::new();
     let rows: Vec<serde_json::Value> = hits
         .iter()
@@ -214,11 +240,13 @@ pub(crate) fn results_json(history: &[HistoryEntry], query: &str, offset: usize)
                 "rest": short.rest,
                 "http": short.insecure,
                 "t": entry.visited_at,
+                "n": hit.count,
             })
         })
         .collect();
     serde_json::json!({
         "query": query,
+        "collapse": collapse,
         "offset": offset,
         "total": total,
         "rows": rows,
@@ -238,7 +266,8 @@ fn script_json(json: &str) -> String {
 /// can rebuild this page in place after a remove/clear. Only the first
 /// PAGE_ROWS rows are embedded; the rest arrive via `history://search`.
 pub(crate) fn page_url(theme: &Theme, history: &[HistoryEntry]) -> String {
-    let initial = script_json(&results_json(history, "", 0));
+    // Opens on "Recent", which shows each URL once.
+    let initial = script_json(&results_json(history, "", 0, true));
     let html = format!(
         "{script}{nav_script}<script>const INITIAL = {initial};</script>\
          <style>\
@@ -282,9 +311,9 @@ pub(crate) fn page_url(theme: &Theme, history: &[HistoryEntry]) -> String {
          <input id=\"q\" type=\"search\" placeholder=\"Search all history (title or URL)\" autofocus \
          oninput=\"filterRows(this.value)\" onkeydown=\"searchKey(event)\">\
          <div class=\"group-toggle\" style=\"display:flex;gap:6px;margin-bottom:16px\">\
-         <button data-mode=\"flat\" onclick=\"applyGrouping('flat')\" class=\"active\">Recent</button>\
-         <button data-mode=\"date\" onclick=\"applyGrouping('date')\">By day</button>\
-         <button data-mode=\"host\" onclick=\"applyGrouping('host')\">By site</button>\
+         <button data-mode=\"flat\" onclick=\"setMode('flat')\" class=\"active\">Recent</button>\
+         <button data-mode=\"date\" onclick=\"setMode('date')\">By day</button>\
+         <button data-mode=\"host\" onclick=\"setMode('host')\">By site</button>\
          </div>\
          <div id=\"empty\" hidden>{empty}</div>\
          <div id=\"rows\" style=\"display:flex;flex-direction:column;gap:8px\"></div>\
@@ -346,11 +375,33 @@ mod tests {
         assert!(!html.contains("<script>alert"), "{html}");
         assert!(!html.contains("x\"><b>"));
         assert!(html.contains("\\u003c/script\\u003e"));
-        let json: serde_json::Value = serde_json::from_str(&results_json(&history, "", 0)).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&results_json(&history, "", 0, false)).unwrap();
         assert_eq!(json["total"], 2);
         assert_eq!(json["rows"][0]["host"], "a.test", "host without www.");
         assert_eq!(json["rows"][1]["http"], true);
         assert_eq!(json["rows"][1]["title"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn recent_view_collapses_repeats() {
+        let visit = |url: &str, t| HistoryEntry {
+            url: url.into(),
+            visited_at: t,
+            title: None,
+        };
+        let history = vec![
+            visit("https://a.test/", 3),
+            visit("https://b.test/", 2),
+            visit("https://a.test/", 1),
+        ];
+        let json: serde_json::Value =
+            serde_json::from_str(&results_json(&history, "", 0, true)).unwrap();
+        assert_eq!(json["total"], 2);
+        assert_eq!(json["rows"][0]["n"], 2);
+        assert_eq!(json["collapse"], true);
+        let html = served_html(&page_url(&THEMES[0], &history));
+        assert!(html.contains("\"collapse\":true"), "opens on Recent");
     }
 
     #[test]
@@ -371,7 +422,7 @@ mod tests {
         assert!(html.contains("\"i\":99,"));
         assert!(!html.contains("\"i\":100,"), "only PAGE_ROWS rows embedded");
         let json: serde_json::Value =
-            serde_json::from_str(&results_json(&history, "h7.test", 10)).unwrap();
+            serde_json::from_str(&results_json(&history, "h7.test", 10, false)).unwrap();
         assert_eq!(json["offset"], 10);
         assert_eq!(json["total"], 34);
         assert_eq!(json["rows"].as_array().unwrap().len(), 24);
