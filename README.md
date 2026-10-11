@@ -18,7 +18,7 @@ instead of flat tabs.
 | [Canvas & shortcuts](https://github.com/Loafer19/spatial-browser/wiki/Canvas-and-Shortcuts) | Pan/zoom/touch + hotkeys (`F1` in-app) |
 | [Scripts & styles](https://github.com/Loafer19/spatial-browser/wiki/Userscripts) | Userscripts + CSS (`spatial-ui` for built-in pages) |
 | [Passwords](https://github.com/Loafer19/spatial-browser/wiki/Password-Manager) | Local vault + autofill (`Ctrl+Shift+P`) |
-| [Features](https://github.com/Loafer19/spatial-browser/wiki/Features) | Bookmarks, workspaces, reader, adblock, … |
+| [Features](https://github.com/Loafer19/spatial-browser/wiki/Features) | Omnibox suggestions, history, find, popups, workspaces, reader, adblock, … |
 | [Configuration](https://github.com/Loafer19/spatial-browser/wiki/Configuration) | Config paths, settings, env overrides |
 | [Limitations](https://github.com/Loafer19/spatial-browser/wiki/Limitations) | No Chrome extensions, known CEF quirks |
 | [Building & releasing](https://github.com/Loafer19/spatial-browser/wiki/Building-and-Releasing) | CEF pin, bundle, version tags |
@@ -39,7 +39,7 @@ cargo build
 ./scripts/install.sh             # optional desktop launcher
 ```
 
-Or grab a tarball from [Releases](https://github.com/Loafer19/spatial-browser/releases).
+Or grab a tarball from [Releases](https://github.com/Loafer19/spatial-browser/releases). What changed: [CHANGELOG](CHANGELOG.md).
 
 ## License
 
