@@ -1,0 +1,47 @@
+# Publish wiki/ to the GitHub Wiki (Loafer19/spatial-browser.wiki) whenever
+# it changes on master. Pages are copied over (added/updated); pages that
+# exist only in the GitHub Wiki are left alone.
+#
+# Auth: GITHUB_TOKEN with `contents: write` can push to this repo's wiki.
+# If that is ever refused (org policy), add a fine-grained PAT with
+# Contents: read/write on this repo as secret WIKI_TOKEN — it is used first.
+name: wiki-sync
+
+on:
+  push:
+    branches: [master]
+    paths: ["wiki/**", ".github/workflows/wiki-sync.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wiki-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Push wiki/ to the GitHub Wiki
+        env:
+          TOKEN: ${{ secrets.WIKI_TOKEN || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/${REPO}.wiki.git" /tmp/wiki
+          cp wiki/*.md /tmp/wiki/
+          cd /tmp/wiki
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "wiki already up to date"
+            exit 0
+          fi
+          git commit -m "Sync from ${REPO}@${SHA::7}"
+          git push origin HEAD
