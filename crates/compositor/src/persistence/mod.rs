@@ -34,9 +34,20 @@ struct PageFile {
     rect: Rect,
 }
 
+/// `~/.config/spatial-browser/<name>`: every persisted file lives here.
+/// `$HOME` is part of the runtime contract (CEF's own cache dir is under
+/// it too), so a missing `HOME` is a startup misconfiguration, not a
+/// recoverable error.
+pub fn config_path(name: &str) -> PathBuf {
+    let home = std::env::var_os("HOME")
+        .expect("HOME must be set: profile data lives under ~/.config/spatial-browser");
+    PathBuf::from(home)
+        .join(".config/spatial-browser")
+        .join(name)
+}
+
 fn path() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME not set");
-    PathBuf::from(home).join(".config/spatial-browser/session.json")
+    crate::persistence::config_path("session.json")
 }
 
 pub fn save(session: &Session) {

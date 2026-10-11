@@ -30,8 +30,7 @@ pub(crate) fn sync_blocklist_settings(settings: &AppSettings) {
 
 /// Prefer `~/.config/spatial-browser/filters/`; seed from bundle/repo on first run.
 pub(super) fn ensure_filter_lists_dir() -> std::path::PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME not set");
-    let dest = std::path::PathBuf::from(home).join(".config/spatial-browser/filters");
+    let dest = crate::persistence::config_path("filters");
     if let Err(e) = std::fs::create_dir_all(&dest) {
         log::warn!("filters dir {}: {e}", dest.display());
         return dest;

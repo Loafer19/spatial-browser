@@ -84,19 +84,20 @@ pub fn parse_login_csv(text: &str) -> Result<Vec<VaultEntry>, String> {
     }
 
     let col = |name: &str| header_map.get(name).copied();
+    let need = |name: &str| col(name).ok_or_else(|| format!("CSV: missing column `{name}`"));
     let (url_i, user_i, pass_i, notes_i, type_i) = if chrome {
         (
-            col("url").unwrap(),
-            col("username").unwrap(),
-            col("password").unwrap(),
+            need("url")?,
+            need("username")?,
+            need("password")?,
             col("note").or_else(|| col("notes")),
             None,
         )
     } else {
         (
-            col("login_uri").unwrap(),
-            col("login_username").unwrap(),
-            col("login_password").unwrap(),
+            need("login_uri")?,
+            need("login_username")?,
+            need("login_password")?,
             col("notes"),
             col("type"),
         )

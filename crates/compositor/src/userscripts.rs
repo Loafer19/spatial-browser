@@ -42,13 +42,11 @@ struct StateFile {
 }
 
 fn scripts_dir() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME not set");
-    PathBuf::from(home).join(".config/spatial-browser/userscripts")
+    crate::persistence::config_path("userscripts")
 }
 
 fn state_path() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME not set");
-    PathBuf::from(home).join(".config/spatial-browser/userscripts_state.json")
+    crate::persistence::config_path("userscripts_state.json")
 }
 
 fn load_state() -> StateFile {

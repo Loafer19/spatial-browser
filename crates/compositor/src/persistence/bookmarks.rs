@@ -22,8 +22,7 @@ struct BookmarksFile {
 }
 
 fn path() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME not set");
-    PathBuf::from(home).join(".config/spatial-browser/bookmarks.json")
+    crate::persistence::config_path("bookmarks.json")
 }
 
 /// Returns an empty list if there's no file yet or it fails to parse.

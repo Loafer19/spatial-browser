@@ -40,7 +40,10 @@ fn main() -> ExitCode {
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
 
     let args = Args::new();
-    let cmd = args.as_cmd_line().unwrap();
+    let Some(cmd) = args.as_cmd_line() else {
+        log::error!("CEF could not parse the process command line");
+        return ExitCode::FAILURE;
+    };
     let is_browser_process = cmd.has_switch(Some(&"type".into())) != 1;
 
     let mut app = AppBuilder::build(OsrApp::new());
@@ -64,9 +67,7 @@ fn main() -> ExitCode {
     }
 
     // Own config dir (not CEF default): empty cache_path = incognito, wiped on restart.
-    let home = std::env::var_os("HOME").expect("HOME not set");
-    let cef_data_path: CefString = std::path::Path::new(&home)
-        .join(".config/spatial-browser/cef_data")
+    let cef_data_path: CefString = persistence::config_path("cef_data")
         .to_string_lossy()
         .as_ref()
         .into();

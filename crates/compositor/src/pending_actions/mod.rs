@@ -142,10 +142,8 @@ fn show_in_place(session: &mut Session, gpu: &GpuState, browser_id: i32, url: &s
 }
 
 fn now_unix_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
+    // Clock before 1970 → 0 rather than a panic on the UI thread.
+    vault::now_unix()
 }
 
 /// Drain PENDING_* from App::tick (after CEF work, before pacing/redraw).

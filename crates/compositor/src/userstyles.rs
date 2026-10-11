@@ -21,13 +21,11 @@ struct StateFile {
 }
 
 fn styles_dir() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME not set");
-    PathBuf::from(home).join(".config/spatial-browser/userstyles")
+    crate::persistence::config_path("userstyles")
 }
 
 fn state_path() -> PathBuf {
-    let home = std::env::var_os("HOME").expect("HOME not set");
-    PathBuf::from(home).join(".config/spatial-browser/userstyles_state.json")
+    crate::persistence::config_path("userstyles_state.json")
 }
 
 fn load_state() -> StateFile {
