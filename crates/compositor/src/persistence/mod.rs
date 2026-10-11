@@ -82,7 +82,7 @@ pub fn load(gpu: &GpuState, window: &Window) -> Option<Session> {
     let pages = data
         .pages
         .into_iter()
-        .map(|p| browser::spawn(gpu, window, &p.url, p.rect, false))
+        .map(|p| browser::spawn_deferred(gpu, window, &p.url, p.rect))
         .collect();
     Some(Session::new(pages, data.viewport, theme))
 }

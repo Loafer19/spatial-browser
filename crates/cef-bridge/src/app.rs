@@ -38,6 +38,11 @@ wrap_app! {
             command_line.append_switch(Some(&"noerrdialogs".into()));
             command_line.append_switch(Some(&"hide-crash-restore-bubble".into()));
             command_line.append_switch(Some(&"use-mock-keychain".into()));
+            // Chromium relaunches a crashed GPU process, but after a few
+            // crashes it gives up and exits the *browser* ("GPU process
+            // isn't usable. Goodbye.") — one bad video site would take every
+            // tile with it. Keep relaunching (falls back to software GL).
+            command_line.append_switch(Some(&"disable-gpu-process-crash-limit".into()));
             // ImmersiveReadAnything: SPA soft-nav null-deref in Alloy/OSR
             // (CEF#4234), fixed in M152; still off since OSR has no reading
             // mode UI to lose. Disable VAAPI — unreliable
