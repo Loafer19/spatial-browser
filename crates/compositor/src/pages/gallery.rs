@@ -54,10 +54,21 @@ fn history() -> Vec<HistoryEntry> {
 
 /// `(name, served URL)` for every page in `theme`.
 fn samples(theme: &Theme) -> Vec<(&'static str, String)> {
-    let workspaces: crate::persistence::workspaces::WorkspaceStore = serde_json::from_str(
-        r#"{"active":1,"slots":[{"id":1,"visited":true},{"id":2,"visited":false}]}"#,
-    )
-    .unwrap_or_else(|_| serde_json::from_str(r#"{"active":0,"slots":[]}"#).unwrap());
+    let store = |json: &str| -> crate::persistence::workspaces::WorkspaceStore {
+        serde_json::from_str(json).expect("sample workspaces")
+    };
+    let workspaces = store(
+        r#"{"active":2,"slots":[
+            {"id":1,"visited":true,"name":"Dispatch — EU lanes","theme":"Tokyo Night",
+             "pages":[{"url":"https://a.test/","rect":{"x":0,"y":0,"w":800,"h":600}},
+                      {"url":"https://b.test/","rect":{"x":900,"y":0,"w":800,"h":600}}]},
+            {"id":2,"visited":true,"theme":"Catppuccin Latte",
+             "pages":[{"url":"https://a.test/","rect":{"x":0,"y":0,"w":800,"h":600}}]},
+            {"id":3,"visited":true,"name":"A workspace name that is long enough to need truncating","pages":[]},
+            {"id":4,"visited":false}]}"#,
+    );
+    let one_workspace = store(r#"{"active":1,"slots":[{"id":1,"visited":true}]}"#);
+    let menu = |ctx: context_menu::MenuContext| context_menu::page_url(theme, &ctx);
     vec![
         ("help", help::page_url(theme)),
         (
@@ -100,14 +111,52 @@ fn samples(theme: &Theme) -> Vec<(&'static str, String)> {
             save_prompt::page_url(theme, "github.com", "user@example.test", false),
         ),
         (
-            "context-menu",
-            context_menu::page_url(
+            "save-prompt-update",
+            save_prompt::page_url(theme, "github.com", "user@example.test", true),
+        ),
+        (
+            "save-prompt-no-user",
+            save_prompt::page_url(theme, "accounts.example.test", "", false),
+        ),
+        (
+            "save-prompt-long",
+            save_prompt::page_url(
                 theme,
-                &context_menu::MenuContext {
-                    link: Some("https://example.test/link".into()),
-                    ..Default::default()
-                },
+                "login.a-very-long-subdomain.example-carrier-portal.test",
+                "dispatcher.with.a.long.address@example-forwarder.test",
+                false,
             ),
+        ),
+        (
+            "context-menu-canvas",
+            menu(context_menu::MenuContext {
+                on_canvas: true,
+                ..Default::default()
+            }),
+        ),
+        (
+            "context-menu-page",
+            menu(context_menu::MenuContext {
+                page_url: Some("https://example.test/".into()),
+                ..Default::default()
+            }),
+        ),
+        (
+            "context-menu-link-image",
+            menu(context_menu::MenuContext {
+                page_url: Some("https://example.test/".into()),
+                link: Some("https://example.test/link".into()),
+                image: Some("https://example.test/img.png".into()),
+                ..Default::default()
+            }),
+        ),
+        (
+            "context-menu-password",
+            menu(context_menu::MenuContext {
+                page_url: Some("https://example.test/login".into()),
+                password_field: true,
+                ..Default::default()
+            }),
         ),
         (
             "bookmarks",
@@ -129,6 +178,10 @@ fn samples(theme: &Theme) -> Vec<(&'static str, String)> {
         ),
         ("history", history_list::page_url(theme, &history())),
         ("workspaces", workspace_list::page_url(theme, &workspaces)),
+        (
+            "workspaces-single",
+            workspace_list::page_url(theme, &one_workspace),
+        ),
         (
             "settings",
             settings_list::page_url(theme, &Default::default()),

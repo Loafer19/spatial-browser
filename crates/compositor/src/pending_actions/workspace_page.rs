@@ -31,8 +31,13 @@ pub(super) fn drain(
                     workspaces::switch_to(workspaces, workspace_runtime, session, gpu, slot.id);
                 }
             }
-            WorkspacePageAction::Rename(_index, _name) => {
-                // Slots are numbered; rename is a no-op in v2.
+            WorkspacePageAction::Rename(index, name) => {
+                if workspaces.rename(index, &name) {
+                    // Snapshot first so the save doesn't write stale pages
+                    // for the active slot.
+                    workspaces.capture_active_from_session(session);
+                    workspaces.save();
+                }
                 refresh_workspaces_page(session, gpu, workspaces, browser_id);
             }
             WorkspacePageAction::Delete(index) => {
