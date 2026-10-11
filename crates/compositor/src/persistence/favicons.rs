@@ -72,7 +72,7 @@ pub fn store(key: &str, png: &[u8]) {
         log::warn!("favicon {key}: couldn't write {path:?}: {e}");
         return;
     }
-    log::info!("favicon cached for {key} ({} bytes)", png.len());
+    log::debug!("favicon cached for {key} ({} bytes)", png.len());
     MEMORY.with_borrow_mut(|m| m.insert(key.to_string(), Some(data_uri_of(png))));
 }
 

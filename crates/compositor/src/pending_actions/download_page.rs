@@ -185,7 +185,7 @@ pub(super) fn drain(session: &Session, downloads: &mut Vec<DownloadRecord>) {
 /// The resulting state change reaches the page through the next push.
 fn control(id: u32, control: DownloadControl) {
     if !cef_bridge::control_download(id, control) {
-        log::info!("download {id} is no longer active; ignored {control:?}");
+        log::debug!("download {id} is no longer active; ignored {control:?}");
     }
 }
 

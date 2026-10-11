@@ -94,7 +94,7 @@ pub(super) fn drain(session: &mut Session, gpu: &GpuState, s: &mut Stores<'_>) {
                     session.bring_to_front(index);
                 }
                 None if command.targets_page() => {
-                    log::info!("palette command {id} skipped: its page is gone");
+                    log::debug!("palette command {id} skipped: its page is gone");
                     return;
                 }
                 None => {}
