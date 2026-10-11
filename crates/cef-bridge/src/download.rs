@@ -1,5 +1,6 @@
 // Accept downloads (CEF default cancels), save under ~/Downloads with unique
-// names, queue completions for the compositor.
+// names, track progress for the live downloads page, queue completions for
+// the compositor.
 //
 // Downloads are never left executable, and executables/scripts/unknown types
 // are never handed to xdg-open: the downloads page "Open" reveals their folder
@@ -7,7 +8,7 @@
 
 use cef::{self, rc::Rc, *};
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -15,15 +16,247 @@ use std::path::{Path, PathBuf};
 pub struct CompletedDownload {
     pub url: String,
     pub path: String,
+    /// Server MIME type (empty if CEF didn't get one).
+    pub mime: String,
+}
+
+/// Where a download is in its life, as the downloads page shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DownloadState {
+    InProgress,
+    Paused,
+    Complete,
+    Canceled,
+    /// Network or disk error. Stays on the page (with its callback) until it
+    /// is resumed or dismissed.
+    Interrupted,
+}
+
+impl DownloadState {
+    /// Stable name for the page script (`data-state`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DownloadState::InProgress => "in-progress",
+            DownloadState::Paused => "paused",
+            DownloadState::Complete => "complete",
+            DownloadState::Canceled => "canceled",
+            DownloadState::Interrupted => "interrupted",
+        }
+    }
+
+    /// CEF is done with it: no more updates, callback dropped.
+    pub fn is_final(self) -> bool {
+        matches!(self, DownloadState::Complete | DownloadState::Canceled)
+    }
+
+    fn of(complete: bool, canceled: bool, interrupted: bool, paused: bool) -> Self {
+        if complete {
+            DownloadState::Complete
+        } else if canceled {
+            DownloadState::Canceled
+        } else if interrupted {
+            DownloadState::Interrupted
+        } else if paused {
+            DownloadState::Paused
+        } else {
+            DownloadState::InProgress
+        }
+    }
+}
+
+/// One download as of its latest `on_download_updated`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DownloadProgress {
+    /// CEF download id, unique for this run.
+    pub id: u32,
+    pub url: String,
+    pub suggested_name: String,
+    /// Empty until `on_before_download` has picked the path.
+    pub full_path: String,
+    pub received_bytes: u64,
+    /// `None` when the server sent no length.
+    pub total_bytes: Option<u64>,
+    /// Bytes per second (CEF's running estimate).
+    pub speed: u64,
+    /// 0–100; `None` when the total is unknown.
+    pub percent: Option<u8>,
+    pub state: DownloadState,
+    pub mime: String,
+    /// Unix seconds.
+    pub started_at: i64,
+}
+
+impl DownloadProgress {
+    /// The saved file's name, else CEF's suggestion, else "download".
+    pub fn file_name(&self) -> &str {
+        [&self.full_path, &self.suggested_name]
+            .into_iter()
+            .find_map(|p| {
+                Path::new(p)
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .filter(|f| !f.is_empty())
+            })
+            .unwrap_or("download")
+    }
+}
+
+/// What moved since the compositor last took `PENDING_DOWNLOAD_CHANGES`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DownloadChanges {
+    /// Bytes, speed or path of some download.
+    pub progress: bool,
+    /// A download started, paused, resumed, finished, failed or was dismissed.
+    pub state: bool,
+}
+
+impl DownloadChanges {
+    fn merge(&mut self, other: DownloadChanges) {
+        self.progress |= other.progress;
+        self.state |= other.state;
+    }
+}
+
+/// Live control from the downloads page (`download://cancel|pause|resume/<id>`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DownloadControl {
+    Cancel,
+    Pause,
+    Resume,
 }
 
 thread_local! {
     pub static PENDING_DOWNLOADS: RefCell<Vec<CompletedDownload>> = const { RefCell::new(Vec::new()) };
-    // on_download_updated repeats after complete — dedupe by download id.
-    static NOTIFIED_DOWNLOADS: RefCell<HashSet<u32>> = RefCell::new(HashSet::new());
+    /// Set by every download update; the compositor takes it each tick and
+    /// pushes `active_downloads()` to open downloads tiles.
+    pub static PENDING_DOWNLOAD_CHANGES: RefCell<DownloadChanges> =
+        const { RefCell::new(DownloadChanges { progress: false, state: false }) };
+    // Not yet complete or canceled, by id (= start order). Interrupted ones
+    // stay until resumed or dismissed.
+    static ACTIVE_DOWNLOADS: RefCell<BTreeMap<u32, DownloadProgress>> =
+        const { RefCell::new(BTreeMap::new()) };
+    // Callback (cancel/pause/resume) of every download in ACTIVE_DOWNLOADS.
+    static DOWNLOAD_CALLBACKS: RefCell<HashMap<u32, DownloadItemCallback>> =
+        RefCell::new(HashMap::new());
+    // on_download_updated repeats after complete/cancel — dedupe by download id.
+    static ENDED_DOWNLOADS: RefCell<HashSet<u32>> = RefCell::new(HashSet::new());
     // Completed this run with a risky server MIME type. Not persisted; after a
     // restart `is_risky_file` still catches them by extension or content.
     static RISKY_BY_MIME: RefCell<HashSet<PathBuf>> = RefCell::new(HashSet::new());
+}
+
+/// Downloads still running, paused or interrupted, oldest first.
+pub fn active_downloads() -> Vec<DownloadProgress> {
+    ACTIVE_DOWNLOADS.with_borrow(|active| active.values().cloned().collect())
+}
+
+/// Cancel, pause or resume download `id`. False if it is unknown or over.
+/// Cancel also dismisses an interrupted download from the page.
+pub fn control_download(id: u32, control: DownloadControl) -> bool {
+    let Some(callback) = DOWNLOAD_CALLBACKS.with_borrow(|callbacks| callbacks.get(&id).cloned())
+    else {
+        return false;
+    };
+    // No borrow held here: CEF may run on_download_updated re-entrantly.
+    match control {
+        DownloadControl::Cancel => callback.cancel(),
+        DownloadControl::Pause => callback.pause(),
+        DownloadControl::Resume => callback.resume(),
+    }
+    if control == DownloadControl::Cancel {
+        // An interrupted download may never report the cancel.
+        end_download(id);
+        let removed = ACTIVE_DOWNLOADS.with_borrow_mut(|active| active.remove(&id).is_some());
+        if removed {
+            note_download_changes(DownloadChanges {
+                progress: false,
+                state: true,
+            });
+        }
+    }
+    true
+}
+
+fn end_download(id: u32) {
+    ENDED_DOWNLOADS.with_borrow_mut(|ended| ended.insert(id));
+    DOWNLOAD_CALLBACKS.with_borrow_mut(|callbacks| callbacks.remove(&id));
+}
+
+fn note_download_changes(changes: DownloadChanges) {
+    PENDING_DOWNLOAD_CHANGES.with_borrow_mut(|pending| pending.merge(changes));
+}
+
+/// Fold `progress` into the active map; says what the page must redraw.
+fn track_update(
+    active: &mut BTreeMap<u32, DownloadProgress>,
+    progress: DownloadProgress,
+) -> DownloadChanges {
+    let previous = active.get(&progress.id);
+    let changes = DownloadChanges {
+        state: previous.is_none_or(|p| p.state != progress.state),
+        progress: previous.is_none_or(|p| {
+            p.received_bytes != progress.received_bytes
+                || p.total_bytes != progress.total_bytes
+                || p.speed != progress.speed
+                || p.full_path != progress.full_path
+        }),
+    };
+    if progress.state.is_final() {
+        active.remove(&progress.id);
+    } else {
+        active.insert(progress.id, progress);
+    }
+    changes
+}
+
+/// CEF base::Time (microseconds since 1601-01-01 UTC) → Unix seconds.
+fn basetime_to_unix(micros: i64) -> Option<i64> {
+    const WINDOWS_TO_UNIX_SECS: i64 = 11_644_473_600;
+    (micros > 0).then(|| micros / 1_000_000 - WINDOWS_TO_UNIX_SECS)
+}
+
+/// (received, total, percent). CEF reports an unknown size as 0 or -1 and
+/// an unknown percent as -1.
+fn sizes(received: i64, total: i64, percent: i32) -> (u64, Option<u64>, Option<u8>) {
+    let received = received.max(0) as u64;
+    let total = (total > 0).then_some(total as u64);
+    let percent = total.map(|total| match u8::try_from(percent) {
+        Ok(p) if p <= 100 => p,
+        _ => (received.min(total) * 100 / total) as u8,
+    });
+    (received, total, percent)
+}
+
+fn progress_of(item: &DownloadItem) -> DownloadProgress {
+    let (received_bytes, total_bytes, percent) = sizes(
+        item.received_bytes(),
+        item.total_bytes(),
+        item.percent_complete(),
+    );
+    let started_at = basetime_to_unix(item.start_time().val).unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
+    });
+    DownloadProgress {
+        id: item.id(),
+        url: CefString::from(&item.url()).to_string(),
+        suggested_name: CefString::from(&item.suggested_file_name()).to_string(),
+        full_path: CefString::from(&item.full_path()).to_string(),
+        received_bytes,
+        total_bytes,
+        speed: item.current_speed().max(0) as u64,
+        percent,
+        state: DownloadState::of(
+            item.is_complete() != 0,
+            item.is_canceled() != 0,
+            item.is_interrupted() != 0,
+            item.is_paused() != 0,
+        ),
+        mime: CefString::from(&item.mime_type()).to_string(),
+        started_at,
+    }
 }
 
 /// Extensions that run code when opened (or install something) on Linux, plus
@@ -204,6 +437,16 @@ pub fn download_open_target(recorded_path: &str) -> Option<PathBuf> {
     }
 }
 
+/// What "Show in folder" passes to xdg-open: the folder holding the
+/// recorded file if it is still inside ~/Downloads, else ~/Downloads itself.
+/// Always a directory, so xdg-open never runs anything.
+pub fn download_folder_target(recorded_path: &str) -> PathBuf {
+    let dir = downloads_dir();
+    contained_download_path(&dir, Path::new(recorded_path))
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .unwrap_or(dir)
+}
+
 /// Clear every exec bit: nothing downloaded should be runnable by default.
 fn strip_exec_bits(path: &Path) {
     #[cfg(unix)]
@@ -302,21 +545,35 @@ wrap_download_handler! {
             &self,
             _browser: Option<&mut Browser>,
             download_item: Option<&mut DownloadItem>,
-            _callback: Option<&mut DownloadItemCallback>,
+            callback: Option<&mut DownloadItemCallback>,
         ) {
             let Some(item) = download_item else {
                 return;
             };
-            if item.is_complete() == 0 {
+            let id = item.id();
+            if ENDED_DOWNLOADS.with_borrow(|ended| ended.contains(&id)) {
                 return;
             }
-            let already_notified =
-                NOTIFIED_DOWNLOADS.with_borrow_mut(|seen| !seen.insert(item.id()));
-            if already_notified {
-                return;
+            let progress = progress_of(item);
+            let state = progress.state;
+            if state.is_final() {
+                end_download(id);
+            } else if let Some(callback) = callback {
+                let callback = callback.clone();
+                DOWNLOAD_CALLBACKS.with_borrow_mut(|callbacks| callbacks.insert(id, callback));
             }
-            let path = CefString::from(&item.full_path()).to_string();
-            let mime = CefString::from(&item.mime_type()).to_string();
+            let completed = (state == DownloadState::Complete).then(|| {
+                (
+                    progress.url.clone(),
+                    progress.full_path.clone(),
+                    progress.mime.clone(),
+                )
+            });
+            let changes = ACTIVE_DOWNLOADS.with_borrow_mut(|active| track_update(active, progress));
+            note_download_changes(changes);
+            let Some((url, path, mime)) = completed else {
+                return;
+            };
             let path_buf = PathBuf::from(&path);
             strip_exec_bits(&path_buf);
             let name = path_buf.file_name().and_then(|f| f.to_str()).unwrap_or("");
@@ -326,10 +583,7 @@ wrap_download_handler! {
                 RISKY_BY_MIME.with_borrow_mut(|risky| risky.insert(canonical));
             }
             PENDING_DOWNLOADS.with_borrow_mut(|pending| {
-                pending.push(CompletedDownload {
-                    url: CefString::from(&item.url()).to_string(),
-                    path,
-                });
+                pending.push(CompletedDownload { url, path, mime });
             });
         }
     }
@@ -530,5 +784,146 @@ mod tests {
             assert_eq!(mode & 0o777, 0o644);
             assert!(!is_risky_file(&exec));
         }
+    }
+
+    fn progress(id: u32, received: u64, state: DownloadState) -> DownloadProgress {
+        DownloadProgress {
+            id,
+            url: "https://a.test/f.zip".into(),
+            suggested_name: "f.zip".into(),
+            full_path: String::new(),
+            received_bytes: received,
+            total_bytes: Some(100),
+            speed: 10,
+            percent: Some(received as u8),
+            state,
+            mime: "application/zip".into(),
+            started_at: 0,
+        }
+    }
+
+    #[test]
+    fn state_precedence() {
+        use DownloadState::*;
+        assert_eq!(DownloadState::of(true, true, true, true), Complete);
+        assert_eq!(DownloadState::of(false, true, true, true), Canceled);
+        assert_eq!(DownloadState::of(false, false, true, true), Interrupted);
+        assert_eq!(DownloadState::of(false, false, false, true), Paused);
+        assert_eq!(DownloadState::of(false, false, false, false), InProgress);
+        assert!(Complete.is_final() && Canceled.is_final());
+        assert!(!InProgress.is_final() && !Paused.is_final() && !Interrupted.is_final());
+    }
+
+    #[test]
+    fn track_update_reports_state_and_progress_and_drops_finished() {
+        use DownloadState::*;
+        let mut active = BTreeMap::new();
+        let first = track_update(&mut active, progress(1, 0, InProgress));
+        assert_eq!(
+            first,
+            DownloadChanges {
+                progress: true,
+                state: true
+            }
+        );
+        // Same numbers again: nothing to redraw.
+        assert_eq!(
+            track_update(&mut active, progress(1, 0, InProgress)),
+            DownloadChanges::default()
+        );
+        // Bytes moved.
+        assert_eq!(
+            track_update(&mut active, progress(1, 40, InProgress)),
+            DownloadChanges {
+                progress: true,
+                state: false
+            }
+        );
+        // Paused at the same byte count: a state change only.
+        assert_eq!(
+            track_update(&mut active, progress(1, 40, Paused)),
+            DownloadChanges {
+                progress: false,
+                state: true
+            }
+        );
+        assert_eq!(active[&1].state, Paused);
+        // Interrupted stays listed; complete and canceled leave.
+        track_update(&mut active, progress(2, 5, Interrupted));
+        assert_eq!(active.len(), 2);
+        assert!(track_update(&mut active, progress(1, 100, Complete)).state);
+        assert!(track_update(&mut active, progress(2, 5, Canceled)).state);
+        assert!(active.is_empty());
+    }
+
+    #[test]
+    fn sizes_handle_unknown_totals() {
+        assert_eq!(sizes(50, 200, 25), (50, Some(200), Some(25)));
+        // CEF had no percent yet: derive it.
+        assert_eq!(sizes(50, 200, -1), (50, Some(200), Some(25)));
+        // No length from the server (0 or -1): no total, no percent.
+        assert_eq!(sizes(50, 0, -1), (50, None, None));
+        assert_eq!(sizes(50, -1, 0), (50, None, None));
+        // Garbage in, clamped out.
+        assert_eq!(sizes(-5, 10, 900), (0, Some(10), Some(0)));
+        assert_eq!(sizes(20, 10, -1), (20, Some(10), Some(100)));
+    }
+
+    #[test]
+    fn basetime_converts_to_unix() {
+        // 2026-01-01T00:00:00Z.
+        assert_eq!(
+            basetime_to_unix((1_767_225_600 + 11_644_473_600) * 1_000_000),
+            Some(1_767_225_600)
+        );
+        assert_eq!(basetime_to_unix(0), None);
+        assert_eq!(basetime_to_unix(-1), None);
+    }
+
+    #[test]
+    fn file_name_prefers_saved_path() {
+        let mut p = progress(1, 0, DownloadState::InProgress);
+        assert_eq!(p.file_name(), "f.zip");
+        p.full_path = "/home/u/Downloads/f (1).zip".into();
+        assert_eq!(p.file_name(), "f (1).zip");
+        p.full_path.clear();
+        p.suggested_name = "../../evil/x.sh".into();
+        assert_eq!(p.file_name(), "x.sh");
+        p.suggested_name.clear();
+        assert_eq!(p.file_name(), "download");
+    }
+
+    #[test]
+    fn unknown_download_cannot_be_controlled() {
+        for control in [
+            DownloadControl::Cancel,
+            DownloadControl::Pause,
+            DownloadControl::Resume,
+        ] {
+            assert!(!control_download(987_654, control));
+        }
+        assert_eq!(
+            PENDING_DOWNLOAD_CHANGES.with_borrow(|c| *c),
+            DownloadChanges::default()
+        );
+    }
+
+    #[test]
+    fn state_names_are_stable() {
+        use DownloadState::*;
+        let names: Vec<_> = [InProgress, Paused, Complete, Canceled, Interrupted]
+            .into_iter()
+            .map(DownloadState::as_str)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "in-progress",
+                "paused",
+                "complete",
+                "canceled",
+                "interrupted"
+            ]
+        );
     }
 }

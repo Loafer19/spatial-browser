@@ -447,7 +447,11 @@ fn open_downloads(session: &mut Session, gpu: &GpuState, downloads: &[DownloadRe
     let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
     let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
     let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
-    let url = pages::downloads_list::page_url(&session.theme(), downloads);
+    let url = pages::downloads_list::page_url(
+        &session.theme(),
+        downloads,
+        &cef_bridge::active_downloads(),
+    );
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 

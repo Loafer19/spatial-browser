@@ -366,7 +366,9 @@ pub(crate) mod tests {
                     &[DownloadRecord {
                         url: "https://a.test/f".into(),
                         path: "/tmp/f".into(),
+                        mime: None,
                     }],
+                    &[],
                 ),
             ),
             (

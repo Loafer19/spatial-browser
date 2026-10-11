@@ -82,12 +82,20 @@ pub(super) fn parse_switch_target(url: &str) -> Option<i32> {
     url.strip_prefix("switcher://go/")?.parse().ok()
 }
 
-/// Action from a `download://...` navigation.
+/// Action from a `download://...` navigation. Completed entries go by list
+/// index, live downloads by CEF download id.
+#[derive(Debug, PartialEq, Eq)]
 pub enum DownloadPageAction {
     /// Open with the desktop default handler.
     Open(usize),
+    /// Open the folder that holds the file.
+    Reveal(usize),
     /// Drop list entry only (file stays on disk).
     Remove(usize),
+    /// Cancel a running download, or dismiss an interrupted one.
+    Cancel(u32),
+    Pause(u32),
+    Resume(u32),
 }
 
 thread_local! {
@@ -97,13 +105,20 @@ thread_local! {
 
 pub(super) fn parse_download_action(url: &str) -> Option<DownloadPageAction> {
     let rest = url.strip_prefix("download://")?;
-    if let Some(index) = rest.strip_prefix("open/") {
-        return index.parse().ok().map(DownloadPageAction::Open);
+    let (verb, arg) = rest.split_once('/')?;
+    // Digits only: no sign, no whitespace, no trailing path.
+    if arg.is_empty() || !arg.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
     }
-    if let Some(index) = rest.strip_prefix("remove/") {
-        return index.parse().ok().map(DownloadPageAction::Remove);
+    match verb {
+        "open" => arg.parse().ok().map(DownloadPageAction::Open),
+        "reveal" => arg.parse().ok().map(DownloadPageAction::Reveal),
+        "remove" => arg.parse().ok().map(DownloadPageAction::Remove),
+        "cancel" => arg.parse().ok().map(DownloadPageAction::Cancel),
+        "pause" => arg.parse().ok().map(DownloadPageAction::Pause),
+        "resume" => arg.parse().ok().map(DownloadPageAction::Resume),
+        _ => None,
     }
-    None
 }
 
 /// Action from a `history://...` navigation.
