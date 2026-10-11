@@ -12,6 +12,29 @@ pub enum BookmarkAction {
     Rename(usize, String, String),
     /// Native file picker → merge Chrome Bookmarks JSON.
     ImportBrowse,
+    /// Several rows at once (`bookmark://delete-many?ids=1,4`).
+    DeleteMany(Vec<usize>),
+    /// Rows into a folder (`bookmark://move?ids=1,4&folder=A/B`; empty = unfiled).
+    Move(Vec<usize>, String),
+    /// Folder path and everything under it (`bookmark://rename-folder?from=&to=`).
+    RenameFolder(String, String),
+}
+
+/// Most row indices one bookmark action may carry.
+pub const MAX_BOOKMARK_IDS: usize = 10_000;
+
+fn parse_ids(list: &str) -> Option<Vec<usize>> {
+    let ids: Vec<usize> = list
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse().ok())
+        .collect::<Option<_>>()?;
+    (!ids.is_empty() && ids.len() <= MAX_BOOKMARK_IDS).then_some(ids)
+}
+
+fn action_query<'a>(rest: &'a str, name: &str) -> Option<&'a str> {
+    let after = rest.strip_prefix(name)?;
+    after.strip_prefix('?').or_else(|| after.strip_prefix("/?"))
 }
 
 thread_local! {
@@ -37,6 +60,19 @@ pub(super) fn parse_bookmark_action(url: &str) -> Option<BookmarkAction> {
         let title = query_param(query, "title").unwrap_or_default();
         let folder = query_param(query, "folder").unwrap_or_default();
         return Some(BookmarkAction::Rename(index, title, folder));
+    }
+    if let Some(query) = action_query(rest, "delete-many") {
+        return parse_ids(&query_param(query, "ids")?).map(BookmarkAction::DeleteMany);
+    }
+    if let Some(query) = action_query(rest, "move") {
+        let ids = parse_ids(&query_param(query, "ids")?)?;
+        let folder = query_param(query, "folder").unwrap_or_default();
+        return Some(BookmarkAction::Move(ids, folder));
+    }
+    if let Some(query) = action_query(rest, "rename-folder") {
+        let from = query_param(query, "from").filter(|f| !f.trim().is_empty())?;
+        let to = query_param(query, "to").unwrap_or_default();
+        return Some(BookmarkAction::RenameFolder(from, to));
     }
     None
 }

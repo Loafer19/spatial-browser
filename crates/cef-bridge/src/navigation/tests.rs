@@ -262,3 +262,39 @@ fn settings_actions() {
         assert!(parse_settings_action(bad).is_none(), "{bad}");
     }
 }
+
+#[test]
+fn bookmark_manager_actions() {
+    use BookmarkAction as B;
+    assert!(matches!(
+        parse_bookmark_action("bookmark://delete-many?ids=3,1,7"),
+        Some(B::DeleteMany(ids)) if ids == [3, 1, 7]
+    ));
+    assert!(matches!(
+        parse_bookmark_action("bookmark://move/?ids=2&folder=Rust%2FAsync"),
+        Some(B::Move(ids, f)) if ids == [2] && f == "Rust/Async"
+    ));
+    assert!(matches!(
+        parse_bookmark_action("bookmark://move?ids=2&folder="),
+        Some(B::Move(_, f)) if f.is_empty()
+    ));
+    assert!(matches!(
+        parse_bookmark_action("bookmark://rename-folder?from=Rust&to=Lang%2FRust"),
+        Some(B::RenameFolder(a, b)) if a == "Rust" && b == "Lang/Rust"
+    ));
+    let too_many = format!(
+        "bookmark://delete-many?ids={}",
+        vec!["1"; MAX_BOOKMARK_IDS + 1].join(",")
+    );
+    for bad in [
+        "bookmark://delete-many?ids=",
+        "bookmark://delete-many?ids=1,x",
+        "bookmark://delete-many",
+        "bookmark://move?folder=a",
+        "bookmark://rename-folder?from=&to=b",
+        "bookmark://delete-manyX?ids=1",
+        too_many.as_str(),
+    ] {
+        assert!(parse_bookmark_action(bad).is_none(), "{bad}");
+    }
+}

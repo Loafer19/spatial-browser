@@ -205,30 +205,6 @@ pub(crate) fn empty_state(theme: &Theme, text: &str) -> String {
     )
 }
 
-/// Favicon tile: the locally cached icon (captured on visit, see
-/// persistence::favicons) over a letter fallback (`letter` already
-/// uppercased, escaped here). Never fetches from `host`.
-pub(crate) fn favicon_tile(host: &str, letter: &str, theme: &Theme) -> String {
-    let letter = html_escape(letter);
-    // A data:image/png;base64 URI: no quotes or markup to escape.
-    let icon = crate::persistence::favicons::data_uri(host)
-        .map(|uri| {
-            format!(
-                "<img src=\"{uri}\" width=\"20\" height=\"20\" \
-                 style=\"position:absolute;inset:0;border-radius:4px\">"
-            )
-        })
-        .unwrap_or_default();
-    format!(
-        "<span style=\"position:relative;width:20px;height:20px;flex-shrink:0\">\
-         <span style=\"position:absolute;inset:0;border-radius:4px;background:{key_bg};\
-         color:{key_fg};display:flex;align-items:center;justify-content:center;\
-         font-size:11px;font-weight:700\">{letter}</span>{icon}</span>",
-        key_bg = theme.help_key_bg,
-        key_fg = theme.help_key_fg,
-    )
-}
-
 pub(crate) const TRASH_SVG_PATH: &str =
     "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z";
 
@@ -249,20 +225,6 @@ pub(crate) fn icon_link_button(
          background:{bg};color:{fg};opacity:0.7;text-decoration:none\">\
          <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"currentColor\">\
          <path d=\"{svg_path}\"/></svg></a>",
-        bg = theme.help_bg,
-        fg = theme.help_fg,
-    )
-}
-
-/// Like `icon_link_button`, but a form submit (rename-save).
-pub(crate) fn icon_submit_button(title: &str, svg_path: &str, theme: &Theme) -> String {
-    format!(
-        "<button type=\"submit\" title=\"{title}\" class=\"bm-icon-btn\" style=\"flex-shrink:0;\
-         margin-left:4px;display:flex;align-items:center;justify-content:center;width:26px;\
-         height:26px;border-radius:6px;background:{bg};color:{fg};opacity:0.7;border:none;\
-         cursor:pointer;font:inherit\">\
-         <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"currentColor\">\
-         <path d=\"{svg_path}\"/></svg></button>",
         bg = theme.help_bg,
         fg = theme.help_fg,
     )
@@ -432,16 +394,6 @@ pub(crate) mod tests {
             "'x\\u0027;alert(1)//\\u0022\\u003c/script\\u003e\\u000a\\u2028é'"
         );
         assert_eq!(url_component("a b&c=\"<'#%"), "a%20b%26c%3D%22%3C%27%23%25");
-    }
-
-    #[test]
-    fn favicon_tile_escapes_host_and_letter() {
-        let html = favicon_tile("x\"><script>", "<", &THEMES[0]);
-        assert!(!html.contains("<script>"));
-        assert!(html.contains(">&lt;</span>"));
-        // No icon cached for this host, and never a request to it.
-        assert!(!html.contains("<img"));
-        assert!(!html.contains("favicon.ico"));
     }
 
     #[test]
