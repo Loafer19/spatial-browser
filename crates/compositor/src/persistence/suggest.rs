@@ -3,8 +3,7 @@
 // Ranking: entries whose host (without `www.`) or scheme-less URL starts
 // with the query come first, then entries that merely contain it (URL,
 // title or typed text). Within a tier: more visits first, visits before
-// typed text, then the
-// most recent. Each URL / typed text appears once.
+// typed text, then the most recent. Each URL / typed text appears once.
 
 use super::history::HistoryEntry;
 use serde::Serialize;
