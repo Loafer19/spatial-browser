@@ -50,8 +50,14 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      # Test binaries link libcef.so dynamically; cargo only adds link-search
+      # dirs inside target/ to the loader path, and with a restored rust
+      # cache cef-dll-sys's build script doesn't rerun to point elsewhere.
       - name: Test
-        run: cargo test --workspace --locked
+        run: |
+          cef_lib_dir="$(dirname "$(find "$CEF_PATH" -name libcef.so -print -quit)")"
+          LD_LIBRARY_PATH="$cef_lib_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+            cargo test --workspace --locked
 
       - name: Bundle
         run: ./scripts/bundle.sh compositor
