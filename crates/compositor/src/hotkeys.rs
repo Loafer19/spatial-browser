@@ -256,6 +256,13 @@ pub fn handle(
         PhysicalKey::Code(KeyCode::Space) => {
             if modifiers.shift_key() {
                 session.cycle_theme();
+                // Built-in pages pick the new palette up in place (ui.js).
+                let js = crate::pages::ui::theme_js(&session.theme());
+                for page in session.pages() {
+                    if crate::pages::kind_of(&page.url()).is_some() {
+                        crate::pages::ui::run_js(&page.browser, &js);
+                    }
+                }
             } else {
                 let size = gpu.window.inner_size();
                 session.toggle_zoom_focused(

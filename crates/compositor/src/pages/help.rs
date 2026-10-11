@@ -1,5 +1,6 @@
 // F1 help — shortcut list styled to the active Theme.
 
+use super::ui::{self, html};
 use crate::output::Theme;
 
 pub const HELP_GROUPS: &[(&str, &[(&str, &str)])] = &[
@@ -68,36 +69,27 @@ pub const HELP_GROUPS: &[(&str, &[(&str, &str)])] = &[
 
 /// F1 help page URL using `theme` palette.
 pub fn page_url(theme: &Theme) -> String {
-    let mut rows = String::new();
-    for (group, entries) in HELP_GROUPS {
-        rows.push_str(&format!(
-            "<h2 style=\"margin:16px 0 0;font-size:13px;text-transform:uppercase;\
-             letter-spacing:0.05em;color:{heading};opacity:0.8\">{group}</h2>",
-            heading = theme.help_heading,
-        ));
-        for (key, desc) in *entries {
-            rows.push_str(&format!(
-                "<div style=\"display:flex;justify-content:space-between;align-items:center;\
-                 gap:16px;padding:10px 14px;background:{card_bg};border-radius:8px;\
-                 border:1px solid {card_border}\">\
-                 <kbd style=\"flex-shrink:0;white-space:nowrap;background:{key_bg};color:{key_fg};\
-                 padding:4px 10px;border-radius:6px;font-weight:600;font-size:13px\">{key}</kbd>\
-                 <span style=\"text-align:right;white-space:nowrap\">{desc}</span></div>",
-                card_bg = theme.help_card_bg,
-                card_border = theme.help_card_border,
-                key_bg = theme.help_key_bg,
-                key_fg = theme.help_key_fg,
-            ));
+    let body = html! {
+        main class="page wide" {
+            (ui::head("Keyboard shortcuts", Some(html! { "Theme: " (theme.name) " · press " kbd { "?" } " for list keys" }), html! {
+                (ui::search("q", "", "Filter shortcuts", Some("")))
+            }))
+            div class="grid" style="--cell:340px;align-items:start" {
+                @for (group, entries) in HELP_GROUPS {
+                    section class="card flush" data-group {
+                        h2 style="margin:12px 14px 6px" { (group) }
+                        @for (key, desc) in *entries {
+                            div class="row" data-nav {
+                                span class="main" { span class="title" { (desc) } }
+                                kbd { (key) }
+                            }
+                        }
+                    }
+                }
+            }
+            div class="empty hidden" data-filter-empty { (ui::Icon::Search) div { "No shortcut matches." } }
         }
-    }
-    let html = format!(
-        "{body_open}\
-         <h1 style=\"margin:0 0 4px;color:{heading};font-size:20px\">\
-         spatial-browser &mdash; shortcuts ({name})</h1>\
-         <div style=\"display:flex;flex-direction:column;gap:8px\">{rows}</div></body>",
-        body_open = super::body_open(theme, ""),
-        heading = theme.help_heading,
-        name = theme.name,
-    );
+    };
+    let html = ui::Doc::new(theme, "Shortcuts").render(body);
     super::serve(super::kind::HELP, html)
 }

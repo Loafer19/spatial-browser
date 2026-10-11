@@ -34,6 +34,15 @@ pub struct Theme {
     pub help_key_fg: &'static str,
     // Error / destructive text in generated UI pages.
     pub help_danger: &'static str,
+    // Completed / OK state (downloads, saved banners).
+    pub help_success: &'static str,
+    // CSS font stacks: UI text, and URLs / keys / code.
+    pub help_font: &'static str,
+    pub help_mono: &'static str,
+    // Card / button rounding in built-in pages (px); independent of tile corners.
+    pub help_radius: f32,
+    // CSS `color-scheme` for built-in pages (form controls, scrollbars).
+    pub is_dark: bool,
 }
 
 impl Theme {
@@ -47,6 +56,13 @@ impl Theme {
         format!("{}px", (self.corner_radius * 0.75).max(0.0))
     }
 }
+
+/// Proportional UI text; system-ui resolves through fontconfig on Linux.
+const UI_SANS: &str =
+    "Inter, \"Inter Variable\", \"Noto Sans\", \"Segoe UI\", Roboto, system-ui, sans-serif";
+/// URLs, shortcuts, code — and all text in terminal-style themes.
+const UI_MONO: &str =
+    "\"JetBrainsMono Nerd Font\", \"JetBrains Mono\", ui-monospace, \"Cascadia Code\", monospace";
 
 // Tokyo Night (Omarchy colors.toml); sharp corners like Omarchy chrome.
 pub const TOKYO_NIGHT: Theme = Theme {
@@ -74,6 +90,11 @@ pub const TOKYO_NIGHT: Theme = Theme {
     help_key_bg: "rgb(122,162,247)",
     help_key_fg: "rgb(19,20,28)",
     help_danger: "rgb(247,118,142)",
+    help_success: "rgb(158,206,106)",
+    help_font: UI_SANS,
+    help_mono: UI_MONO,
+    help_radius: 8.0,
+    is_dark: true,
 };
 
 // Terminal look: near-black, sharp corners, thin border, orange accent.
@@ -102,6 +123,11 @@ pub const ANSI_TERMINAL: Theme = Theme {
     help_key_bg: "rgb(255,153,51)",
     help_key_fg: "rgb(0,0,0)",
     help_danger: "rgb(255,85,85)",
+    help_success: "rgb(80,250,123)",
+    help_font: UI_MONO,
+    help_mono: UI_MONO,
+    help_radius: 0.0,
+    is_dark: true,
 };
 
 pub const ALL: &[Theme] = &[TOKYO_NIGHT, ANSI_TERMINAL];

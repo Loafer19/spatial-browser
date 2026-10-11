@@ -1,5 +1,8 @@
 // Generated built-in pages, served from memory at `spatial://page/…` via
 // `serve` (never `data:` URLs).
+// New and ported pages build on `ui` (maud components + ui.css themed by
+// CSS variables + the shared ui.js keyboard model), which escapes every
+// interpolated value itself. Legacy `format!` pages must still:
 // Escape every interpolated value for its context: `html_escape` for HTML
 // text/attributes, `js_string_literal` for JS strings (handlers and
 // `<script>`), `url_component` for `scheme://…?k=v` values.
@@ -10,6 +13,8 @@ pub mod bookmarks_list;
 pub mod context_menu;
 pub mod downloads_list;
 pub mod find_bar;
+#[cfg(test)]
+mod gallery;
 pub mod help;
 pub mod history_list;
 pub mod omnibox;
@@ -17,6 +22,7 @@ pub mod passwords_list;
 pub mod save_prompt;
 pub mod settings_list;
 pub mod switcher;
+pub mod ui;
 pub mod userscripts_list;
 pub mod workspace_list;
 
