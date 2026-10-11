@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+Built-in pages overhaul: every `spatial://` page now uses one design system
+(ui.css themed by the current theme, shared keyboard model, maud templates
+that escape all data).
+
+- **Design system** for all built-in pages; Catppuccin Latte (first light theme).
+- **Command palette** (`Ctrl+K`): open pages, commands, bookmarks, history, typed URLs.
+- **Settings**: new **Performance** tab — frame rate, GPU (integrated / discrete)
+  and page painting (auto / GPU / CPU), the last two saved in `settings.json`
+  and applied after restart (`SPATIAL_BROWSER_GPU` / `_OSR` still win); search
+  across all tabs; custom search engine URL (validated http(s)).
+- **Bookmarks manager**: folder tree with nested `A/B` folders, search, inline
+  rename / move, multi-select delete and move, rename folder.
+- **Start page** (`Ctrl+T`): most visited sites, bookmark tiles, recent input,
+  suggestions as before.
+- **History**, **Passwords**, **Scripts & styles**, **Downloads** (live progress),
+  context menu, find bar, save prompt and workspaces ported to the new pages.
+- New **Site info** and **About** pages (from the palette).
+- Deletes in lists ask for a second `Delete` (no dialogs in OSR tiles).
+- Security: `site://` actions, like every other page action, are accepted only
+  from built-in tiles on their own token; site info reads local stores only and
+  never shows passwords; the web `password://` autofill subset is unchanged.
+
 ## v0.9.0
 
 Browser engine update, a security hardening pass across built-in pages and the
