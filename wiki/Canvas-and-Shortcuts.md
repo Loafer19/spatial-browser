@@ -11,6 +11,7 @@ Pages live in **world space** on a pannable/zoomable canvas. Hit-testing and dra
 | Ctrl+Scroll | Zoom canvas toward cursor |
 | Alt+Left-drag | Move a page |
 | Drag bottom-right corner | Resize a page |
+| Right-click | Context menu (open/copy/save link or image, generate/fill password, reader, close, …) |
 
 ## Touch
 
@@ -28,13 +29,14 @@ Pages live in **world space** on a pannable/zoomable canvas. Hit-testing and dra
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl+T` | New page (omnibox) |
+| `Ctrl+T` | New page (omnibox with history suggestions; `↑`/`↓` to pick) |
 | `Ctrl+Shift+T` | Reopen closed page |
 | `Ctrl+W` | Close page |
 | `Ctrl+F` | Find in page (Enter next, Shift+Enter previous, Esc close) |
 | `Ctrl+Shift+O` | Open page in system browser |
 | `Ctrl+R` | Reload |
 | `Ctrl+V` | Paste from clipboard |
+| `Ctrl+C` / `Ctrl+X` | Copy / cut selection (the page may write the clipboard only right after this or a click) |
 | `Ctrl+Shift+C` | Copy page URL |
 | `Ctrl+Shift+R` | Toggle reader mode |
 | `Alt+Left` / `Alt+Right` | Back / forward |
@@ -48,7 +50,7 @@ Pages live in **world space** on a pannable/zoomable canvas. Hit-testing and dra
 | `Ctrl+D` | Bookmark page |
 | `Ctrl+B` | Bookmarks list |
 | `Ctrl+J` | Downloads |
-| `Ctrl+H` | History |
+| `Ctrl+H` | History (search all, Show more, Recent ×N) |
 | `Ctrl+K` | Switcher (open pages) |
 | `Ctrl+Shift+W` | Workspace slot list |
 | `Ctrl+N` | New workspace slot |
@@ -56,6 +58,7 @@ Pages live in **world space** on a pannable/zoomable canvas. Hit-testing and dra
 | `Ctrl+Shift+1`…`Ctrl+Shift+9` | Move focused page to slot N (creates empty slots if missing) and follow |
 | `Ctrl+Shift+U` | Scripts & styles |
 | `Ctrl+Shift+P` | Passwords / vault |
+| `Ctrl+Shift+L` | Lock the vault now |
 | `Ctrl+,` | Settings |
 
 ### Canvas

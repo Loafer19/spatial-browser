@@ -2,7 +2,9 @@
 
 ## Omnibox (`Ctrl+T`)
 
-Type a URL or search. Prefixes: `@g`, `@y`, `@ddg`, `@bing`, `@wiki`. Typed history is remembered. Default search engine is chosen in Settings.
+Type a URL or search. Prefixes: `@g`, `@y`, `@ddg`, `@bing`, `@wiki`. Default search engine is chosen in Settings.
+
+**Suggestions** appear as you type (up to 8), from visit history and previously typed input. Matches on the start of the site's host (without `www.`) or URL rank first, then anything containing the text in URL or title; more-visited and more recent rows win ties. `↑`/`↓` select (wrapping back to just your text), `Enter` opens the selection or your text, `Esc` clears the selection. Recent typed entries also show as chips.
 
 ## Bookmarks / history / downloads
 
@@ -10,10 +12,18 @@ Type a URL or search. Prefixes: `@g`, `@y`, `@ddg`, `@bing`, `@wiki`. Typed hist
 |----|----------|--------|
 | Bookmark current | `Ctrl+D` | |
 | Bookmarks list | `Ctrl+B` | Folders, rename, delete, **Import…** (Chrome/Chromium/Brave/Edge) |
-| History | `Ctrl+H` | Day/site grouping |
-| Downloads | `Ctrl+J` | To `~/Downloads`, desktop notification on complete |
+| History | `Ctrl+H` | Search, Recent / By day / By site |
+| Downloads | `Ctrl+J` | To `~/Downloads`, desktop notification on complete; files are never left executable, and **Open** on executables/scripts/unknown types reveals the folder instead of running them |
 
 Browser bookmarks import — [[Getting-Started]].
+
+### History
+
+- Kept for **90 days**, up to **10 000 visits** (older entries are pruned on load and on every visit). Files from older versions (200-entry cap) migrate automatically.
+- The list opens with the newest 100 rows; **Show more** (or scrolling to the bottom) loads the next 100.
+- **Search** covers the whole history, not just the loaded rows: every word must appear in the page title or URL.
+- **Recent** shows each URL once at its latest visit, with **×N** when visited N times; its trash button removes every visit of that URL. **By day** / **By site** list every visit.
+- **Clear all** also wipes the favicon cache.
 
 Site icons in these lists come from a local cache (`~/.config/spatial-browser/favicons/`), captured from the browser cache when you visit a page and refreshed weekly. Opening a list never contacts the listed sites; a site you haven't visited since shows its letter. Clearing history also clears the icon cache.
 
@@ -36,6 +46,22 @@ Numbered **live slots** (default three), not named one-shot snapshots.
 - File: `~/.config/spatial-browser/workspaces.json` (version 2). Older v1 named snapshots migrate into visited slots on load.
 
 Hover the **top edge** of the window to reveal the chip strip (auto-hides when the pointer leaves).
+
+## Find in page (`Ctrl+F`)
+
+CEF's native find: highlights and `current / total` count. `Enter` next, `Shift+Enter` previous, match-case toggle, `Esc` closes. The bar is its own small tile glued above the page that was topmost when you opened it; it follows the page and closes with it.
+
+## Popups
+
+`target=_blank` links and `window.open` (e.g. OAuth logins) open as new canvas tiles that stay real children of their opener (`window.opener` works). Only with a user gesture, only `http(s)`, at most one per opener per short interval; everything else is blocked and logged. Never a native GTK window.
+
+## Open in system browser (`Ctrl+Shift+O`)
+
+Hands the focused page (or a link, via right-click → *Open … in system browser*) to the desktop default browser with `xdg-open` — e.g. for H.264 streams this build can't play ([[Limitations]]). URLs passed on the command line to a second launch open as tiles in the running window.
+
+## Fast tile opening
+
+A small pool of pre-started hidden browsers (one for built-in pages, one for web pages) is kept warm, so a new tile is a navigation rather than a renderer launch. The pool refills a couple of seconds after it's used.
 
 ## Reader mode (`Ctrl+Shift+R`)
 
@@ -76,7 +102,11 @@ Userscripts (`.js`) and userstyles (`.css`). Built-in UI pages can be styled wit
 
 ## Passwords (`Ctrl+Shift+P`)
 
-Encrypted local vault, fill suggestions on focus, Chrome/Bitwarden CSV import, save prompts, generator, never-save list — see [[Password-Manager]].
+Encrypted local vault (format v2: Argon2id params in an authenticated header, auto-migration from v1), fill suggestions on focus (HTTPS and local-network HTTP only), Chrome/Bitwarden CSV import, save prompt in its own tile, generator, never-save list. `Ctrl+Shift+L` locks; idle auto-lock after 15 min — see [[Password-Manager]].
+
+## Built-in pages (`spatial://`)
+
+Help, omnibox, lists, settings, passwords, find bar and the context menu are HTML served from memory as `spatial://page/<kind>/<token>`. Only these tiles may drive the compositor (bookmarks, history, vault, settings …); web pages can't open, link or frame them. See [[Architecture]] and the security notes in [[Limitations]].
 
 ## Single instance
 
