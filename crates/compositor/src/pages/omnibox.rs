@@ -1,18 +1,14 @@
-// Ctrl+T omnibox (`omnibox://go` → PENDING_OMNIBOX).
+// Ctrl+T start page / omnibox (`omnibox://go` → PENDING_OMNIBOX): search
+// box with suggestions, most visited sites, bookmarks and recent input.
+// Everything shown comes from local stores; tiles go through the same
+// `omnibox://go` as typed text.
 
-use super::{html_escape, js_string_literal};
+use super::ui::{self, html, Icon, Markup};
 use crate::output::Theme;
+use crate::persistence::bookmarks::{self, Bookmark};
+use crate::persistence::history::HistoryEntry;
 
-/// Separate script after SCRIPT to set DEFAULT_ENGINE (keeps SCRIPT a plain const).
-fn default_engine_override(default_engine: &str) -> String {
-    format!(
-        "<script>DEFAULT_ENGINE = {};</script>",
-        js_string_literal(default_engine)
-    )
-}
-
-/// Plain const (not format!) so JS braces need no `{{` escaping.
-const SCRIPT: &str = r#"<script>
+const SCRIPT: &str = r#"
 const PREFIXES = {
   '@g': 'https://www.google.com/search?q=',
   '@y': 'https://www.youtube.com/results?search_query=',
@@ -20,8 +16,8 @@ const PREFIXES = {
   '@bing': 'https://www.bing.com/search?q=',
   '@wiki': 'https://en.wikipedia.org/w/index.php?search='
 };
-// `var`: a following script reassigns DEFAULT_ENGINE from Settings.
-var DEFAULT_ENGINE = 'https://www.google.com/search?q=';
+// From Settings (json_script, so no escaping by hand).
+var DEFAULT_ENGINE = JSON.parse(document.getElementById('omni-engine').textContent);
 function resolve(raw) {
   const trimmed = raw.trim();
   // Prefix lookup is case-insensitive (`@G rust` works same as `@g
@@ -103,53 +99,179 @@ function go(raw) {
   const dest = resolve(raw);
   window.location = 'omnibox://go?q=' + encodeURIComponent(raw) + '&url=' + encodeURIComponent(dest);
 }
-</script>"#;
+document.addEventListener('click', e => {
+  const t = e.target.closest && e.target.closest('[data-go]');
+  if (t) { e.preventDefault(); go(t.dataset.go); }
+});
+// Enter on a selected tile row (ui.js arrow keys) opens it.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || e.target.id === 'q') return;
+  const row = window.ui && ui.active();
+  if (row && row.dataset.go) { e.preventDefault(); go(row.dataset.go); }
+});
+"#;
 
-/// Omnibox page URL (URL/search, @prefix engines, recent chips).
-pub fn page_url(theme: &Theme, typed_history: &[String], default_search_engine: &str) -> String {
-    let mut chips = String::new();
-    for entry in typed_history.iter().take(10) {
-        chips.push_str(&format!(
-            "<button onclick=\"go({entry_js})\" style=\"background:{card_bg};color:{fg};\
-             border:1px solid {card_border};border-radius:6px;padding:6px 10px;\
-             font:inherit;font-size:13px;cursor:pointer;margin:0 6px 6px 0\">{entry_html}</button>",
-            entry_js = js_string_literal(entry),
-            entry_html = html_escape(entry),
-            card_bg = theme.help_card_bg,
-            card_border = theme.help_card_border,
-            fg = theme.help_fg,
-        ));
+const CSS: &str = r#"
+.start { max-width: 760px; margin: 0 auto; padding-top: 9vh; }
+.omni { display: flex; align-items: center; gap: 10px; padding: 0 16px; height: 54px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.omni:focus-within { border-color: var(--accent); box-shadow: var(--ring); }
+.omni svg { width: 22px; height: 22px; opacity: .6; flex-shrink: 0; }
+.omni input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--fg);
+  font: inherit; font-size: 18px; }
+#suggest { margin-top: 6px; }
+.sg { display: flex; gap: 12px; align-items: baseline; padding: 8px 16px; border-radius: var(--radius-sm);
+  cursor: pointer; overflow: hidden; white-space: nowrap; }
+.sg:hover, .sg-active { background: var(--accent); color: var(--accent-fg); }
+.sg-text { overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); font-size: 14px; }
+.sg-title { opacity: .65; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+.hint { margin: 10px 4px 0; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+.tile { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 8px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  cursor: pointer; min-width: 0; text-align: center; }
+.tile:hover, .tile.is-active { border-color: var(--accent); }
+.tile .name { font-size: 12.5px; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--border); background: var(--surface); color: var(--fg); border-radius: 999px;
+  padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; max-width: 260px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip:hover { border-color: var(--accent); }
+.keys-line { margin-top: 28px; text-align: center; }
+"#;
+
+/// Tiles shown for most visited sites / bookmarks.
+pub(crate) const MAX_TILES: usize = 8;
+
+/// One start-page tile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TopSite {
+    pub url: String,
+    pub title: String,
+    pub host: String,
+    pub visits: usize,
+}
+
+/// Most visited hosts in `history` (newest first): each host once, linked
+/// to its most visited URL, ties to the more recent.
+pub(crate) fn top_sites(history: &[HistoryEntry], limit: usize) -> Vec<TopSite> {
+    use std::collections::HashMap;
+    /// visits, first index seen (recency rank), per-URL visits.
+    type HostStats<'a> = (usize, usize, Vec<(&'a HistoryEntry, usize)>);
+    let mut hosts: HashMap<&str, HostStats<'_>> = HashMap::new();
+    for (i, e) in history.iter().enumerate() {
+        if !(e.url.starts_with("https://") || e.url.starts_with("http://")) {
+            continue;
+        }
+        let host = bookmarks::host_of(&e.url);
+        if host.is_empty() {
+            continue;
+        }
+        let slot = hosts.entry(host).or_insert((0, i, Vec::new()));
+        slot.0 += 1;
+        match slot.2.iter_mut().find(|(u, _)| u.url == e.url) {
+            Some((_, n)) => *n += 1,
+            None => slot.2.push((e, 1)),
+        }
     }
+    let mut ranked: Vec<_> = hosts.into_iter().collect();
+    ranked.sort_by(|a, b| b.1 .0.cmp(&a.1 .0).then(a.1 .1.cmp(&b.1 .1)));
+    ranked
+        .into_iter()
+        .take(limit)
+        .map(|(host, (visits, _, urls))| {
+            // Most visited URL; `max_by_key` keeps the last max, so reverse
+            // to prefer the newest among equals.
+            let (best, _) = urls
+                .iter()
+                .rev()
+                .max_by_key(|(_, n)| *n)
+                .copied()
+                .unwrap_or((&history[0], 0));
+            TopSite {
+                url: best.url.clone(),
+                title: best
+                    .title
+                    .clone()
+                    .filter(|t| !t.trim().is_empty())
+                    .unwrap_or_else(|| host.to_string()),
+                host: host.to_string(),
+                visits,
+            }
+        })
+        .collect()
+}
 
-    let html = format!(
-        "{script}{engine_override}\
-         <body style=\"margin:0;padding:64px 48px;background:{bg};color:{fg};\
-         font-family:ui-monospace,monospace;font-size:15px\">\
-         <style>.sg{{display:flex;gap:12px;align-items:baseline;padding:8px 16px;\
-         border-radius:6px;cursor:pointer;overflow:hidden;white-space:nowrap}}\
-         .sg:hover,.sg-active{{background:{key_bg};color:{key_fg}}}\
-         .sg-text{{overflow:hidden;text-overflow:ellipsis}}\
-         .sg-title{{opacity:0.6;font-size:13px;overflow:hidden;text-overflow:ellipsis}}</style>\
-         <form onsubmit=\"omniSubmit();return false\">\
-         <input id=\"q\" autofocus autocomplete=\"off\" \
-         oninput=\"askSuggest(this.value)\" onkeydown=\"omniKey(event)\" \
-         placeholder=\"Search or type a URL &mdash; try @y, @ddg, @wiki, @bing...\" \
-         style=\"width:100%;box-sizing:border-box;background:{card_bg};color:{fg};\
-         border:1px solid {card_border};border-radius:8px;padding:14px 16px;\
-         font:inherit;font-size:18px\">\
-         </form>\
-         <div id=\"suggest\" style=\"margin-top:6px\"></div>\
-         <div style=\"margin-top:20px\">{chips}</div>\
-         </body>",
-        script = SCRIPT,
-        engine_override = default_engine_override(default_search_engine),
-        bg = theme.help_bg,
-        fg = theme.help_fg,
-        card_bg = theme.help_card_bg,
-        card_border = theme.help_card_border,
-        key_bg = theme.help_key_bg,
-        key_fg = theme.help_key_fg,
-    );
+fn tile(url: &str, host: &str, title: &str, sub: &str) -> Markup {
+    html! {
+        div class="tile row" data-nav data-go=(url) title=(format!("{title}\n{url}")) {
+            (ui::favicon_lg(host, title))
+            span class="name" { (title) }
+            @if !sub.is_empty() { span class="tiny muted" { (sub) } }
+        }
+    }
+}
+
+/// What the start page shows besides the search box.
+pub(crate) struct StartData<'a> {
+    pub typed_history: &'a [String],
+    pub history: &'a [HistoryEntry],
+    pub bookmarks: &'a [Bookmark],
+}
+
+/// Start page / omnibox URL.
+pub fn page_url(theme: &Theme, data: &StartData<'_>, default_search_engine: &str) -> String {
+    let top = top_sites(data.history, MAX_TILES);
+    let body = html! {
+        main class="page start" {
+            form onsubmit="omniSubmit();return false" {
+                label class="omni" {
+                    (Icon::Search)
+                    input id="q" autofocus autocomplete="off" spellcheck="false"
+                        oninput="askSuggest(this.value)" onkeydown="omniKey(event)"
+                        aria-label="Search or type a URL"
+                        placeholder="Search or type a URL — try @y, @ddg, @wiki, @bing";
+                }
+            }
+            div id="suggest" {}
+            @if !top.is_empty() {
+                h2 { "Most visited" }
+                div class="tiles" {
+                    @for site in &top {
+                        (tile(&site.url, &site.host, &site.title,
+                            &format!("{} visit{}", site.visits, if site.visits == 1 { "" } else { "s" })))
+                    }
+                }
+            }
+            @if !data.bookmarks.is_empty() {
+                h2 { "Bookmarks" }
+                div class="tiles" {
+                    @for b in data.bookmarks.iter().take(MAX_TILES) {
+                        (tile(&b.url, bookmarks::host_of(&b.url), bookmarks::display_label(b),
+                            b.folder.as_deref().unwrap_or("")))
+                    }
+                }
+            }
+            @if !data.typed_history.is_empty() {
+                h2 { "Recent" }
+                div class="chips" {
+                    @for entry in data.typed_history.iter().take(10) {
+                        button type="button" class="chip" data-go=(entry) title=(entry) { (entry) }
+                    }
+                }
+            }
+            p class="keys-line small muted" {
+                kbd { "Ctrl+K" } " commands · " kbd { "Ctrl+B" } " bookmarks · "
+                kbd { "Ctrl+H" } " history"
+            }
+            (ui::json_script("omni-engine", &serde_json::Value::from(default_search_engine)))
+        }
+    };
+    let html = ui::Doc::new(theme, "New page")
+        .no_row()
+        .css(CSS)
+        .script(SCRIPT)
+        .render(body);
     super::serve(super::kind::OMNIBOX, html)
 }
 
@@ -164,7 +286,12 @@ mod tests {
     /// HTMLFormElement.submit() and Enter never reached `go()` (v0.9.0).
     #[test]
     fn submit_handler_calls_our_function_not_a_form_method() {
-        let html = served_html(&page_url(&THEMES[0], &[], "https://e.test/?q="));
+        let data = StartData {
+            typed_history: &[],
+            history: &[],
+            bookmarks: &[],
+        };
+        let html = served_html(&page_url(&THEMES[0], &data, "https://e.test/?q="));
         let start = html.find("onsubmit=\"").expect("form has onsubmit") + 10;
         let handler = &html[start..start + html[start..].find('"').unwrap()];
         assert_eq!(handler, "omniSubmit();return false");
@@ -178,5 +305,66 @@ mod tests {
                 "global `{shadowed}` is shadowed by the form in inline handlers"
             );
         }
+    }
+
+    fn visit(url: &str, title: Option<&str>) -> HistoryEntry {
+        HistoryEntry {
+            url: url.into(),
+            visited_at: 0,
+            title: title.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn top_sites_group_by_host_and_skip_internal_urls() {
+        let history = [
+            visit("https://a.test/x", Some("X")),
+            visit("https://b.test/", None),
+            visit("https://a.test/y", None),
+            visit("https://a.test/x", Some("X")),
+            visit("spatial://page/abc", None),
+            visit("file:///etc/passwd", None),
+            visit("https://b.test/", None),
+            visit("https://c.test/", None),
+        ];
+        let top = top_sites(&history, 8);
+        let hosts: Vec<_> = top.iter().map(|t| t.host.as_str()).collect();
+        assert_eq!(hosts, ["a.test", "b.test", "c.test"]);
+        assert_eq!(
+            (top[0].url.as_str(), top[0].visits),
+            ("https://a.test/x", 3)
+        );
+        assert_eq!(top[1].title, "b.test");
+        assert_eq!(top_sites(&history, 1).len(), 1);
+    }
+
+    #[test]
+    fn start_page_tiles_are_escaped_and_engine_is_json() {
+        let history = [visit(
+            "https://a.test/\"><script>x()</script>",
+            Some("<img src=x>"),
+        )];
+        let marks: Vec<Bookmark> =
+            serde_json::from_value(serde_json::json!([{ "url": "https://b.test/'\"<b>" }]))
+                .unwrap();
+        let data = StartData {
+            typed_history: &["</script><i>".into()],
+            history: &history,
+            bookmarks: &marks,
+        };
+        let html = served_html(&page_url(&THEMES[0], &data, "https://e.test/?q=</script>"));
+        for raw in [
+            "<script>x()",
+            "<img src=x",
+            "<b>",
+            "</script><i>",
+            "q=</script>",
+        ] {
+            assert!(!html.contains(raw), "{raw}");
+        }
+        assert!(
+            html.contains("Most visited") && html.contains("Bookmarks") && html.contains("Recent")
+        );
+        assert!(html.contains("id=\"omni-engine\""));
     }
 }

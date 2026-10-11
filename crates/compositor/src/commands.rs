@@ -167,7 +167,14 @@ pub(crate) const PALETTE: &[PaletteCommand] = &[
 /// Do `command` on the focused (topmost) page / the canvas.
 pub(crate) fn run(command: Command, session: &mut Session, gpu: &GpuState, s: &mut Stores<'_>) {
     match command {
-        Command::NewPage => hotkeys::open_new(session, gpu, s.typed_history, s.settings),
+        Command::NewPage => hotkeys::open_new(
+            session,
+            gpu,
+            s.typed_history,
+            s.settings,
+            s.history,
+            s.bookmarks,
+        ),
         Command::ReopenClosed => hotkeys::reopen_closed(session, gpu),
         Command::ClosePage => session.close_topmost(),
         Command::Reload => hotkeys::reload_focused(session),

@@ -309,7 +309,15 @@ pub(crate) mod tests {
             ),
             (
                 kind::OMNIBOX,
-                omnibox::page_url(&theme, &["#1".into()], "https://e.test/?q="),
+                omnibox::page_url(
+                    &theme,
+                    &omnibox::StartData {
+                        typed_history: &["#1".into()],
+                        history: &[],
+                        bookmarks: &[],
+                    },
+                    "https://e.test/?q=",
+                ),
             ),
             (
                 kind::VAULT_UNLOCK,

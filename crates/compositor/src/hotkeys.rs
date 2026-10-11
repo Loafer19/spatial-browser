@@ -144,14 +144,17 @@ pub(crate) fn open_new(
     gpu: &GpuState,
     typed_history: &[String],
     settings: &AppSettings,
+    history: &[HistoryEntry],
+    bookmarks: &[Bookmark],
 ) {
     let size = gpu.window.inner_size();
     let rect = session.cascade_rect((size.width as f32, size.height as f32));
-    let url = pages::omnibox::page_url(
-        &session.theme(),
+    let data = pages::omnibox::StartData {
         typed_history,
-        &settings.default_search_engine,
-    );
+        history,
+        bookmarks,
+    };
+    let url = pages::omnibox::page_url(&session.theme(), &data, &settings.default_search_engine);
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 

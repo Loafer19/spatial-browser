@@ -178,7 +178,11 @@ fn samples(theme: &Theme) -> Vec<(&'static str, String)> {
             "omnibox",
             omnibox::page_url(
                 theme,
-                &["rust maud".into(), "github.com".into()],
+                &omnibox::StartData {
+                    typed_history: &["rust maud".into(), "github.com".into()],
+                    history: &history(),
+                    bookmarks: &bookmarks(),
+                },
                 "https://duckduckgo.com/?q=",
             ),
         ),
