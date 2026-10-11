@@ -34,6 +34,9 @@ struct PageStyle {
     // x = load progress 0..1, y = 1.0 if top load bar visible,
     // z = bar height in page pixels
     load: vec4<f32>,
+    // rgb = what dimming, the placeholder fill and the bar track fade
+    // toward: black on dark themes, a light neutral on light ones
+    fade_color: vec4<f32>,
 };
 @group(1) @binding(0) var<uniform> style: PageStyle;
 
@@ -60,6 +63,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let border_width = select(style.flags.z, style.flags.y, is_focused);
     let border_color = select(style.unfocused_border_color.rgb, style.focus_border_color.rgb, is_focused);
     let dim = select(style.flags.w, 1.0, is_focused);
+    let fade = style.fade_color.rgb;
 
     // Pixel position relative to the page's center.
     let pixel = (input.tex - vec2<f32>(0.5, 0.5)) * size;
@@ -80,7 +84,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         // purely to satisfy the pipeline layout; its contents are never
         // sampled here.
         let pulse = 0.4 + 0.6 * sin(frame.time.x * 4.0);
-        var loading_color = vec4<f32>(border_color * 0.15, 1.0);
+        var loading_color = vec4<f32>(mix(fade, border_color, 0.15), 1.0);
         let border_mix = smoothstep(-aa, aa, dist + border_width);
         loading_color = vec4<f32>(mix(loading_color.rgb, border_color, border_mix * pulse), loading_color.a);
         loading_color.a = loading_color.a * outside_alpha;
@@ -98,7 +102,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         // Dimming (unfocused only) applies to the page's own content; the
         // border itself is blended in at full strength afterward so it stays
         // legible against a same-colored canvas background regardless.
-        color = vec4<f32>(color.rgb * dim, color.a);
+        // mix(black, c, dim) == c * dim, so dark themes simply darken.
+        color = vec4<f32>(mix(fade, color.rgb, dim), color.a);
 
         // 1.0 once `dist` is within `border_width` of the outer edge, 0.0
         // once deeper inside than that — i.e. the ring band. Always drawn
@@ -124,7 +129,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             } else {
                 filled = select(0.0, 1.0, input.tex.x <= style.load.x);
             }
-            let track = border_color * 0.35;
+            let track = mix(fade, border_color, 0.35);
             let fill = style.focus_border_color.rgb;
             color = vec4<f32>(mix(track, fill, filled), 1.0);
             color.a = color.a * outside_alpha;

@@ -70,6 +70,8 @@ struct PageStyleUniform {
     // x = load progress 0..1, y = 1.0 if top load bar visible,
     // z = bar height in page pixels (from theme border width)
     load: [f32; 4],
+    // rgb = Theme::fade_color (what dimming / placeholder / bar track fade toward)
+    fade_color: [f32; 4],
 }
 
 /// Per-page vertex + style buffers (shared buffer would clobber earlier draws).
@@ -102,6 +104,7 @@ impl PageQuad {
                 unfocused_border_color: [0.0; 4],
                 flags: [0.0; 4],
                 load: [0.0; 4],
+                fade_color: [0.0; 4],
             }]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -190,6 +193,7 @@ impl PageQuad {
                     theme.focus_border_width.clamp(2.0, 5.0),
                     0.0,
                 ],
+                fade_color: theme.fade_color,
             }]),
         );
     }
@@ -742,4 +746,45 @@ fn discrete_gpu_without_forced_osr() -> bool {
         std::env::var("SPATIAL_BROWSER_GPU").ok().as_deref(),
         Some("high" | "discrete" | "dgpu")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PageStyleUniform;
+    use wgpu::naga;
+
+    /// Every WGSL shader parses and validates (naga is what wgpu runs at
+    /// pipeline creation; a mistake there would only surface at startup).
+    #[test]
+    fn shaders_validate() {
+        for (name, src) in [
+            ("shader.wgsl", include_str!("shader.wgsl")),
+            ("background.wgsl", include_str!("background.wgsl")),
+            ("hud.wgsl", include_str!("hud.wgsl")),
+        ] {
+            let module = naga::front::wgsl::parse_str(src)
+                .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(src)));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::empty(),
+            )
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        }
+    }
+
+    /// The Rust uniform matches shader.wgsl's `PageStyle` byte for byte.
+    #[test]
+    fn page_style_uniform_matches_shader() {
+        let module = naga::front::wgsl::parse_str(include_str!("shader.wgsl")).expect("parses");
+        let (_, ty) = module
+            .types
+            .iter()
+            .find(|(_, t)| t.name.as_deref() == Some("PageStyle"))
+            .expect("PageStyle");
+        let naga::TypeInner::Struct { span, .. } = ty.inner else {
+            panic!("PageStyle is a struct");
+        };
+        assert_eq!(span as usize, std::mem::size_of::<PageStyleUniform>());
+    }
 }
