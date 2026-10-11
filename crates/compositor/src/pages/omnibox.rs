@@ -33,6 +33,69 @@ function resolve(raw) {
   if (/^[^\s]+\.[^\s]+$/.test(trimmed)) return 'https://' + trimmed;
   return DEFAULT_ENGINE + encodeURIComponent(trimmed);
 }
+// Suggestions: typed text → `omnibox://suggest` → Rust → omniSuggest().
+let suggestions = [], selected = -1, lastQuery = '', suggestTimer = null;
+function askSuggest(value) {
+  clearTimeout(suggestTimer);
+  selected = -1;
+  suggestTimer = setTimeout(() => {
+    lastQuery = value;
+    if (!value.trim()) { omniSuggest({ query: value, rows: [] }); return; }
+    location = 'omnibox://suggest?q=' + encodeURIComponent(value);
+  }, 80);
+}
+function omniSuggest(res) {
+  if (res.query !== lastQuery) return; // stale
+  suggestions = res.rows;
+  selected = -1;
+  renderSuggest();
+}
+function renderSuggest() {
+  const box = document.getElementById('suggest');
+  box.textContent = '';
+  suggestions.forEach((s, i) => {
+    const row = document.createElement('div');
+    row.className = 'sg' + (i === selected ? ' sg-active' : '');
+    const main = document.createElement('span');
+    main.className = 'sg-text';
+    main.textContent = s.text;
+    row.appendChild(main);
+    if (s.title) {
+      const t = document.createElement('span');
+      t.className = 'sg-title';
+      t.textContent = s.title;
+      row.appendChild(t);
+    }
+    if (s.typed) {
+      const t = document.createElement('span');
+      t.className = 'sg-title';
+      t.textContent = 'typed';
+      row.appendChild(t);
+    }
+    row.onmousedown = e => { e.preventDefault(); go(s.text); };
+    box.appendChild(row);
+  });
+}
+function omniKey(event) {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    if (!suggestions.length) return;
+    event.preventDefault();
+    const n = suggestions.length;
+    // -1 = the typed text itself.
+    selected = event.key === 'ArrowDown'
+      ? (selected + 1 >= n ? -1 : selected + 1)
+      : (selected - 1 < -1 ? n - 1 : selected - 1);
+    renderSuggest();
+  } else if (event.key === 'Escape' && selected >= 0) {
+    event.preventDefault();
+    selected = -1;
+    renderSuggest();
+  }
+}
+function submit() {
+  const q = document.getElementById('q');
+  go(selected >= 0 && suggestions[selected] ? suggestions[selected].text : q.value);
+}
 function go(raw) {
   if (!raw) return;
   const dest = resolve(raw);
@@ -60,13 +123,20 @@ pub fn page_url(theme: &Theme, typed_history: &[String], default_search_engine: 
         "{script}{engine_override}\
          <body style=\"margin:0;padding:64px 48px;background:{bg};color:{fg};\
          font-family:ui-monospace,monospace;font-size:15px\">\
-         <form onsubmit=\"go(document.getElementById('q').value);return false\">\
-         <input id=\"q\" autofocus \
+         <style>.sg{{display:flex;gap:12px;align-items:baseline;padding:8px 16px;\
+         border-radius:6px;cursor:pointer;overflow:hidden;white-space:nowrap}}\
+         .sg:hover,.sg-active{{background:{key_bg};color:{key_fg}}}\
+         .sg-text{{overflow:hidden;text-overflow:ellipsis}}\
+         .sg-title{{opacity:0.6;font-size:13px;overflow:hidden;text-overflow:ellipsis}}</style>\
+         <form onsubmit=\"submit();return false\">\
+         <input id=\"q\" autofocus autocomplete=\"off\" \
+         oninput=\"askSuggest(this.value)\" onkeydown=\"omniKey(event)\" \
          placeholder=\"Search or type a URL &mdash; try @y, @ddg, @wiki, @bing...\" \
          style=\"width:100%;box-sizing:border-box;background:{card_bg};color:{fg};\
          border:1px solid {card_border};border-radius:8px;padding:14px 16px;\
          font:inherit;font-size:18px\">\
          </form>\
+         <div id=\"suggest\" style=\"margin-top:6px\"></div>\
          <div style=\"margin-top:20px\">{chips}</div>\
          </body>",
         script = SCRIPT,
@@ -75,6 +145,8 @@ pub fn page_url(theme: &Theme, typed_history: &[String], default_search_engine: 
         fg = theme.help_fg,
         card_bg = theme.help_card_bg,
         card_border = theme.help_card_border,
+        key_bg = theme.help_key_bg,
+        key_fg = theme.help_key_fg,
     );
     super::serve(super::kind::OMNIBOX, html)
 }

@@ -26,6 +26,34 @@ pub(super) fn drain_omnibox(
     }
 }
 
+/// `omnibox://suggest?q=`: rank history + typed input, hand the rows to
+/// that omnibox tile by script. Built-in tiles only (`from_internal`), so a
+/// web page can neither ask nor receive.
+pub(super) fn drain_omnibox_suggest(
+    session: &Session,
+    history: &[HistoryEntry],
+    typed_history: &[String],
+) {
+    let Some((browser_id, query)) = PENDING_OMNIBOX_SUGGEST
+        .with_borrow_mut(|pending| pending.take())
+        .filter(|(id, _)| from_internal(session, *id, "omnibox://"))
+    else {
+        return;
+    };
+    let Some(frame) = session
+        .pages()
+        .iter()
+        .find(|p| p.browser.identifier() == browser_id)
+        .and_then(|p| p.browser.main_frame())
+    else {
+        return;
+    };
+    let rows = suggest::suggest(history, typed_history, &query);
+    let json = serde_json::json!({ "query": query, "rows": rows }).to_string();
+    let js = format!("window.omniSuggest && omniSuggest({json});");
+    frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
+}
+
 /// `switcher://go/{id}`: front and pan to the target, close the switcher.
 pub(super) fn drain_switcher(session: &mut Session, gpu: &GpuState) {
     // switcher://go/{id} → front+pan target; close switcher (not undo stack).
