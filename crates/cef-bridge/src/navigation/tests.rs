@@ -109,3 +109,35 @@ fn clipboard_copy_decodes_text() {
     );
     assert_eq!(parse_clipboard_copy("clipboard://paste?text=x"), None);
 }
+
+#[test]
+fn history_search_action() {
+    for url in [
+        "history://search?q=rust%20book&offset=40",
+        "history://search/?q=rust+book&offset=40",
+    ] {
+        assert!(
+            matches!(parse_history_action(url), Some(HistoryPageAction::Search { query, offset: 40 }) if query == "rust book"),
+            "{url}"
+        );
+    }
+    assert!(matches!(
+        parse_history_action("history://search?offset=x"),
+        Some(HistoryPageAction::Search { offset: 0, .. })
+    ));
+    assert!(parse_history_action("history://searching").is_none());
+}
+
+#[test]
+fn omnibox_suggest_action() {
+    assert_eq!(
+        parse_omnibox_suggest("omnibox://suggest?q=gith%20ub").as_deref(),
+        Some("gith ub")
+    );
+    assert_eq!(
+        parse_omnibox_suggest("omnibox://suggest/?q=x").as_deref(),
+        Some("x")
+    );
+    assert!(parse_omnibox_suggest("omnibox://go?q=x&url=y").is_none());
+    assert!(parse_omnibox_submit("omnibox://suggest?q=x").is_none());
+}

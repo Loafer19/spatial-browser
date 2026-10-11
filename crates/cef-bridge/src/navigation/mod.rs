@@ -81,6 +81,10 @@ wrap_request_handler! {
                 PENDING_OMNIBOX.with_borrow_mut(|pending| *pending = Some((id, submit)));
                 return true as _;
             }
+            if let Some(query) = parse_omnibox_suggest(&url) {
+                PENDING_OMNIBOX_SUGGEST.with_borrow_mut(|pending| *pending = Some((id, query)));
+                return true as _;
+            }
             if let Some(target_id) = parse_switch_target(&url) {
                 PENDING_SWITCH.with_borrow_mut(|pending| *pending = Some((id, target_id)));
                 return true as _;

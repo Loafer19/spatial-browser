@@ -1,9 +1,20 @@
 // history.json — completed top-level visits (not omnibox typed_history).
+//
+// Kept for MAX_AGE_SECS or MAX_ENTRIES visits, whichever is shorter. The
+// list page renders only a page of rows and asks Rust for the rest
+// (`history://search`), so a full history opens as fast as a short one.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-const MAX_HISTORY: usize = 200;
+/// Visits older than this are dropped (load and every record).
+pub const MAX_AGE_SECS: i64 = 90 * 24 * 3600;
+/// Hard cap even within MAX_AGE_SECS (heavy browsing days).
+pub const MAX_ENTRIES: usize = 10_000;
+/// Current `history.json` layout. v1 (no `version` field) capped at 200
+/// rows and was always newest-first; v2 is the same rows with a version
+/// tag and the longer retention.
+const FILE_VERSION: u32 = 2;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
@@ -25,6 +36,9 @@ fn clean_title(title: &str) -> Option<String> {
 
 #[derive(Default, Serialize, Deserialize)]
 struct HistoryFile {
+    /// Missing in v1 files.
+    #[serde(default)]
+    version: u32,
     entries: Vec<HistoryEntry>,
 }
 
@@ -33,10 +47,87 @@ fn path() -> PathBuf {
 }
 
 /// Returns an empty list if there's no file yet or it fails to parse.
+/// Older files are migrated (and re-saved) to the current version.
 pub fn load() -> Vec<HistoryEntry> {
-    super::store::load_json::<HistoryFile>(&path(), "history")
-        .map(|f| f.entries)
-        .unwrap_or_default()
+    let Some(file) = super::store::load_json::<HistoryFile>(&path(), "history") else {
+        return Vec::new();
+    };
+    let (history, changed) = migrate(file, super::vault::now_unix());
+    if changed {
+        save(&history);
+    }
+    history
+}
+
+/// Bring a loaded file up to FILE_VERSION and apply retention. True when
+/// the result differs from what is on disk.
+fn migrate(file: HistoryFile, now: i64) -> (Vec<HistoryEntry>, bool) {
+    let mut history = file.entries;
+    let mut changed = file.version != FILE_VERSION;
+    // Newest first is an invariant every reader relies on (title updates,
+    // day grouping); restore it if a hand-edited or old file broke it.
+    if !history.is_sorted_by(|a, b| a.visited_at >= b.visited_at) {
+        history.sort_by_key(|e| std::cmp::Reverse(e.visited_at));
+        changed = true;
+    }
+    changed |= prune(&mut history, now);
+    (history, changed)
+}
+
+/// Drop visits older than MAX_AGE_SECS and beyond MAX_ENTRIES (list is
+/// newest first). True when anything was removed.
+pub fn prune(history: &mut Vec<HistoryEntry>, now: i64) -> bool {
+    let before = history.len();
+    let cutoff = now.saturating_sub(MAX_AGE_SECS);
+    let keep = history
+        .iter()
+        .position(|e| e.visited_at < cutoff)
+        .unwrap_or(history.len())
+        .min(MAX_ENTRIES);
+    history.truncate(keep);
+    history.len() != before
+}
+
+/// One search result: the row's index in the full list (for
+/// `history://open|remove/<index>`) and the entry.
+pub struct Hit<'a> {
+    pub index: usize,
+    pub entry: &'a HistoryEntry,
+}
+
+/// Rows matching `query` (every whitespace-separated word must appear in
+/// the title or URL, case-insensitive), newest first: `limit` of them
+/// starting at `offset`, plus the total match count.
+pub fn search<'a>(
+    history: &'a [HistoryEntry],
+    query: &str,
+    offset: usize,
+    limit: usize,
+) -> (Vec<Hit<'a>>, usize) {
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    let mut total = 0;
+    let mut hits = Vec::new();
+    for (index, entry) in history.iter().enumerate() {
+        if !matches(entry, &words) {
+            continue;
+        }
+        if total >= offset && hits.len() < limit {
+            hits.push(Hit { index, entry });
+        }
+        total += 1;
+    }
+    (hits, total)
+}
+
+pub(crate) fn matches(entry: &HistoryEntry, words: &[String]) -> bool {
+    if words.is_empty() {
+        return true;
+    }
+    let url = entry.url.to_lowercase();
+    let title = entry.title.as_deref().unwrap_or("").to_lowercase();
+    words
+        .iter()
+        .all(|w| url.contains(w.as_str()) || title.contains(w.as_str()))
 }
 
 /// Record visit at front; refresh timestamp (and title) if the same URL is
@@ -59,7 +150,7 @@ pub fn record(history: &mut Vec<HistoryEntry>, url: &str, visited_at: i64, title
             },
         ),
     }
-    history.truncate(MAX_HISTORY);
+    prune(history, visited_at);
     save(history);
 }
 
@@ -100,6 +191,7 @@ fn apply_title(history: &mut [HistoryEntry], url: &str, title: &str) -> TitleCha
 
 pub fn save(history: &[HistoryEntry]) {
     let data = HistoryFile {
+        version: FILE_VERSION,
         entries: history.to_vec(),
     };
     super::store::save_json_bg(&path(), "history", &data, super::store::Backup::None);
@@ -123,6 +215,107 @@ mod tests {
             serde_json::from_str(r#"{"entries":[{"url":"https://a.test/","visited_at":1}]}"#)
                 .unwrap();
         assert_eq!(file.entries[0].title, None);
+    }
+
+    fn at(url: &str, visited_at: i64) -> HistoryEntry {
+        HistoryEntry {
+            url: url.into(),
+            visited_at,
+            title: None,
+        }
+    }
+
+    const NOW: i64 = 2_000_000_000;
+
+    #[test]
+    fn v1_file_migrates_to_v2() {
+        let file: HistoryFile = serde_json::from_str(&format!(
+            r#"{{"entries":[{{"url":"https://a.test/","visited_at":{}}}]}}"#,
+            NOW - 10
+        ))
+        .unwrap();
+        assert_eq!(file.version, 0);
+        let (h, changed) = migrate(file, NOW);
+        assert!(changed, "v1 is re-saved as v2");
+        assert_eq!(h.len(), 1);
+        let current = HistoryFile {
+            version: FILE_VERSION,
+            entries: h,
+        };
+        let json = serde_json::to_string(&current).unwrap();
+        let reread: HistoryFile = serde_json::from_str(&json).unwrap();
+        assert!(!migrate(reread, NOW).1, "v2 within limits is left alone");
+    }
+
+    #[test]
+    fn migrate_restores_newest_first() {
+        let file = HistoryFile {
+            version: FILE_VERSION,
+            entries: vec![
+                at("https://old.test/", NOW - 50),
+                at("https://new.test/", NOW - 5),
+            ],
+        };
+        let (h, changed) = migrate(file, NOW);
+        assert!(changed);
+        assert_eq!(h[0].url, "https://new.test/");
+    }
+
+    #[test]
+    fn prune_drops_old_and_excess() {
+        let mut h = vec![
+            at("https://a.test/", NOW),
+            at("https://b.test/", NOW - MAX_AGE_SECS + 1),
+            at("https://c.test/", NOW - MAX_AGE_SECS - 1),
+        ];
+        assert!(prune(&mut h, NOW));
+        assert_eq!(h.len(), 2);
+        let mut big: Vec<_> = (0..MAX_ENTRIES as i64 + 5)
+            .map(|i| at("https://x.test/", NOW - i))
+            .collect();
+        assert!(prune(&mut big, NOW));
+        assert_eq!(big.len(), MAX_ENTRIES);
+        assert!(!prune(&mut big, NOW));
+    }
+
+    #[test]
+    fn search_pages_through_all_matches() {
+        let h: Vec<_> = (0..250)
+            .map(|i| HistoryEntry {
+                url: format!("https://site{}.test/page", i % 5),
+                visited_at: NOW - i,
+                title: Some(format!("Title {i}")),
+            })
+            .collect();
+        let (hits, total) = search(&h, "SITE3", 0, 20);
+        assert_eq!(total, 50);
+        assert_eq!(hits.len(), 20);
+        assert_eq!(hits[0].index, 3);
+        let (hits, _) = search(&h, "site3", 40, 20);
+        assert_eq!(hits.len(), 10);
+        // Every word must match, title or URL.
+        let (_, total) = search(&h, "title site1", 0, 10);
+        assert_eq!(total, 50);
+        let (_, total) = search(&h, "title nope", 0, 10);
+        assert_eq!(total, 0);
+        let (hits, total) = search(&h, "  ", 0, 10);
+        assert_eq!((hits.len(), total), (10, 250));
+    }
+
+    #[test]
+    fn search_10k_is_fast() {
+        let h: Vec<_> = (0..MAX_ENTRIES as i64)
+            .map(|i| HistoryEntry {
+                url: format!("https://host{}.example.test/path/{i}?q=x", i % 400),
+                visited_at: NOW - i,
+                title: Some(format!("Some reasonably long page title number {i}")),
+            })
+            .collect();
+        let start = std::time::Instant::now();
+        let (_, total) = search(&h, "host7 number", 0, 100);
+        assert!(total > 0);
+        // Unoptimized test build; release is far faster.
+        assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
     }
 
     #[test]

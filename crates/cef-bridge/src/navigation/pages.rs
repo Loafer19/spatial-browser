@@ -51,6 +51,20 @@ thread_local! {
     pub static PENDING_OMNIBOX: RefCell<Option<(i32, OmniboxSubmit)>> = const { RefCell::new(None) };
 }
 
+thread_local! {
+    /// `omnibox://suggest?q=…` (omnibox browser_id, typed text): answered
+    /// by script into that omnibox tile only.
+    pub static PENDING_OMNIBOX_SUGGEST: RefCell<Option<(i32, String)>> = const { RefCell::new(None) };
+}
+
+pub(super) fn parse_omnibox_suggest(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("omnibox://")?;
+    let query = rest
+        .strip_prefix("suggest?")
+        .or_else(|| rest.strip_prefix("suggest/?"))?;
+    Some(query_param(query, "q").unwrap_or_default())
+}
+
 pub(super) fn parse_omnibox_submit(url: &str) -> Option<OmniboxSubmit> {
     let query = url.strip_prefix("omnibox://go?")?;
     Some(OmniboxSubmit {
@@ -97,6 +111,12 @@ pub enum HistoryPageAction {
     Open(usize),
     Remove(usize),
     Clear,
+    /// `history://search?q=…&offset=N`: the next page of matching rows,
+    /// answered by script into the asking (built-in) page only.
+    Search {
+        query: String,
+        offset: usize,
+    },
 }
 
 thread_local! {
@@ -114,6 +134,18 @@ pub(super) fn parse_history_action(url: &str) -> Option<HistoryPageAction> {
     }
     if rest == "clear" {
         return Some(HistoryPageAction::Clear);
+    }
+    // CEF may canonicalize `search?` to `search/?`.
+    if let Some(query) = rest
+        .strip_prefix("search?")
+        .or_else(|| rest.strip_prefix("search/?"))
+    {
+        return Some(HistoryPageAction::Search {
+            query: query_param(query, "q").unwrap_or_default(),
+            offset: query_param(query, "offset")
+                .and_then(|o| o.parse().ok())
+                .unwrap_or(0),
+        });
     }
     None
 }

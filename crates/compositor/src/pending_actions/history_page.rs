@@ -35,6 +35,9 @@ pub(super) fn drain(session: &mut Session, gpu: &GpuState, history: &mut Vec<His
                 }
                 refresh_history_page(session, gpu, history, browser_id);
             }
+            HistoryPageAction::Search { query, offset } => {
+                send_search_results(session, browser_id, history, &query, offset);
+            }
             HistoryPageAction::Clear => {
                 history.clear();
                 // The icon cache lists visited sites too.
@@ -44,4 +47,29 @@ pub(super) fn drain(session: &mut Session, gpu: &GpuState, history: &mut Vec<His
             }
         }
     }
+}
+
+/// Answer `history://search` by script into the asking page. `drain` only
+/// gets here for a built-in history tile (`from_internal`), so rows never
+/// reach web content.
+fn send_search_results(
+    session: &Session,
+    browser_id: i32,
+    history: &[HistoryEntry],
+    query: &str,
+    offset: usize,
+) {
+    let Some(page) = session
+        .pages()
+        .iter()
+        .find(|p| p.browser.identifier() == browser_id)
+    else {
+        return;
+    };
+    let Some(frame) = page.browser.main_frame() else {
+        return;
+    };
+    let json = pages::history_list::results_json(history, query, offset);
+    let js = format!("window.histResults && histResults({json});");
+    frame.execute_java_script(Some(&js.as_str().into()), Some(&"".into()), 0);
 }
