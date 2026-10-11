@@ -8,7 +8,7 @@
 // its states (empty, long text, errors) so reviews catch layout problems.
 
 use super::*;
-use crate::output::THEMES;
+use crate::output::{Theme, THEMES};
 use crate::persistence::bookmarks::Bookmark;
 use crate::persistence::downloads::DownloadRecord;
 use crate::persistence::history::HistoryEntry;

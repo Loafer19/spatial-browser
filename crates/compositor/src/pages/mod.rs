@@ -1,13 +1,10 @@
 // Generated built-in pages, served from memory at `spatial://page/…` via
 // `serve` (never `data:` URLs).
-// New and ported pages build on `ui` (maud components + ui.css themed by
-// CSS variables + the shared ui.js keyboard model), which escapes every
-// interpolated value itself. Legacy `format!` pages must still:
-// Escape every interpolated value for its context: `html_escape` for HTML
-// text/attributes, `js_string_literal` for JS strings (handlers and
-// `<script>`), `url_component` for `scheme://…?k=v` values.
-
-use crate::output::Theme;
+// Every page builds on `ui` (maud components + ui.css themed by CSS
+// variables + the shared ui.js keyboard model), which escapes HTML text
+// and attributes itself. Still escape by hand where maud can't:
+// `js_string_literal` for JS strings, `url_component` for
+// `scheme://…?k=v` values, `ui::json_script` for data in `<script>`.
 
 pub mod bookmarks_list;
 pub mod context_menu;
@@ -80,15 +77,6 @@ pub(crate) fn kind_of(url: &str) -> Option<&str> {
     cef_bridge::spatial::parse_page_url(url).map(|(kind, _)| kind)
 }
 
-/// Escape for HTML text and for double- or single-quoted attribute values.
-pub(crate) fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
 /// Body of a JS single-quoted string. Every ASCII char outside a small safe
 /// set becomes `\uXXXX`, so the result cannot end the literal (`'`, `\`,
 /// line breaks), close a `<script>` (`<`), or break out of an HTML
@@ -150,51 +138,6 @@ pub(crate) fn url_component(s: &str) -> String {
         }
     }
     out
-}
-
-/// ArrowUp/Down/Enter for `.list-row[data-open]`; skips focused `<input>`.
-pub(crate) const LIST_NAV_SCRIPT: &str = r#"<script>
-let listActiveIndex = 0;
-function listRows() {
-  return Array.from(document.querySelectorAll('.list-row')).filter(r => r.offsetParent !== null);
-}
-function setListActive(index) {
-  const rows = listRows();
-  if (!rows.length) return;
-  listActiveIndex = ((index % rows.length) + rows.length) % rows.length;
-  rows.forEach(r => r.classList.remove('list-active'));
-  rows[listActiveIndex].classList.add('list-active');
-  rows[listActiveIndex].scrollIntoView({block: 'nearest'});
-}
-document.addEventListener('keydown', (event) => {
-  if (event.target.tagName === 'INPUT') return;
-  if (event.key === 'ArrowDown') {
-    event.preventDefault();
-    setListActive(listActiveIndex + 1);
-  } else if (event.key === 'ArrowUp') {
-    event.preventDefault();
-    setListActive(listActiveIndex - 1);
-  } else if (event.key === 'Enter') {
-    const row = listRows()[listActiveIndex];
-    if (row && row.dataset.open) window.location = row.dataset.open;
-  }
-});
-document.addEventListener('mouseover', (event) => {
-  const row = event.target.closest('.list-row');
-  if (!row) return;
-  const index = listRows().indexOf(row);
-  if (index >= 0) setListActive(index);
-});
-window.addEventListener('load', () => setListActive(0));
-</script>"#;
-
-pub(crate) fn body_open(theme: &Theme, extra_attrs: &str) -> String {
-    format!(
-        "<body {extra_attrs} style=\"margin:0;padding:32px;background:{bg};color:{fg};\
-         font-family:ui-monospace,monospace;font-size:15px\">",
-        bg = theme.help_bg,
-        fg = theme.help_fg,
-    )
 }
 
 pub(crate) const TRASH_SVG_PATH: &str =
@@ -356,10 +299,6 @@ pub(crate) mod tests {
     #[test]
     fn escapers_neutralise_markup() {
         assert_eq!(
-            html_escape(r#"<img src=x onerror='a()'>&"#),
-            "&lt;img src=x onerror=&#39;a()&#39;&gt;&amp;"
-        );
-        assert_eq!(
             js_string_literal("x';alert(1)//\"</script>\n\u{2028}é"),
             "'x\\u0027;alert(1)//\\u0022\\u003c/script\\u003e\\u000a\\u2028é'"
         );
@@ -406,7 +345,10 @@ pub(crate) mod tests {
             None,
             "never",
         ));
-        assert!(!never_page.contains("');alert(1)"), "{never_page}");
+        assert!(
+            !never_page.contains("onclick"),
+            "no inline handlers with data"
+        );
         assert!(never_page.contains("remove-never?origin=https%3A%2F%2Fn.test%27%29%3Balert"));
     }
 }
