@@ -29,7 +29,7 @@ Pages live in **world space** on a pannable/zoomable canvas. Hit-testing and dra
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl+T` | New page (omnibox with history suggestions; `↑`/`↓` to pick) |
+| `Ctrl+T` | New page: start page with search + suggestions, most visited, bookmarks |
 | `Ctrl+Shift+T` | Reopen closed page |
 | `Ctrl+W` | Close page |
 | `Ctrl+F` | Find in page (Enter next, Shift+Enter previous, Esc close) |
@@ -48,10 +48,10 @@ Pages live in **world space** on a pannable/zoomable canvas. Hit-testing and dra
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl+D` | Bookmark page |
-| `Ctrl+B` | Bookmarks list |
+| `Ctrl+B` | Bookmarks manager (folders, multi-select) |
 | `Ctrl+J` | Downloads |
 | `Ctrl+H` | History (search all, Show more, Recent ×N) |
-| `Ctrl+K` | Switcher (open pages) |
+| `Ctrl+K` | Command palette (pages, commands, bookmarks, history; Site info, About) |
 | `Ctrl+Shift+W` | Workspace slot list |
 | `Ctrl+N` | New workspace slot |
 | `Ctrl+1`…`Ctrl+9` | Switch to workspace slot N |

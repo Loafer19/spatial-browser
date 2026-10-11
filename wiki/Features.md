@@ -1,6 +1,8 @@
 # Features
 
-## Omnibox (`Ctrl+T`)
+## Start page / omnibox (`Ctrl+T`)
+
+A start page: search box, **Most visited** sites (from local history, one tile per host), **Bookmarks** tiles and recent typed input as chips. Arrow keys / `Enter` open a tile.
 
 Type a URL or search. Prefixes: `@g`, `@y`, `@ddg`, `@bing`, `@wiki`. Default search engine is chosen in Settings.
 
@@ -11,7 +13,7 @@ Type a URL or search. Prefixes: `@g`, `@y`, `@ddg`, `@bing`, `@wiki`. Default se
 | UI | Shortcut | Notes |
 |----|----------|--------|
 | Bookmark current | `Ctrl+D` | |
-| Bookmarks list | `Ctrl+B` | Folders, rename, delete, **Import…** (Chrome/Chromium/Brave/Edge) |
+| Bookmarks manager | `Ctrl+B` | Folder tree (`A/B` nested paths), search, inline rename / move (`r`), multi-select (`Space`, `a`) to delete or move, rename folder, **Import…** (Chrome/Chromium/Brave/Edge) |
 | History | `Ctrl+H` | Search, Recent / By day / By site |
 | Downloads | `Ctrl+J` | To `~/Downloads`, desktop notification on complete; files are never left executable, and **Open** on executables/scripts/unknown types reveals the folder instead of running them |
 
@@ -92,9 +94,13 @@ Strips tracking params from navigations (`utm_*`, `fbclid`, `gclid`, …). Separ
 
 Tokyo Night / ANSI Terminal for canvas chrome. Cycle with `Ctrl+Shift+Space`, or pick in Settings. Reader themes are separate.
 
-## Frame rate
+## Frame rate, GPU and page painting
 
-Settings: 60 / 90 / 120 target. Monitor refresh is still the real ceiling.
+Settings → **Performance**: 60 / 90 / 120 fps target (applies immediately; monitor refresh is still the real ceiling), GPU (integrated / discrete) and page painting (auto / GPU shared textures / CPU copy) — these two apply after a restart. See [[Configuration]].
+
+## Command palette, site info, about
+
+`Ctrl+K` opens the command palette (pages, commands, bookmarks, history). **Site info** (palette) shows the focused page's connection, visits, bookmarks, saved-login count (vault unlocked), matching scripts/styles and blocking state, with **Forget history for this site** and a bookmark toggle. **About** shows versions (app, CEF, Chromium), the active GPU / paint path and the data folder.
 
 ## Scripts & styles (`Ctrl+Shift+U`)
 
@@ -106,7 +112,7 @@ Encrypted local vault (format v2: Argon2id params in an authenticated header, au
 
 ## Built-in pages (`spatial://`)
 
-Help, omnibox, lists, settings, passwords, find bar and the context menu are HTML served from memory as `spatial://page/<kind>/<token>`. Only these tiles may drive the compositor (bookmarks, history, vault, settings …); web pages can't open, link or frame them. See [[Architecture]] and the security notes in [[Limitations]].
+Help, start page, palette, lists, settings, passwords, site info, about, find bar and the context menu share one design system (themed by the current theme, same keyboard model: `↑↓`/`jk`, `Enter`, `Del`, `/`, `?`) and are HTML served from memory as `spatial://page/<kind>/<token>`. Only these tiles may drive the compositor (bookmarks, history, vault, settings …); web pages can't open, link or frame them. See [[Architecture]] and the security notes in [[Limitations]].
 
 ## Single instance
 

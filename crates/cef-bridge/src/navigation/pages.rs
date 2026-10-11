@@ -1,4 +1,4 @@
-// Built-in list page actions (bookmarks, omnibox, switcher, downloads,
+// Built-in list page actions (bookmarks, omnibox, palette, downloads,
 // history, workspaces, settings, userscripts).
 
 use super::query::{percent_decode, query_param};
@@ -12,6 +12,29 @@ pub enum BookmarkAction {
     Rename(usize, String, String),
     /// Native file picker → merge Chrome Bookmarks JSON.
     ImportBrowse,
+    /// Several rows at once (`bookmark://delete-many?ids=1,4`).
+    DeleteMany(Vec<usize>),
+    /// Rows into a folder (`bookmark://move?ids=1,4&folder=A/B`; empty = unfiled).
+    Move(Vec<usize>, String),
+    /// Folder path and everything under it (`bookmark://rename-folder?from=&to=`).
+    RenameFolder(String, String),
+}
+
+/// Most row indices one bookmark action may carry.
+pub const MAX_BOOKMARK_IDS: usize = 10_000;
+
+fn parse_ids(list: &str) -> Option<Vec<usize>> {
+    let ids: Vec<usize> = list
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse().ok())
+        .collect::<Option<_>>()?;
+    (!ids.is_empty() && ids.len() <= MAX_BOOKMARK_IDS).then_some(ids)
+}
+
+fn action_query<'a>(rest: &'a str, name: &str) -> Option<&'a str> {
+    let after = rest.strip_prefix(name)?;
+    after.strip_prefix('?').or_else(|| after.strip_prefix("/?"))
 }
 
 thread_local! {
@@ -37,6 +60,19 @@ pub(super) fn parse_bookmark_action(url: &str) -> Option<BookmarkAction> {
         let title = query_param(query, "title").unwrap_or_default();
         let folder = query_param(query, "folder").unwrap_or_default();
         return Some(BookmarkAction::Rename(index, title, folder));
+    }
+    if let Some(query) = action_query(rest, "delete-many") {
+        return parse_ids(&query_param(query, "ids")?).map(BookmarkAction::DeleteMany);
+    }
+    if let Some(query) = action_query(rest, "move") {
+        let ids = parse_ids(&query_param(query, "ids")?)?;
+        let folder = query_param(query, "folder").unwrap_or_default();
+        return Some(BookmarkAction::Move(ids, folder));
+    }
+    if let Some(query) = action_query(rest, "rename-folder") {
+        let from = query_param(query, "from").filter(|f| !f.trim().is_empty())?;
+        let to = query_param(query, "to").unwrap_or_default();
+        return Some(BookmarkAction::RenameFolder(from, to));
     }
     None
 }
@@ -73,21 +109,72 @@ pub(super) fn parse_omnibox_submit(url: &str) -> Option<OmniboxSubmit> {
     })
 }
 
+/// Action from a `palette://...` navigation (Ctrl+K command palette).
+pub enum PaletteAction {
+    /// Front and pan to the open tile with this browser id.
+    Go(i32),
+    /// Run the palette command with this id (on the tile that was focused
+    /// when the palette opened).
+    Run(String),
+    /// Open a bookmark / history URL in a new tile.
+    Open(String),
+    /// Escape: close the palette.
+    Close,
+}
+
 thread_local! {
-    // (switcher browser_id, target browser_id)
-    pub static PENDING_SWITCH: RefCell<Option<(i32, i32)>> = const { RefCell::new(None) };
+    // (palette browser_id, action)
+    pub static PENDING_PALETTE_ACTION: RefCell<Option<(i32, PaletteAction)>> =
+        const { RefCell::new(None) };
 }
 
-pub(super) fn parse_switch_target(url: &str) -> Option<i32> {
-    url.strip_prefix("switcher://go/")?.parse().ok()
+/// Longest command id `palette://run/<id>` accepts.
+const MAX_COMMAND_ID_LEN: usize = 40;
+
+/// Public for the compositor's palette tests (ids must survive parsing).
+pub fn parse_palette_action(url: &str) -> Option<PaletteAction> {
+    let rest = url.strip_prefix("palette://")?;
+    if let Some(id) = rest.strip_prefix("go/") {
+        return id.trim_end_matches('/').parse().ok().map(PaletteAction::Go);
+    }
+    if let Some(id) = rest.strip_prefix("run/") {
+        let id = id.trim_end_matches('/');
+        let valid = !id.is_empty()
+            && id.len() <= MAX_COMMAND_ID_LEN
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+        return valid.then(|| PaletteAction::Run(id.to_string()));
+    }
+    // CEF may canonicalize `open?` to `open/?`.
+    if let Some(query) = rest
+        .strip_prefix("open?")
+        .or_else(|| rest.strip_prefix("open/?"))
+    {
+        return query_param(query, "url")
+            .filter(|u| !u.trim().is_empty())
+            .map(PaletteAction::Open);
+    }
+    if rest.trim_end_matches('/') == "close" {
+        return Some(PaletteAction::Close);
+    }
+    None
 }
 
-/// Action from a `download://...` navigation.
+/// Action from a `download://...` navigation. Completed entries go by list
+/// index, live downloads by CEF download id.
+#[derive(Debug, PartialEq, Eq)]
 pub enum DownloadPageAction {
     /// Open with the desktop default handler.
     Open(usize),
+    /// Open the folder that holds the file.
+    Reveal(usize),
     /// Drop list entry only (file stays on disk).
     Remove(usize),
+    /// Cancel a running download, or dismiss an interrupted one.
+    Cancel(u32),
+    Pause(u32),
+    Resume(u32),
 }
 
 thread_local! {
@@ -97,13 +184,20 @@ thread_local! {
 
 pub(super) fn parse_download_action(url: &str) -> Option<DownloadPageAction> {
     let rest = url.strip_prefix("download://")?;
-    if let Some(index) = rest.strip_prefix("open/") {
-        return index.parse().ok().map(DownloadPageAction::Open);
+    let (verb, arg) = rest.split_once('/')?;
+    // Digits only: no sign, no whitespace, no trailing path.
+    if arg.is_empty() || !arg.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
     }
-    if let Some(index) = rest.strip_prefix("remove/") {
-        return index.parse().ok().map(DownloadPageAction::Remove);
+    match verb {
+        "open" => arg.parse().ok().map(DownloadPageAction::Open),
+        "reveal" => arg.parse().ok().map(DownloadPageAction::Reveal),
+        "remove" => arg.parse().ok().map(DownloadPageAction::Remove),
+        "cancel" => arg.parse().ok().map(DownloadPageAction::Cancel),
+        "pause" => arg.parse().ok().map(DownloadPageAction::Pause),
+        "resume" => arg.parse().ok().map(DownloadPageAction::Resume),
+        _ => None,
     }
-    None
 }
 
 /// Action from a `history://...` navigation.
@@ -201,7 +295,8 @@ pub enum SettingsPageAction {
     /// `peter_lowe` | `easylist` | `easyprivacy`.
     ToggleFilterList(String),
     SetTab(String),
-    /// Fixed search URL template from Settings (not free text).
+    /// Search URL template: a preset or the custom field (validated by the
+    /// compositor before it is saved).
     SetSearchEngine(String),
     SetTheme(usize),
     /// Index into `reader_mode::READER_THEMES`.
@@ -210,6 +305,12 @@ pub enum SettingsPageAction {
     RemoveBlockedHost(usize),
     /// 60 / 90 / 120 — see `browser::set_target_frame_rate`.
     SetFrameRate(u32),
+    /// `low` | `high` — compositor GPU, applied on restart.
+    SetGpu(String),
+    /// `auto` | `gpu` | `cpu` — OSR paint path, applied on restart.
+    SetOsr(String),
+    /// Open another built-in page: `scripts` | `help`.
+    Open(String),
 }
 
 thread_local! {
@@ -217,7 +318,7 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
-pub(super) fn parse_settings_action(url: &str) -> Option<SettingsPageAction> {
+pub fn parse_settings_action(url: &str) -> Option<SettingsPageAction> {
     let rest = url.strip_prefix("settings://")?;
     if rest == "toggle-adblock" {
         return Some(SettingsPageAction::ToggleAdBlock);
@@ -265,6 +366,21 @@ pub(super) fn parse_settings_action(url: &str) -> Option<SettingsPageAction> {
     if let Some(fps) = rest.strip_prefix("frame-rate/") {
         return fps.parse().ok().map(SettingsPageAction::SetFrameRate);
     }
+    if let Some(id) = rest.strip_prefix("gpu/") {
+        if matches!(id, "low" | "high") {
+            return Some(SettingsPageAction::SetGpu(id.to_string()));
+        }
+    }
+    if let Some(id) = rest.strip_prefix("osr/") {
+        if matches!(id, "auto" | "gpu" | "cpu") {
+            return Some(SettingsPageAction::SetOsr(id.to_string()));
+        }
+    }
+    if let Some(page) = rest.strip_prefix("open/") {
+        if matches!(page, "scripts" | "help") {
+            return Some(SettingsPageAction::Open(page.to_string()));
+        }
+    }
     None
 }
 
@@ -307,6 +423,43 @@ pub(super) fn parse_userscripts_action(url: &str) -> Option<UserscriptsPageActio
         if !name.is_empty() {
             return Some(UserscriptsPageAction::Toggle(name));
         }
+    }
+    None
+}
+
+/// Action from the built-in site-info page (`site://…`). Carries the page
+/// URL it is about; only http(s) URLs are accepted.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SiteAction {
+    /// Remove every history visit on this URL's host.
+    ForgetHistory(String),
+    /// Bookmark this URL (with title), or remove its bookmark.
+    ToggleBookmark { url: String, title: String },
+}
+
+thread_local! {
+    pub static PENDING_SITE_ACTION: RefCell<Option<(i32, SiteAction)>> = const { RefCell::new(None) };
+}
+
+/// Longest URL a site action may carry.
+pub const MAX_SITE_URL: usize = 8192;
+
+pub fn parse_site_action(url: &str) -> Option<SiteAction> {
+    let rest = url.strip_prefix("site://")?;
+    let web_url = |query: &str| {
+        query_param(query, "url").filter(|u| {
+            (u.starts_with("https://") || u.starts_with("http://"))
+                && u.len() <= MAX_SITE_URL
+                && !u.chars().any(char::is_control)
+        })
+    };
+    if let Some(query) = action_query(rest, "forget-history") {
+        return web_url(query).map(SiteAction::ForgetHistory);
+    }
+    if let Some(query) = action_query(rest, "toggle-bookmark") {
+        let url = web_url(query)?;
+        let title = query_param(query, "title").unwrap_or_default();
+        return Some(SiteAction::ToggleBookmark { url, title });
     }
     None
 }

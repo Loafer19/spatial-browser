@@ -144,6 +144,14 @@ pub fn search<'a>(
     (rows.into_iter().skip(offset).take(limit).collect(), total)
 }
 
+/// Remove every visit on `host` (as `bookmarks::host_of` reads it).
+/// Returns how many were removed.
+pub fn remove_host(history: &mut Vec<HistoryEntry>, host: &str) -> usize {
+    let before = history.len();
+    history.retain(|e| crate::persistence::bookmarks::host_of(&e.url) != host);
+    before - history.len()
+}
+
 /// Remove every visit of `url`. True when anything was removed.
 pub fn remove_url(history: &mut Vec<HistoryEntry>, url: &str) -> bool {
     let before = history.len();

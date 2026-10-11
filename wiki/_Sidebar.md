@@ -10,6 +10,7 @@
 - [[Configuration]]
 - [[Limitations]]
 - [[Building-and-Releasing]]
+- [[Release-Checklist]]
 
 ---
 [GitHub](https://github.com/Loafer19/spatial-browser) · [Releases](https://github.com/Loafer19/spatial-browser/releases)

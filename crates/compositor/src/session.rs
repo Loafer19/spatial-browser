@@ -39,16 +39,19 @@ pub struct FindBar {
 pub const FIND_BAR_HEIGHT: f32 = 48.0;
 const FIND_BAR_GAP: f32 = 8.0;
 
+/// Height of the save-password prompt card (site row + button row).
+pub const SAVE_PROMPT_HEIGHT: f32 = 96.0;
+
 /// Save-password prompt: left-aligned above the page that offered a login
 /// (the find bar takes the right side).
 pub fn save_prompt_rect(target: Rect, scale_factor: f64) -> Rect {
     let s = scale_factor as f32;
-    let w = target.w.clamp(280.0 * s, 520.0 * s);
+    let w = target.w.clamp(280.0 * s, 440.0 * s);
     Rect {
         x: target.x,
-        y: target.y - (FIND_BAR_HEIGHT + FIND_BAR_GAP) * s,
+        y: target.y - (SAVE_PROMPT_HEIGHT + FIND_BAR_GAP) * s,
         w,
-        h: FIND_BAR_HEIGHT * s,
+        h: SAVE_PROMPT_HEIGHT * s,
     }
 }
 
@@ -121,7 +124,7 @@ impl Session {
     }
 
     /// A rect for a centered utility page (bookmarks/downloads/
-    /// history/help/switcher list) of `size` (physical pixels, already
+    /// history/help/palette list) of `size` (physical pixels, already
     /// clamped by the caller) — centered in the current view, converted
     /// to world space so it lands in view regardless of current
     /// pan/zoom. `screen_size` is the window's physical size.
@@ -474,7 +477,8 @@ mod tile_tests {
         assert!(two.y + two.h < page.y, "above the page, not over it");
         let save = save_prompt_rect(page, 2.0);
         assert_eq!(save.x, page.x);
-        assert_eq!(save.h, two.h);
+        assert_eq!(save.h, save_prompt_rect(page, 1.0).h * 2.0);
+        assert_eq!(save.y + save.h, two.y + two.h, "same gap above the page");
     }
 }
 

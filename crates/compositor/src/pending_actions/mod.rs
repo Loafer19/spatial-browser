@@ -27,11 +27,11 @@ use crate::userstyles::{self, UserStyle};
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 use cef_bridge::{
     BookmarkAction, ContextAction, DownloadPageAction, FindAction, HistoryPageAction,
-    PasswordAction, SettingsPageAction, UserscriptsPageAction, WorkspacePageAction,
+    PasswordAction, SettingsPageAction, SiteAction, UserscriptsPageAction, WorkspacePageAction,
     PENDING_BOOKMARK, PENDING_CONTEXT_ACTION, PENDING_DOWNLOADS, PENDING_DOWNLOAD_ACTION,
     PENDING_FIND_ACTION, PENDING_FIND_RESULTS, PENDING_HISTORY_ACTION, PENDING_LOAD_PROGRESS,
     PENDING_LOAD_START, PENDING_LOAD_STATE, PENDING_OMNIBOX, PENDING_OMNIBOX_SUGGEST,
-    PENDING_PASSWORD_ACTION, PENDING_POPUPS, PENDING_SETTINGS_ACTION, PENDING_SWITCH,
+    PENDING_PASSWORD_ACTION, PENDING_POPUPS, PENDING_SETTINGS_ACTION, PENDING_SITE_ACTION,
     PENDING_USERSCRIPT_ACTION, PENDING_VISITS, PENDING_WORKSPACE_ACTION,
 };
 use std::cell::Cell;
@@ -44,9 +44,11 @@ mod download_page;
 mod find;
 mod history_page;
 mod loads;
+mod palette;
 mod passwords;
 mod scripts_page;
 mod settings_page;
+mod site_page;
 mod spawning;
 mod workspace_page;
 
@@ -54,6 +56,8 @@ use passwords::*;
 
 // Used from app.rs / hotkeys.rs.
 pub(crate) use context::{dismiss_context_menu, open_context_menu, ContextHitRequest};
+pub(crate) use loads::page_title;
+pub(crate) use palette::{close_palette, palette_opened};
 pub(crate) use passwords::request_vault_lock;
 pub(crate) use settings_page::sync_blocklist_settings;
 
@@ -141,6 +145,19 @@ fn show_in_place(session: &mut Session, gpu: &GpuState, browser_id: i32, url: &s
     session.add_page(browser::spawn(gpu, &gpu.window, url, rect, true));
 }
 
+/// Read-only view of the stores for the site-info page.
+pub(crate) fn site_context<'a>(s: &'a Stores<'_>) -> crate::pages::site_info::SiteContext<'a> {
+    crate::pages::site_info::SiteContext {
+        history: s.history,
+        bookmarks: s.bookmarks,
+        vault: s.vault.as_ref(),
+        scripts: s.userscripts,
+        styles: s.userstyles,
+        settings: s.settings,
+        now: now_unix_secs(),
+    }
+}
+
 fn now_unix_secs() -> i64 {
     // Clock before 1970 → 0 rather than a panic on the UI thread.
     vault::now_unix()
@@ -161,6 +178,8 @@ pub fn apply(session: &mut Session, gpu: &GpuState, mut s: Stores<'_>) {
     passwords::poll_csv_file_pick(session, gpu, s.vault, s.generated_password);
     clipboard_bridge::deliver_paste(session);
 
+    crate::lazy_load::note_crashes(session);
+    crate::lazy_load::drain(session, gpu.size());
     loads::apply_load_progress(session);
     loads::capture_favicons(session);
 
@@ -169,9 +188,9 @@ pub fn apply(session: &mut Session, gpu: &GpuState, mut s: Stores<'_>) {
     spawning::drain_omnibox(session, gpu, s.typed_history);
     spawning::drain_omnibox_suggest(session, s.history, s.typed_history);
 
-    spawning::drain_switcher(session, gpu);
+    palette::drain(session, gpu, &mut s);
 
-    download_page::drain(session, gpu, s.downloads);
+    download_page::drain(session, s.downloads);
 
     spawning::drain_new_pages(session, gpu);
 
@@ -188,12 +207,13 @@ pub fn apply(session: &mut Session, gpu: &GpuState, mut s: Stores<'_>) {
     passwords::drain(session, gpu, &mut s);
 
     context::drain(session, gpu, &mut s);
+    site_page::drain(session, gpu, &mut s);
 
     history_page::drain(session, gpu, s.history);
 
     workspace_page::drain(session, gpu, s.workspaces, s.workspace_runtime);
 
-    settings_page::drain(session, gpu, s.settings);
+    settings_page::drain(session, gpu, &mut s);
 }
 
 #[cfg(test)]

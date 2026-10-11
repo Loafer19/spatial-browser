@@ -83,6 +83,8 @@ pub(super) fn handle_context_action(
     let workspace_runtime = &mut *s.workspace_runtime;
     let typed_history: &[String] = s.typed_history;
     let settings: &AppSettings = s.settings;
+    let history: &[HistoryEntry] = s.history;
+    let bookmarks: &[Bookmark] = s.bookmarks;
     match action {
         ContextAction::Hit {
             link,
@@ -210,7 +212,7 @@ pub(super) fn handle_context_action(
         }
         ContextAction::NewPage => {
             dismiss_context_menu(session, context_menu);
-            hotkeys::open_new(session, gpu, typed_history, settings);
+            hotkeys::open_new(session, gpu, typed_history, settings, history, bookmarks);
         }
         ContextAction::SaveWorkspace => {
             dismiss_context_menu(session, context_menu);

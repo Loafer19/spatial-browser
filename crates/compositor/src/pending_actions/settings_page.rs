@@ -85,13 +85,41 @@ pub(super) fn refresh_settings_page(
 }
 
 /// `settings://` from the settings page.
-pub(super) fn drain(session: &mut Session, gpu: &GpuState, settings: &mut AppSettings) {
+pub(super) fn drain(session: &mut Session, gpu: &GpuState, stores: &mut Stores<'_>) {
     // settings://…
     if let Some((browser_id, action)) = PENDING_SETTINGS_ACTION
         .with_borrow_mut(|pending| pending.take())
         .filter(|(id, _)| from_internal(session, *id, "settings://"))
     {
+        // `Open` hands the stores to `commands::run`; everything else edits settings.
+        if let SettingsPageAction::Open(page) = &action {
+            let command = match page.as_str() {
+                "scripts" => crate::commands::Command::Scripts,
+                _ => crate::commands::Command::Help,
+            };
+            crate::commands::run(command, session, gpu, stores);
+            return;
+        }
+        let settings = &mut *stores.settings;
         match action {
+            SettingsPageAction::Open(_) => {}
+            SettingsPageAction::SetGpu(id) => {
+                if let Some(gpu_power) = settings::GpuPower::from_id(&id) {
+                    // Startup-only: saved now, used by the next launch.
+                    settings.gpu = gpu_power;
+                    settings.settings_tab = "performance".into();
+                    settings::save(settings);
+                }
+                refresh_settings_page(session, gpu, settings, browser_id);
+            }
+            SettingsPageAction::SetOsr(id) => {
+                if let Some(osr) = settings::OsrMode::from_id(&id) {
+                    settings.osr = osr;
+                    settings.settings_tab = "performance".into();
+                    settings::save(settings);
+                }
+                refresh_settings_page(session, gpu, settings, browser_id);
+            }
             SettingsPageAction::ToggleAdBlock => {
                 settings.ad_block_enabled = !settings.ad_block_enabled;
                 settings.settings_tab = "blocking".into();
@@ -151,9 +179,14 @@ pub(super) fn drain(session: &mut Session, gpu: &GpuState, settings: &mut AppSet
                 refresh_settings_page(session, gpu, settings, browser_id);
             }
             SettingsPageAction::SetSearchEngine(engine) => {
-                settings.default_search_engine = engine;
-                settings.settings_tab = "general".into();
-                settings::save(settings);
+                match settings::valid_search_engine(&engine) {
+                    Some(engine) => {
+                        settings.default_search_engine = engine.to_string();
+                        settings.settings_tab = "general".into();
+                        settings::save(settings);
+                    }
+                    None => log::warn!("rejected search engine URL {engine:?}"),
+                }
                 refresh_settings_page(session, gpu, settings, browser_id);
             }
             SettingsPageAction::SetTheme(index) => {
@@ -192,8 +225,12 @@ pub(super) fn drain(session: &mut Session, gpu: &GpuState, settings: &mut AppSet
                 refresh_settings_page(session, gpu, settings, browser_id);
             }
             SettingsPageAction::SetFrameRate(fps) => {
+                if !settings::FRAME_RATES.contains(&fps) {
+                    refresh_settings_page(session, gpu, settings, browser_id);
+                    return;
+                }
                 settings.target_fps = fps;
-                settings.settings_tab = "general".into();
+                settings.settings_tab = "performance".into();
                 settings::save(settings);
                 browser::set_target_frame_rate(fps);
                 // Apply live to every open host, not only future spawns.

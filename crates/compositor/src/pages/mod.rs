@@ -1,28 +1,34 @@
 // Generated built-in pages, served from memory at `spatial://page/…` via
 // `serve` (never `data:` URLs).
-// Escape every interpolated value for its context: `html_escape` for HTML
-// text/attributes, `js_string_literal` for JS strings (handlers and
-// `<script>`), `url_component` for `scheme://…?k=v` values.
+// Every page builds on `ui` (maud components + ui.css themed by CSS
+// variables + the shared ui.js keyboard model), which escapes HTML text
+// and attributes itself. Still escape by hand where maud can't:
+// `js_string_literal` for JS strings, `url_component` for
+// `scheme://…?k=v` values, `ui::json_script` for data in `<script>`.
 
-use crate::output::Theme;
-
+pub mod about;
 pub mod bookmarks_list;
 pub mod context_menu;
 pub mod downloads_list;
 pub mod find_bar;
+#[cfg(test)]
+mod gallery;
 pub mod help;
 pub mod history_list;
 pub mod omnibox;
+pub mod palette;
 pub mod passwords_list;
 pub mod save_prompt;
 pub mod settings_list;
-pub mod switcher;
+pub mod site_info;
+pub mod ui;
 pub mod userscripts_list;
 pub mod workspace_list;
 
 /// Built-in page kinds — the `<kind>` in `spatial://page/<kind>/<token>`.
 pub(crate) mod kind {
     /// Empty page a pre-started browser idles on (browser::warm pool).
+    pub const ABOUT: &str = "about";
     pub const BLANK: &str = "blank";
     pub const BOOKMARKS: &str = "bookmarks";
     pub const CONTEXT_MENU: &str = "context-menu";
@@ -31,9 +37,10 @@ pub(crate) mod kind {
     pub const HELP: &str = "help";
     pub const HISTORY: &str = "history";
     pub const OMNIBOX: &str = "omnibox";
+    pub const PALETTE: &str = "palette";
     pub const SAVE_PROMPT: &str = "save-prompt";
     pub const SETTINGS: &str = "settings";
-    pub const SWITCHER: &str = "switcher";
+    pub const SITE: &str = "site";
     pub const USERSCRIPTS: &str = "userscripts";
     pub const VAULT_LIST: &str = "vault-list";
     pub const VAULT_UNLOCK: &str = "vault-unlock";
@@ -72,15 +79,6 @@ pub(crate) fn serve(kind: &str, mut html: String) -> String {
 /// Kind of a built-in page URL (`None` for anything else).
 pub(crate) fn kind_of(url: &str) -> Option<&str> {
     cef_bridge::spatial::parse_page_url(url).map(|(kind, _)| kind)
-}
-
-/// Escape for HTML text and for double- or single-quoted attribute values.
-pub(crate) fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
 }
 
 /// Body of a JS single-quoted string. Every ASCII char outside a small safe
@@ -146,131 +144,10 @@ pub(crate) fn url_component(s: &str) -> String {
     out
 }
 
-/// ArrowUp/Down/Enter for `.list-row[data-open]`; skips focused `<input>`.
-pub(crate) const LIST_NAV_SCRIPT: &str = r#"<script>
-let listActiveIndex = 0;
-function listRows() {
-  return Array.from(document.querySelectorAll('.list-row')).filter(r => r.offsetParent !== null);
-}
-function setListActive(index) {
-  const rows = listRows();
-  if (!rows.length) return;
-  listActiveIndex = ((index % rows.length) + rows.length) % rows.length;
-  rows.forEach(r => r.classList.remove('list-active'));
-  rows[listActiveIndex].classList.add('list-active');
-  rows[listActiveIndex].scrollIntoView({block: 'nearest'});
-}
-document.addEventListener('keydown', (event) => {
-  if (event.target.tagName === 'INPUT') return;
-  if (event.key === 'ArrowDown') {
-    event.preventDefault();
-    setListActive(listActiveIndex + 1);
-  } else if (event.key === 'ArrowUp') {
-    event.preventDefault();
-    setListActive(listActiveIndex - 1);
-  } else if (event.key === 'Enter') {
-    const row = listRows()[listActiveIndex];
-    if (row && row.dataset.open) window.location = row.dataset.open;
-  }
-});
-document.addEventListener('mouseover', (event) => {
-  const row = event.target.closest('.list-row');
-  if (!row) return;
-  const index = listRows().indexOf(row);
-  if (index >= 0) setListActive(index);
-});
-window.addEventListener('load', () => setListActive(0));
-</script>"#;
-
-pub(crate) fn body_open(theme: &Theme, extra_attrs: &str) -> String {
-    format!(
-        "<body {extra_attrs} style=\"margin:0;padding:32px;background:{bg};color:{fg};\
-         font-family:ui-monospace,monospace;font-size:15px\">",
-        bg = theme.help_bg,
-        fg = theme.help_fg,
-    )
-}
-
-/// Empty-list placeholder (`text` is app-authored markup, not escaped).
-pub(crate) fn empty_state(theme: &Theme, text: &str) -> String {
-    format!(
-        "<p style=\"color:{fg};opacity:0.7\">{text}</p>",
-        fg = theme.help_fg
-    )
-}
-
-/// Favicon tile: the locally cached icon (captured on visit, see
-/// persistence::favicons) over a letter fallback (`letter` already
-/// uppercased, escaped here). Never fetches from `host`.
-pub(crate) fn favicon_tile(host: &str, letter: &str, theme: &Theme) -> String {
-    let letter = html_escape(letter);
-    // A data:image/png;base64 URI: no quotes or markup to escape.
-    let icon = crate::persistence::favicons::data_uri(host)
-        .map(|uri| {
-            format!(
-                "<img src=\"{uri}\" width=\"20\" height=\"20\" \
-                 style=\"position:absolute;inset:0;border-radius:4px\">"
-            )
-        })
-        .unwrap_or_default();
-    format!(
-        "<span style=\"position:relative;width:20px;height:20px;flex-shrink:0\">\
-         <span style=\"position:absolute;inset:0;border-radius:4px;background:{key_bg};\
-         color:{key_fg};display:flex;align-items:center;justify-content:center;\
-         font-size:11px;font-weight:700\">{letter}</span>{icon}</span>",
-        key_bg = theme.help_key_bg,
-        key_fg = theme.help_key_fg,
-    )
-}
-
 pub(crate) const TRASH_SVG_PATH: &str =
     "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z";
 
 pub(crate) const CHECKMARK_SVG_PATH: &str = "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z";
-
-/// Per-row icon `<a href>` (`extra_attrs` e.g. stopPropagation on delete).
-pub(crate) fn icon_link_button(
-    href: &str,
-    title: &str,
-    svg_path: &str,
-    extra_attrs: &str,
-    theme: &Theme,
-) -> String {
-    format!(
-        "<a href=\"{href}\" title=\"{title}\" class=\"bm-icon-btn\" {extra_attrs} \
-         style=\"flex-shrink:0;margin-left:4px;display:flex;align-items:center;\
-         justify-content:center;width:26px;height:26px;border-radius:6px;\
-         background:{bg};color:{fg};opacity:0.7;text-decoration:none\">\
-         <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"currentColor\">\
-         <path d=\"{svg_path}\"/></svg></a>",
-        bg = theme.help_bg,
-        fg = theme.help_fg,
-    )
-}
-
-/// Like `icon_link_button`, but a form submit (rename-save).
-pub(crate) fn icon_submit_button(title: &str, svg_path: &str, theme: &Theme) -> String {
-    format!(
-        "<button type=\"submit\" title=\"{title}\" class=\"bm-icon-btn\" style=\"flex-shrink:0;\
-         margin-left:4px;display:flex;align-items:center;justify-content:center;width:26px;\
-         height:26px;border-radius:6px;background:{bg};color:{fg};opacity:0.7;border:none;\
-         cursor:pointer;font:inherit\">\
-         <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"currentColor\">\
-         <path d=\"{svg_path}\"/></svg></button>",
-        bg = theme.help_bg,
-        fg = theme.help_fg,
-    )
-}
-
-/// `.bm-icon-btn:hover` rule body for splicing into page `<style>`.
-pub(crate) fn icon_button_hover_css(theme: &Theme) -> String {
-    format!(
-        ".bm-icon-btn:hover{{background:{key_bg}!important;color:{key_fg}!important;\
-         opacity:1!important}}",
-        key_bg = theme.help_key_bg,
-        key_fg = theme.help_key_fg,
-    )
-}
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -325,12 +202,31 @@ pub(crate) mod tests {
         let pages = [
             (kind::HELP, help::page_url(&theme)),
             (
-                kind::SWITCHER,
-                switcher::page_url(&theme, &[(1, "https://a.test/#x".into())]),
+                kind::PALETTE,
+                palette::page_url(
+                    &theme,
+                    &[palette::OpenPage {
+                        id: 1,
+                        url: "https://a.test/#x".into(),
+                        title: None,
+                        current: true,
+                    }],
+                    &[],
+                    &[],
+                    "https://e.test/?q=",
+                ),
             ),
             (
                 kind::OMNIBOX,
-                omnibox::page_url(&theme, &["#1".into()], "https://e.test/?q="),
+                omnibox::page_url(
+                    &theme,
+                    &omnibox::StartData {
+                        typed_history: &["#1".into()],
+                        history: &[],
+                        bookmarks: &[],
+                    },
+                    "https://e.test/?q=",
+                ),
             ),
             (
                 kind::VAULT_UNLOCK,
@@ -360,7 +256,9 @@ pub(crate) mod tests {
                     &[DownloadRecord {
                         url: "https://a.test/f".into(),
                         path: "/tmp/f".into(),
+                        mime: None,
                     }],
+                    &[],
                 ),
             ),
             (
@@ -405,24 +303,10 @@ pub(crate) mod tests {
     #[test]
     fn escapers_neutralise_markup() {
         assert_eq!(
-            html_escape(r#"<img src=x onerror='a()'>&"#),
-            "&lt;img src=x onerror=&#39;a()&#39;&gt;&amp;"
-        );
-        assert_eq!(
             js_string_literal("x';alert(1)//\"</script>\n\u{2028}é"),
             "'x\\u0027;alert(1)//\\u0022\\u003c/script\\u003e\\u000a\\u2028é'"
         );
         assert_eq!(url_component("a b&c=\"<'#%"), "a%20b%26c%3D%22%3C%27%23%25");
-    }
-
-    #[test]
-    fn favicon_tile_escapes_host_and_letter() {
-        let html = favicon_tile("x\"><script>", "<", &THEMES[0]);
-        assert!(!html.contains("<script>"));
-        assert!(html.contains(">&lt;</span>"));
-        // No icon cached for this host, and never a request to it.
-        assert!(!html.contains("<img"));
-        assert!(!html.contains("favicon.ico"));
     }
 
     #[test]
@@ -465,7 +349,10 @@ pub(crate) mod tests {
             None,
             "never",
         ));
-        assert!(!never_page.contains("');alert(1)"), "{never_page}");
+        assert!(
+            !never_page.contains("onclick"),
+            "no inline handlers with data"
+        );
         assert!(never_page.contains("remove-never?origin=https%3A%2F%2Fn.test%27%29%3Balert"));
     }
 }

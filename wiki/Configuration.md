@@ -23,22 +23,22 @@ Everything user-facing lives under:
 
 ## Settings UI (`Ctrl+,`)
 
-Tabbed page: **General** | **Blocking** | **Appearance**. Persisted in `settings.json`:
+Tabs **General** | **Blocking** | **Appearance** | **Performance**, plus a search box (`/`) that finds a setting in any tab. Persisted in `settings.json` (older files load unchanged; unknown values fall back to defaults):
 
-- Content filtering master + filter-list toggles + network/cosmetic/scriptlets layers
-- Clean URLs on/off
-- Default search engine
-- UI theme / reader theme
-- Extra blocked hosts
-- Target frame rate (60/90/120)
+- **General:** clean URLs, default search engine (presets or a custom `http(s)` URL the query is appended to), links to Scripts & styles and Keyboard shortcuts
+- **Blocking:** content filtering master, filter lists, extra blocked hosts, network / cosmetic / scriptlet layers
+- **Appearance:** UI theme, reader theme
+- **Performance:** target frame rate (60/90/120, applies immediately); **GPU** (`low` integrated / `high` discrete) and **page painting** (`auto` / `gpu` shared textures / `cpu` copy) — these two **apply after restart**; the page shows a banner while a restart is pending and marks what is running now
 - Last opened settings tab
+
+`auto` painting uses shared textures on the integrated GPU and CPU copies on the discrete GPU (hybrid laptops can't share textures across GPUs).
 
 ## Environment overrides
 
 | Variable | Values | Effect |
 |----------|--------|--------|
-| `SPATIAL_BROWSER_OSR` | `cpu` / `gpu` | Force CPU `on_paint` or shared-texture OSR |
-| `SPATIAL_BROWSER_GPU` | `low` / `high` (also `integrated` / `discrete`) | wgpu adapter preference |
+| `SPATIAL_BROWSER_OSR` | `cpu` / `gpu` / `auto` | Force CPU `on_paint` or shared-texture OSR; wins over Settings → Performance |
+| `SPATIAL_BROWSER_GPU` | `low` / `high` (also `integrated` / `discrete`) | wgpu adapter preference; wins over Settings → Performance |
 
 Defaults (v0.5+): shared-texture OSR on, wgpu **LowPower** (iGPU) so hybrid laptops keep CEF and the compositor on the same GPU for DMA-BUF import.
 

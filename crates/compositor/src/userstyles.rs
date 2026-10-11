@@ -187,7 +187,7 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     true
 }
 
-fn style_applies(url: &str, ephemeral: bool, style: &UserStyle) -> bool {
+pub(crate) fn style_applies(url: &str, ephemeral: bool, style: &UserStyle) -> bool {
     if !style.enabled {
         return false;
     }

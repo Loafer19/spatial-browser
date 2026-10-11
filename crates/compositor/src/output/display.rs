@@ -70,6 +70,8 @@ struct PageStyleUniform {
     // x = load progress 0..1, y = 1.0 if top load bar visible,
     // z = bar height in page pixels (from theme border width)
     load: [f32; 4],
+    // rgb = Theme::fade_color (what dimming / placeholder / bar track fade toward)
+    fade_color: [f32; 4],
 }
 
 /// Per-page vertex + style buffers (shared buffer would clobber earlier draws).
@@ -102,6 +104,7 @@ impl PageQuad {
                 unfocused_border_color: [0.0; 4],
                 flags: [0.0; 4],
                 load: [0.0; 4],
+                fade_color: [0.0; 4],
             }]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -190,6 +193,7 @@ impl PageQuad {
                     theme.focus_border_width.clamp(2.0, 5.0),
                     0.0,
                 ],
+                fade_color: theme.fade_color,
             }]),
         );
     }
@@ -255,8 +259,9 @@ impl GpuState {
         // GPU process typically uses (the display-driving iGPU). On
         // hybrid laptops HighPerformance picks the discrete GPU while
         // Chromium stays on the iGPU — DMA-BUF shared-texture import then
-        // fails across devices. Override with SPATIAL_BROWSER_GPU=high
-        // (and usually SPATIAL_BROWSER_OSR=cpu; see osr_shared_texture_enabled).
+        // fails across devices. Settings → Performance (or
+        // SPATIAL_BROWSER_GPU=high, usually with SPATIAL_BROWSER_OSR=cpu;
+        // see osr_shared_texture_enabled) picks the discrete GPU.
         let power_preference = gpu_power_preference();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -701,45 +706,60 @@ pub enum FrameOutcome {
     Fatal,
 }
 
-/// Default LowPower (iGPU, matches Chromium). `SPATIAL_BROWSER_GPU=high` → dGPU;
-/// pair with `SPATIAL_BROWSER_OSR=cpu` unless both stay on the same device.
+/// Settings → Performance → GPU, or `SPATIAL_BROWSER_GPU` (wins). Default
+/// LowPower (iGPU, matches Chromium); High = dGPU, usually with CPU OSR.
 fn gpu_power_preference() -> wgpu::PowerPreference {
-    match std::env::var("SPATIAL_BROWSER_GPU").ok().as_deref() {
-        Some("high" | "discrete" | "dgpu") => wgpu::PowerPreference::HighPerformance,
-        Some("low" | "integrated" | "igpu") => wgpu::PowerPreference::LowPower,
-        Some(other) => {
-            log::warn!("unknown SPATIAL_BROWSER_GPU={other:?}, using low (iGPU-friendly)");
-            wgpu::PowerPreference::LowPower
-        }
-        None => wgpu::PowerPreference::LowPower,
+    use crate::persistence::settings::{self, GpuPower};
+    match settings::startup().gpu {
+        GpuPower::High => wgpu::PowerPreference::HighPerformance,
+        GpuPower::Low => wgpu::PowerPreference::LowPower,
     }
 }
 
-/// Shared-texture OSR when `accelerated_osr` is on, unless OSR=cpu or
-/// GPU=high without OSR=gpu (cross-device DMA-BUF breaks import).
+/// Shared-texture OSR when `accelerated_osr` is on and the startup OSR mode
+/// (Settings, or `SPATIAL_BROWSER_OSR`) allows it: Auto turns it off on the
+/// discrete GPU, where cross-device DMA-BUF import breaks.
 pub fn osr_shared_texture_enabled() -> bool {
-    #[cfg(not(feature = "accelerated_osr"))]
-    {
-        return false;
-    }
-    #[cfg(feature = "accelerated_osr")]
-    {
-        match std::env::var("SPATIAL_BROWSER_OSR").ok().as_deref() {
-            Some("cpu" | "software") => false,
-            Some("gpu" | "shared" | "accelerated") => true,
-            Some(other) => {
-                log::warn!("unknown SPATIAL_BROWSER_OSR={other:?}, using feature default");
-                !discrete_gpu_without_forced_osr()
-            }
-            None => !discrete_gpu_without_forced_osr(),
-        }
-    }
+    crate::persistence::settings::startup().shared_texture()
 }
 
-#[cfg(feature = "accelerated_osr")]
-fn discrete_gpu_without_forced_osr() -> bool {
-    matches!(
-        std::env::var("SPATIAL_BROWSER_GPU").ok().as_deref(),
-        Some("high" | "discrete" | "dgpu")
-    )
+#[cfg(test)]
+mod tests {
+    use super::PageStyleUniform;
+    use wgpu::naga;
+
+    /// Every WGSL shader parses and validates (naga is what wgpu runs at
+    /// pipeline creation; a mistake there would only surface at startup).
+    #[test]
+    fn shaders_validate() {
+        for (name, src) in [
+            ("shader.wgsl", include_str!("shader.wgsl")),
+            ("background.wgsl", include_str!("background.wgsl")),
+            ("hud.wgsl", include_str!("hud.wgsl")),
+        ] {
+            let module = naga::front::wgsl::parse_str(src)
+                .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(src)));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::empty(),
+            )
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        }
+    }
+
+    /// The Rust uniform matches shader.wgsl's `PageStyle` byte for byte.
+    #[test]
+    fn page_style_uniform_matches_shader() {
+        let module = naga::front::wgsl::parse_str(include_str!("shader.wgsl")).expect("parses");
+        let (_, ty) = module
+            .types
+            .iter()
+            .find(|(_, t)| t.name.as_deref() == Some("PageStyle"))
+            .expect("PageStyle");
+        let naga::TypeInner::Struct { span, .. } = ty.inner else {
+            panic!("PageStyle is a struct");
+        };
+        assert_eq!(span as usize, std::mem::size_of::<PageStyleUniform>());
+    }
 }

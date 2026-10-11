@@ -28,7 +28,8 @@ pub fn script(theme: &Theme) -> String {
     accent: '{accent}',
     accentFg: '{accent_fg}',
     radius: '{radius}',
-    radiusInner: '{radius_inner}'
+    radiusInner: '{radius_inner}',
+    shadow: '{shadow}'
   }};
 
   function signal(url) {{
@@ -118,7 +119,7 @@ pub fn script(theme: &Theme) -> String {
     var box = document.createElement('div');
     box.id = '__spatial_pw_picker';
     // Same corner as the save banner (left) — not opposite sides.
-    box.style.cssText = 'position:fixed;z-index:2147483647;left:16px;bottom:16px;max-width:320px;background:'+UI.bg+';color:'+UI.fg+';border:1px solid '+UI.border+';border-radius:'+UI.radius+';padding:10px 12px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.45)';
+    box.style.cssText = 'position:fixed;z-index:2147483647;left:16px;bottom:16px;max-width:320px;background:'+UI.bg+';color:'+UI.fg+';border:1px solid '+UI.border+';border-radius:'+UI.radius+';padding:10px 12px;font:13px/1.4 system-ui,sans-serif;box-shadow:'+UI.shadow;
     var title = document.createElement('div');
     title.textContent = items.length === 1 ? 'Use saved login?' : 'Use saved login';
     title.style.cssText = 'font-weight:600;margin-bottom:8px;opacity:.9';
@@ -223,5 +224,11 @@ pub fn script(theme: &Theme) -> String {
         accent_fg = theme.help_key_fg,
         radius = radius,
         radius_inner = radius_inner,
+        // A dark-theme-strength shadow reads as a smudge on a light page.
+        shadow = if theme.is_dark {
+            "0 8px 24px rgba(0,0,0,.45)"
+        } else {
+            "0 6px 20px rgba(0,0,0,.16)"
+        },
     )
 }

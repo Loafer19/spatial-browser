@@ -21,6 +21,9 @@ pub struct WorkspacePage {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct WorkspaceSlot {
     pub id: u32,
+    /// User-given name; empty = "Workspace <id>" (see `label`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
     /// False until first activated — no pages spawned until then.
     #[serde(default)]
     pub visited: bool,
@@ -30,6 +33,34 @@ pub struct WorkspaceSlot {
     pub theme: String,
     #[serde(default)]
     pub pages: Vec<WorkspacePage>,
+}
+
+/// Longest workspace name kept (chars); longer renames are cut.
+pub const MAX_NAME_CHARS: usize = 40;
+
+impl WorkspaceSlot {
+    /// Display name: the user's name, else "Workspace <id>".
+    pub fn label(&self) -> String {
+        if self.name.is_empty() {
+            format!("Workspace {}", self.id)
+        } else {
+            self.name.clone()
+        }
+    }
+}
+
+/// A rename as typed → stored name: control characters dropped, runs of
+/// whitespace collapsed, trimmed, capped at `MAX_NAME_CHARS`.
+fn clean_name(raw: &str) -> String {
+    raw.split(|c: char| c.is_whitespace() || c.is_control())
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(MAX_NAME_CHARS)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
 }
 
 fn default_theme_name() -> String {
@@ -56,7 +87,6 @@ struct LegacyFile {
 
 #[derive(Deserialize)]
 struct LegacyEntry {
-    #[allow(dead_code)]
     name: String,
     viewport: Viewport,
     theme: String,
@@ -75,6 +105,7 @@ impl WorkspaceStore {
             slots: (1..=DEFAULT_SLOT_COUNT)
                 .map(|id| WorkspaceSlot {
                     id,
+                    name: String::new(),
                     visited: false,
                     viewport: Viewport::default(),
                     theme: default_theme_name(),
@@ -105,6 +136,7 @@ impl WorkspaceStore {
             .enumerate()
             .map(|(i, e)| WorkspaceSlot {
                 id: (i as u32) + 1,
+                name: clean_name(&e.name),
                 visited: true,
                 viewport: e.viewport,
                 theme: e.theme,
@@ -115,6 +147,7 @@ impl WorkspaceStore {
             let id = slots.len() as u32 + 1;
             slots.push(WorkspaceSlot {
                 id,
+                name: String::new(),
                 visited: false,
                 viewport: Viewport::default(),
                 theme: default_theme_name(),
@@ -190,6 +223,7 @@ impl WorkspaceStore {
         let id = self.slots.iter().map(|s| s.id).max().unwrap_or(0) + 1;
         self.slots.push(WorkspaceSlot {
             id,
+            name: String::new(),
             visited: false,
             viewport: Viewport::default(),
             theme: default_theme_name(),
@@ -206,6 +240,19 @@ impl WorkspaceStore {
         }
         while self.slot_count() < id {
             self.add_fresh_slot();
+        }
+    }
+
+    /// Rename the slot at list `index`; a blank name restores the default
+    /// label. Returns whether anything changed (caller saves).
+    pub fn rename(&mut self, index: usize, raw: &str) -> bool {
+        let name = clean_name(raw);
+        match self.slots.get_mut(index) {
+            Some(slot) if slot.name != name => {
+                slot.name = name;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -345,12 +392,11 @@ pub fn apply_slot_to_session(
     if slot.visited {
         session.set_viewport(slot.viewport);
         for p in &slot.pages {
-            session.add_page(crate::browser::spawn(
+            session.add_page(crate::browser::spawn_deferred(
                 gpu,
                 &gpu.window,
                 &p.url,
                 p.rect,
-                false,
             ));
         }
     } else {
@@ -485,4 +531,34 @@ pub fn theme_from_name(name: &str) -> Theme {
         .find(|t| t.name == name)
         .copied()
         .unwrap_or(THEMES[0])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rename_cleans_and_caps_names() {
+        let mut store = WorkspaceStore::fresh();
+        assert!(store.rename(0, "  Client\tA \n\u{7}ops  "));
+        assert_eq!(store.slots[0].name, "Client A ops");
+        assert_eq!(store.slots[0].label(), "Client A ops");
+        assert!(!store.rename(0, "Client A ops"), "unchanged");
+        assert!(store.rename(1, &"x".repeat(100)));
+        assert_eq!(store.slots[1].name.chars().count(), MAX_NAME_CHARS);
+        assert!(store.rename(0, "   "));
+        assert_eq!(store.slots[0].label(), "Workspace 1");
+        assert!(!store.rename(99, "nope"), "out of range");
+    }
+
+    #[test]
+    fn names_round_trip_and_stay_optional_on_disk() {
+        let mut store = WorkspaceStore::fresh();
+        store.rename(1, "Ops");
+        let json = serde_json::to_string(&store).expect("serializes");
+        assert_eq!(json.matches("\"name\"").count(), 1, "{json}");
+        let back: WorkspaceStore = serde_json::from_str(&json).expect("parses");
+        assert_eq!(back.slots[1].name, "Ops");
+        assert_eq!(back.slots[0].name, "");
+    }
 }

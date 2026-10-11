@@ -91,8 +91,26 @@ pub(super) fn drain(session: &mut Session, gpu: &GpuState, bookmarks: &mut Vec<B
             BookmarkAction::Rename(index, title, folder) => {
                 if let Some(bookmark) = bookmarks.get_mut(index) {
                     bookmark.title = (!title.is_empty()).then_some(title);
-                    bookmark.folder = (!folder.is_empty()).then_some(folder);
+                    bookmark.folder = bookmarks::normalize_folder(&folder);
                 }
+                bookmarks::save(bookmarks);
+                refresh_bookmarks_page(session, gpu, bookmarks, None, browser_id);
+            }
+            BookmarkAction::DeleteMany(ids) => {
+                let n = bookmarks::delete_many(bookmarks, &ids);
+                bookmarks::save(bookmarks);
+                let status = format!("Deleted {n} bookmark{}", if n == 1 { "" } else { "s" });
+                refresh_bookmarks_page(session, gpu, bookmarks, Some(&status), browser_id);
+            }
+            BookmarkAction::Move(ids, folder) => {
+                let n = bookmarks::move_to(bookmarks, &ids, &folder);
+                bookmarks::save(bookmarks);
+                let to = bookmarks::normalize_folder(&folder).unwrap_or_else(|| "Unfiled".into());
+                let status = format!("Moved {n} to {to}");
+                refresh_bookmarks_page(session, gpu, bookmarks, Some(&status), browser_id);
+            }
+            BookmarkAction::RenameFolder(from, to) => {
+                bookmarks::rename_folder(bookmarks, &from, &to);
                 bookmarks::save(bookmarks);
                 refresh_bookmarks_page(session, gpu, bookmarks, None, browser_id);
             }

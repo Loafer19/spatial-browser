@@ -47,6 +47,19 @@ fn log_paint_path_once(path: PaintPath) {
     }
 }
 
+static UNSUPPORTED_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static IMPORT_WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Paint-path failures repeat every frame: first one at warn, rest at trace.
+fn warn_once(flag: &std::sync::atomic::AtomicBool, msg: &str) {
+    if flag.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        log::trace!("{msg}");
+    } else {
+        log::warn!("{msg} (further occurrences at trace level)");
+    }
+}
+
 /// CEF dirty rects as `(x, y, w, h)` clipped to a `width`×`height` view;
 /// empty input means the whole view.
 pub fn clip_dirty(
@@ -169,14 +182,15 @@ wrap_render_handler! {
 
                 let shared_handle = SharedTextureHandle::new(info);
                 if let SharedTextureHandle::Unsupported = shared_handle {
-                    log::warn!("platform does not support accelerated OSR painting");
+                    warn_once(&UNSUPPORTED_WARNED, "platform does not support accelerated OSR painting");
                     return;
                 }
 
                 match shared_handle.import_texture(&self.handler.device) {
                     Ok(texture) => texture,
                     Err(e) => {
-                        log::warn!("failed to import CEF shared texture: {e:?}");
+                        // Per frame while it fails: warn once, then trace.
+                        warn_once(&IMPORT_WARNED, &format!("failed to import CEF shared texture: {e:?}"));
                         return;
                     }
                 }

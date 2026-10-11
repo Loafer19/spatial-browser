@@ -41,6 +41,8 @@ cargo test --workspace -j 2
 
 ## Release
 
+Before tagging, go through the manual [[Release-Checklist]].
+
 1. Bump `version` in `crates/compositor/Cargo.toml` and `crates/cef-bridge/Cargo.toml` (and `Cargo.lock`), add a section to `CHANGELOG.md`, merge to `master`.
 2. Push a version tag from that commit; GitHub Actions does the rest:
 

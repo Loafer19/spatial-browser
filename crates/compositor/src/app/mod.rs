@@ -123,6 +123,9 @@ pub struct App {
 impl Default for App {
     fn default() -> Self {
         let settings = settings::load();
+        // GPU / OSR are fixed for the process: before any GpuState or browser.
+        let startup = settings::init_startup(&settings);
+        log::info!("startup options: {startup:?}");
         pending_actions::sync_blocklist_settings(&settings);
         cef_bridge::set_clean_urls_enabled(settings.clean_urls_enabled);
         browser::set_target_frame_rate(settings.target_fps);
@@ -258,9 +261,10 @@ impl App {
         let save_due = self.session.dirty().then(|| self.last_save + SAVE_DEBOUNCE);
         let hud_due = self.hud.as_ref().and_then(Hud::hide_deadline);
 
+        let lazy_due = crate::lazy_load::next_due(&self.session, self.canvas_size);
         frame_pacer::min_instant(
             frame_pacer::min_instant(self.pacer.next_deadline(), save_due),
-            hud_due,
+            frame_pacer::min_instant(hud_due, lazy_due),
         )
     }
 

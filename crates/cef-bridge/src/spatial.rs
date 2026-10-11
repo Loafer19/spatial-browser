@@ -583,7 +583,7 @@ mod tests {
     #[test]
     fn global_registry_round_trip() {
         let t = token(0xfeed_0001);
-        let url = publish("switcher", &t, "s".into()).unwrap();
+        let url = publish("palette", &t, "s".into()).unwrap();
         assert!(bind(&url, 424_242));
         assert!(issued_to(&url, 424_242));
         forget_browser(424_242);

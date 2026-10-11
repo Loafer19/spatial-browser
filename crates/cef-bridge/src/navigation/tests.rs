@@ -149,3 +149,178 @@ fn omnibox_suggest_action() {
     assert!(parse_omnibox_suggest("omnibox://go?q=x&url=y").is_none());
     assert!(parse_omnibox_submit("omnibox://suggest?q=x").is_none());
 }
+
+#[test]
+fn download_actions() {
+    use DownloadPageAction::*;
+    for (url, expected) in [
+        ("download://open/0", Open(0)),
+        ("download://reveal/12", Reveal(12)),
+        ("download://remove/3", Remove(3)),
+        ("download://cancel/7", Cancel(7)),
+        ("download://pause/4294967295", Pause(u32::MAX)),
+        ("download://resume/1", Resume(1)),
+    ] {
+        assert_eq!(parse_download_action(url), Some(expected), "{url}");
+    }
+    for url in [
+        "download://open/",
+        "download://open/-1",
+        "download://open/+1",
+        "download://open/1/",
+        "download://open/1?x=2",
+        "download://cancel/4294967296",
+        "download://cancel/ 1",
+        "download://delete/1",
+        "download://pause",
+        "https://download.test/pause/1",
+        "downloads://pause/1",
+    ] {
+        assert_eq!(parse_download_action(url), None, "{url}");
+    }
+}
+
+#[test]
+fn palette_actions_parse_and_reject_garbage() {
+    for url in ["palette://go/42", "palette://go/42/"] {
+        assert!(
+            matches!(parse_palette_action(url), Some(PaletteAction::Go(42))),
+            "{url}"
+        );
+    }
+    for url in ["palette://run/new-page", "palette://run/new-page/"] {
+        assert!(
+            matches!(parse_palette_action(url), Some(PaletteAction::Run(id)) if id == "new-page"),
+            "{url}"
+        );
+    }
+    for url in [
+        "palette://open?url=https%3A%2F%2Fa.test%2F%3Fx%3D1",
+        "palette://open/?url=https%3A%2F%2Fa.test%2F%3Fx%3D1",
+    ] {
+        assert!(
+            matches!(parse_palette_action(url), Some(PaletteAction::Open(u)) if u == "https://a.test/?x=1"),
+            "{url}"
+        );
+    }
+    for url in ["palette://close", "palette://close/"] {
+        assert!(
+            matches!(parse_palette_action(url), Some(PaletteAction::Close)),
+            "{url}"
+        );
+    }
+    let long = format!("palette://run/{}", "a".repeat(41));
+    for url in [
+        "palette://go/x",
+        "palette://run/",
+        "palette://run/New-Page",
+        "palette://run/a%2Fb",
+        "palette://run/../settings",
+        long.as_str(),
+        "palette://open?url=",
+        "palette://open?url=%20",
+        "palette://open",
+        "palette://nope",
+        "switcher://go/1",
+    ] {
+        assert!(parse_palette_action(url).is_none(), "{url}");
+    }
+}
+
+#[test]
+fn settings_actions() {
+    use SettingsPageAction as A;
+    assert!(matches!(
+        parse_settings_action("settings://search-engine?engine=https%3A%2F%2Fk.test%2F%3Fq%3D"),
+        Some(A::SetSearchEngine(e)) if e == "https://k.test/?q="
+    ));
+    assert!(matches!(
+        parse_settings_action("settings://gpu/high"),
+        Some(A::SetGpu(id)) if id == "high"
+    ));
+    assert!(matches!(
+        parse_settings_action("settings://osr/cpu"),
+        Some(A::SetOsr(id)) if id == "cpu"
+    ));
+    assert!(matches!(
+        parse_settings_action("settings://open/help"),
+        Some(A::Open(p)) if p == "help"
+    ));
+    assert!(matches!(
+        parse_settings_action("settings://frame-rate/90"),
+        Some(A::SetFrameRate(90))
+    ));
+    for bad in [
+        "settings://gpu/ultra",
+        "settings://osr/",
+        "settings://open/passwords",
+        "settings://open/../help",
+        "settings://search-engine?q=x",
+        "settings://frame-rate/fast",
+        "settings://nope",
+    ] {
+        assert!(parse_settings_action(bad).is_none(), "{bad}");
+    }
+}
+
+#[test]
+fn bookmark_manager_actions() {
+    use BookmarkAction as B;
+    assert!(matches!(
+        parse_bookmark_action("bookmark://delete-many?ids=3,1,7"),
+        Some(B::DeleteMany(ids)) if ids == [3, 1, 7]
+    ));
+    assert!(matches!(
+        parse_bookmark_action("bookmark://move/?ids=2&folder=Rust%2FAsync"),
+        Some(B::Move(ids, f)) if ids == [2] && f == "Rust/Async"
+    ));
+    assert!(matches!(
+        parse_bookmark_action("bookmark://move?ids=2&folder="),
+        Some(B::Move(_, f)) if f.is_empty()
+    ));
+    assert!(matches!(
+        parse_bookmark_action("bookmark://rename-folder?from=Rust&to=Lang%2FRust"),
+        Some(B::RenameFolder(a, b)) if a == "Rust" && b == "Lang/Rust"
+    ));
+    let too_many = format!(
+        "bookmark://delete-many?ids={}",
+        vec!["1"; MAX_BOOKMARK_IDS + 1].join(",")
+    );
+    for bad in [
+        "bookmark://delete-many?ids=",
+        "bookmark://delete-many?ids=1,x",
+        "bookmark://delete-many",
+        "bookmark://move?folder=a",
+        "bookmark://rename-folder?from=&to=b",
+        "bookmark://delete-manyX?ids=1",
+        too_many.as_str(),
+    ] {
+        assert!(parse_bookmark_action(bad).is_none(), "{bad}");
+    }
+}
+
+#[test]
+fn site_actions_only_carry_web_urls() {
+    assert_eq!(
+        parse_site_action("site://forget-history?url=https%3A%2F%2Fa.test%2Fx"),
+        Some(SiteAction::ForgetHistory("https://a.test/x".into()))
+    );
+    assert_eq!(
+        parse_site_action("site://toggle-bookmark/?url=http%3A%2F%2Fb.test%2F&title=B%20%3C"),
+        Some(SiteAction::ToggleBookmark {
+            url: "http://b.test/".into(),
+            title: "B <".into()
+        })
+    );
+    for bad in [
+        "site://forget-history?url=javascript%3Aalert(1)",
+        "site://forget-history?url=spatial%3A%2F%2Fpage%2Fx%2Fy",
+        "site://forget-history?url=file%3A%2F%2F%2Fetc",
+        "site://forget-history?url=https%3A%2F%2Fa.test%2F%0A",
+        "site://forget-history",
+        "site://toggle-bookmark?title=x",
+        "site://nope?url=https%3A%2F%2Fa.test",
+    ] {
+        assert_eq!(parse_site_action(bad), None, "{bad}");
+    }
+}

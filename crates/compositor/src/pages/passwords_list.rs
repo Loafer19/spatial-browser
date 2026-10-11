@@ -1,6 +1,9 @@
-// Ctrl+Shift+P vault UI (`password://…`); chrome from Theme.
+// Ctrl+Shift+P vault UI (`password://…`) on the ui design system. Only the
+// built-in vault tiles may send these actions (see pending_actions); the
+// web-page autofill subset lives elsewhere and is unchanged.
 
-use super::{html_escape, url_component, LIST_NAV_SCRIPT};
+use super::ui::{self, html, Icon, Markup};
+use super::url_component;
 use crate::output::Theme;
 use crate::persistence::vault::{self, VaultEntry};
 
@@ -14,14 +17,44 @@ pub(crate) fn is_list_url(url: &str) -> bool {
     super::kind_of(url) == Some(super::kind::VAULT_LIST)
 }
 
+const TABS: &[(&str, &str, &str)] = &[
+    ("saved", "Saved", "password://go/tab/saved"),
+    ("add", "Add / Import", "password://go/tab/add"),
+    ("generator", "Generator", "password://go/tab/generator"),
+    ("never", "Never save", "password://go/tab/never"),
+];
+
 pub(crate) fn normalize_tab(tab: &str) -> &'static str {
-    match tab {
-        "add" => "add",
-        "generator" => "generator",
-        "never" => "never",
-        _ => "saved",
-    }
+    TABS.iter()
+        .find(|(id, _, _)| *id == tab)
+        .map_or("saved", |(id, _, _)| id)
 }
+
+const UNLOCK_CSS: &str = r#"
+.unlock { max-width: 420px; margin: 10vh auto 0; }
+.unlock .card { padding: 22px; }
+.unlock label { display: block; margin: 12px 0 4px; }
+.unlock .input { width: 100%; }
+.unlock .btn { margin-top: 16px; }
+#err { min-height: 1.3em; margin: 8px 0 0; }
+"#;
+
+const UNLOCK_SCRIPT: &str = r#"
+document.getElementById('vault-form').addEventListener('submit', function (ev) {
+  ev.preventDefault();
+  var err = document.getElementById('err');
+  err.textContent = '';
+  var create = this.dataset.create === '1';
+  var p = this.password.value;
+  var c = this.confirm ? this.confirm.value : '';
+  if (create) {
+    if (p.length < 8) { err.textContent = 'Use at least 8 characters'; return; }
+    if (c !== p) { err.textContent = 'Passwords do not match'; return; }
+  }
+  location = 'password://go/unlock?create=' + (create ? 1 : 0) + '&password=' + encodeURIComponent(p) +
+    (c ? '&confirm=' + encodeURIComponent(c) : '');
+});
+"#;
 
 pub(crate) fn unlock_url(theme: &Theme, create: bool, error: Option<&str>) -> String {
     let heading = if create {
@@ -29,94 +62,137 @@ pub(crate) fn unlock_url(theme: &Theme, create: bool, error: Option<&str>) -> St
     } else {
         "Unlock password vault"
     };
-    let err_text = error.map(html_escape).unwrap_or_default();
-    let radius = theme.css_radius();
-    let radius_inner = theme.css_radius_inner();
-    let confirm = if create {
-        format!(
-            "<label style=\"display:block;margin:10px 0 4px;opacity:0.8\">Confirm</label>\
-             <input name=\"confirm\" type=\"password\" required autocomplete=\"new-password\" \
-             style=\"width:100%;box-sizing:border-box;padding:10px 12px;border-radius:{radius_inner};\
-             border:1px solid {border};background:{card};color:{fg};font-size:15px\">",
-            border = theme.help_card_border,
-            card = theme.help_card_bg,
-            fg = theme.help_fg,
-        )
-    } else {
-        String::new()
+    let body = html! {
+        main class="page unlock" {
+            div class="card" {
+                h1 { (Icon::Lock) " " (heading) }
+                p class="small muted" {
+                    "Local encrypted vault (AES-GCM). Locks after "
+                    (vault::AUTO_LOCK_AFTER.as_secs() / 60) " min idle or on " kbd { "Ctrl+Shift+L" } "."
+                }
+                form id="vault-form" data-create=(if create { "1" } else { "0" }) {
+                    label class="small" for="pw" { "Master password" }
+                    input id="pw" class="input" name="password" type="password" required autofocus
+                        autocomplete=(if create { "new-password" } else { "current-password" });
+                    @if create {
+                        label class="small" for="pw2" { "Confirm" }
+                        input id="pw2" class="input" name="confirm" type="password" required autocomplete="new-password";
+                    }
+                    p id="err" class="small danger-text" role="alert" { (error.unwrap_or("")) }
+                    button class="btn primary" type="submit" { (if create { "Create vault" } else { "Unlock" }) }
+                }
+            }
+        }
     };
-    let create_flag = if create { "1" } else { "0" };
-    let create_js = if create { "true" } else { "false" };
-    let html = format!(
-        "{body}\
-         <h1 style=\"margin:0 0 8px;color:{heading_c};font-size:20px\">{heading}</h1>\
-         <p style=\"opacity:0.7;margin:0 0 12px;font-size:13px;color:{fg}\">\
-         Local encrypted vault (AES-GCM). Locks after {idle_min} min idle or on Ctrl+Shift+L.</p>\
-         <p id=\"err\" style=\"color:{danger};margin:0 0 12px;min-height:1.2em\">{err_text}</p>\
-         <form id=\"vault-form\">\
-         <label style=\"display:block;margin:0 0 4px;opacity:0.8;color:{fg}\">Master password</label>\
-         <input name=\"password\" type=\"password\" required autofocus autocomplete=\"current-password\" \
-         style=\"width:100%;box-sizing:border-box;padding:10px 12px;border-radius:{radius_inner};\
-         border:1px solid {border};background:{card};color:{fg};font-size:15px\">\
-         {confirm}\
-         <button type=\"submit\" style=\"margin-top:14px;padding:10px 16px;border:none;\
-         border-radius:{radius};background:{accent};color:{key_fg};font-weight:600;cursor:pointer\">\
-         {btn}</button></form>\
-         <script>\
-         document.getElementById('vault-form').addEventListener('submit', function(ev) {{\
-           ev.preventDefault();\
-           var err = document.getElementById('err');\
-           err.textContent = '';\
-           var p = this.password.value;\
-           var c = this.confirm ? this.confirm.value : '';\
-           if ({create_js}) {{\
-             if (p.length < 8) {{ err.textContent = 'Use at least 8 characters'; return; }}\
-             if (c !== p) {{ err.textContent = 'Passwords do not match'; return; }}\
-           }}\
-           location = 'password://go/unlock?create={create_flag}&password=' + encodeURIComponent(p) +\
-             (c ? '&confirm=' + encodeURIComponent(c) : '');\
-         }});\
-         </script></body>",
-        body = super::body_open(theme, ""),
-        heading_c = theme.help_heading,
-        border = theme.help_card_border,
-        card = theme.help_card_bg,
-        fg = theme.help_fg,
-        danger = theme.help_danger,
-        accent = theme.help_key_bg,
-        key_fg = theme.help_key_fg,
-        btn = if create { "Create vault" } else { "Unlock" },
-        idle_min = vault::AUTO_LOCK_AFTER.as_secs() / 60,
-    );
+    let html = ui::Doc::new(theme, heading)
+        .no_row()
+        .css(UNLOCK_CSS)
+        .script(UNLOCK_SCRIPT)
+        .render(body);
     super::serve(super::kind::VAULT_UNLOCK, html)
 }
 
-fn tab_bar(theme: &Theme, active: &str) -> String {
-    // Same pattern as Settings: navigate via password://tab/… so the active
-    // tab survives refresh.
-    let mut html =
-        String::from("<div style=\"display:flex;gap:6px;margin:0 0 16px;flex-wrap:wrap\">");
-    for (id, label) in [
-        ("saved", "Saved"),
-        ("add", "Add / Import"),
-        ("generator", "Generator"),
-        ("never", "Never save"),
-    ] {
-        let on = active == id;
-        let (bg, fg, border) = if on {
-            (theme.help_key_bg, theme.help_key_fg, theme.help_key_bg)
-        } else {
-            (theme.help_card_bg, theme.help_fg, theme.help_card_border)
-        };
-        html.push_str(&format!(
-            "<a href=\"password://go/tab/{id}\" \
-             style=\"text-decoration:none;padding:8px 14px;border-radius:8px;\
-             border:1px solid {border};background:{bg};color:{fg};font-size:13px;\
-             font-weight:600\">{label}</a>",
-        ));
+const CSS: &str = r#"
+.form { display: grid; gap: 8px; max-width: 460px; }
+.form .btn { justify-self: start; }
+.generated { font-family: var(--mono); word-break: break-all; padding: 10px 12px; margin: 10px 0; }
+"#;
+
+// The add form builds its action by hand so values are encoded the same
+// way the parser expects (never `+` for spaces).
+const SCRIPT: &str = r#"
+(function () {
+  var f = document.getElementById('add-form');
+  if (!f) return;
+  f.addEventListener('submit', function (e) {
+    e.preventDefault();
+    ui.go('password://go/upsert?origin=' + encodeURIComponent(f.origin.value) +
+      '&username=' + encodeURIComponent(f.username.value) +
+      '&password=' + encodeURIComponent(f.password.value) +
+      '&email=' + encodeURIComponent(f.email.value));
+  });
+})();
+"#;
+
+fn saved(entries: &[VaultEntry]) -> Markup {
+    html! {
+        @if entries.is_empty() {
+            (ui::empty(Icon::Key, html! { "No saved logins yet. Use " b { "Add / Import" } ", or accept a save prompt on a site." }))
+        } @else {
+            div class="cluster" style="margin-bottom:10px" {
+                (ui::search("q", "", "Filter logins", Some(".list")))
+            }
+        }
+        div class="list" {
+            @for e in entries {
+                // Ids come from CSV imports too — percent-encode, never splice raw.
+                @let fill = format!("password://go/fill?id={}", url_component(&e.id));
+                @let delete = format!("password://go/delete?id={}", url_component(&e.id));
+                @let host = display_host(&e.origin);
+                @let email = e.email.as_deref().filter(|s| !s.is_empty());
+                div class="row card" data-open=(fill) data-delete=(delete)
+                    data-confirm=(format!("Delete login for {host}"))
+                    data-text=(format!("{} {} {}", e.origin, e.username, email.unwrap_or(""))) title=(e.origin) {
+                    (ui::favicon(host, host))
+                    div class="main" {
+                        span class="title" { (host) }
+                        @if !e.username.is_empty() { span class="sub" { (e.username) } }
+                        @if let Some(email) = email { span class="sub" { (email) } }
+                    }
+                    div class="actions" {
+                        a class="btn sm primary" href=(fill) { "Fill" }
+                        (ui::icon_link(&delete, "Delete", Icon::Trash, true))
+                    }
+                }
+            }
+        }
+        div class="empty hidden" data-filter-empty { (Icon::Search) div { "No login matches." } }
     }
-    html.push_str("</div>");
-    html
+}
+
+fn add() -> Markup {
+    html! {
+        h2 { "Import CSV" }
+        p class="small muted" { "Chrome or Bitwarden export — opens a system file dialog." }
+        a class="btn primary sm" href="password://go/import-browse" { (Icon::Download) "Choose CSV file…" }
+        h2 { "Add entry" }
+        form id="add-form" class="form" {
+            input class="input" name="origin" required placeholder="https://example.com" aria-label="Site";
+            input class="input" name="username" placeholder="Username" aria-label="Username" autocomplete="off";
+            input class="input" name="password" type="password" required placeholder="Password" aria-label="Password" autocomplete="new-password";
+            input class="input" name="email" placeholder="Email (optional)" aria-label="Email" autocomplete="off";
+            button class="btn primary sm" type="submit" { (Icon::Check) "Save" }
+        }
+    }
+}
+
+fn generator(generated: Option<&str>) -> Markup {
+    html! {
+        p class="small muted" { "20 characters with symbols, from the OS random generator." }
+        a class="btn primary sm" href="password://go/generate?length=20&symbols=1" { (Icon::Refresh) "Generate" }
+        @if let Some(g) = generated {
+            div class="card generated" { (g) }
+            a class="btn sm" href="password://go/copy-generated" { (Icon::Copy) "Copy" }
+        }
+    }
+}
+
+fn never(never_save: &[String]) -> Markup {
+    html! {
+        p class="small muted" { "Sites where the save prompt never appears." }
+        @if never_save.is_empty() {
+            (ui::empty(Icon::Shield, html! { "None" }))
+        }
+        div class="list" {
+            @for o in never_save {
+                @let remove = format!("password://go/remove-never?origin={}", url_component(o));
+                div class="row card" data-nav data-delete=(remove) title=(o) {
+                    span class="main" { span class="title" { (o) } }
+                    div class="actions" { (ui::icon_link(&remove, "Remove", Icon::Trash, true)) }
+                }
+            }
+        }
+    }
 }
 
 pub(crate) fn page_url(
@@ -128,197 +204,47 @@ pub(crate) fn page_url(
     active_tab: &str,
 ) -> String {
     let active_tab = normalize_tab(active_tab);
-    let radius = theme.css_radius();
-    let radius_inner = theme.css_radius_inner();
-    let status_html = status
-        .filter(|s| !s.is_empty())
-        .map(|s| {
-            format!(
-                "<p style=\"margin:0 0 12px;padding:8px 10px;border-radius:{radius_inner};\
-                 border:1px solid {border};background:{card};color:{fg};font-size:13px\">{msg}</p>",
-                msg = html_escape(s),
-                border = theme.help_card_border,
-                card = theme.help_card_bg,
-                fg = theme.help_fg,
-            )
+    let tabs: Vec<ui::Tab> = TABS
+        .iter()
+        .map(|(id, label, href)| ui::Tab {
+            label,
+            href,
+            active: *id == active_tab,
+            count: match *id {
+                "saved" => Some(entries.len()),
+                "never" => Some(never_save.len()),
+                _ => None,
+            },
         })
-        .unwrap_or_default();
-
-    let mut rows = String::new();
-    if entries.is_empty() {
-        rows.push_str(&format!(
-            "<p style=\"opacity:0.7;color:{fg}\">No saved logins yet. Use <b>Add / Import</b>, or accept a \
-             save prompt on a site.</p>",
-            fg = theme.help_fg,
-        ));
-    }
-    for e in entries {
-        let origin_full = html_escape(&e.origin);
-        let site = html_escape(display_host(&e.origin));
-        let user = html_escape(&e.username);
-        // Ids come from CSV imports too — percent-encode, never splice raw.
-        let fill_href = format!("password://go/fill?id={}", url_component(&e.id));
-        let delete_href = format!("password://go/delete?id={}", url_component(&e.id));
-        let email_line = e
-            .email
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(|em| {
-                format!(
-                    "<div style=\"font-size:12px;opacity:0.7;color:{fg};overflow:hidden;\
-                     text-overflow:ellipsis;white-space:nowrap\" title=\"{em}\">{em}</div>",
-                    em = html_escape(em),
-                    fg = theme.help_fg,
-                )
-            })
-            .unwrap_or_default();
-        // min-width:0 + ellipsis on the text column; flex-shrink:0 on buttons
-        // so a long username/email never shoves Fill/Delete off-row.
-        let secondary = if user.is_empty() {
-            email_line
-        } else {
-            format!(
-                "<div style=\"font-size:12px;opacity:0.7;color:{fg};overflow:hidden;\
-                 text-overflow:ellipsis;white-space:nowrap\" title=\"{user}\">{user}</div>\
-                 {email_line}",
-                fg = theme.help_fg,
-            )
-        };
-        rows.push_str(&format!(
-            "<div class=\"list-row\" data-open=\"{fill_href}\" \
-             style=\"padding:10px 14px;background:{card};border:1px solid {border};\
-             border-radius:{radius};display:flex;gap:10px;align-items:center;min-width:0\">\
-             <div style=\"flex:1;min-width:0\">\
-             <div style=\"font-weight:600;color:{heading};overflow:hidden;\
-              text-overflow:ellipsis;white-space:nowrap\" title=\"{origin_full}\">{site}</div>\
-             {secondary}\
-             </div>\
-             <div style=\"display:flex;gap:6px;flex-shrink:0\">\
-             <button type=\"button\" onclick=\"event.stopPropagation();location='{fill_href}'\" \
-             style=\"padding:4px 10px;border-radius:{radius_inner};border:1px solid {border};\
-             background:{accent};color:{key_fg};cursor:pointer;font-size:12px;white-space:nowrap\">Fill</button>\
-             <button type=\"button\" onclick=\"event.stopPropagation();location='{delete_href}'\" \
-             style=\"padding:4px 10px;border-radius:{radius_inner};border:1px solid {border};\
-             background:transparent;color:{fg};cursor:pointer;font-size:12px;white-space:nowrap\">Delete</button>\
-             </div></div>",
-            card = theme.help_card_bg,
-            border = theme.help_card_border,
-            heading = theme.help_heading,
-            fg = theme.help_fg,
-            accent = theme.help_key_bg,
-            key_fg = theme.help_key_fg,
-        ));
-    }
-
-    let mut never_rows = String::new();
-    if never_save.is_empty() {
-        never_rows.push_str(&format!(
-            "<p style=\"opacity:0.65;font-size:13px;color:{fg}\">None</p>",
-            fg = theme.help_fg,
-        ));
-    }
-    for o in never_save {
-        let esc = html_escape(o);
-        let origin_enc = url_component(o);
-        never_rows.push_str(&format!(
-            "<div style=\"display:flex;gap:8px;align-items:center;padding:6px 0;min-width:0\">\
-             <span style=\"flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;\
-              white-space:nowrap;color:{fg}\" title=\"{esc}\">{esc}</span>\
-             <button type=\"button\" onclick=\"location='password://go/remove-never?origin={origin_enc}'\" \
-             style=\"flex-shrink:0;font-size:12px;cursor:pointer;color:{accent};white-space:nowrap\">Remove</button></div>",
-            fg = theme.help_fg,
-            accent = theme.help_key_bg,
-        ));
-    }
-
-    let gen_out = generated
-        .map(|g| {
-            format!(
-                "<p style=\"margin:8px 0;padding:8px 10px;background:{card};border-radius:{radius_inner};\
-                 border:1px solid {border};color:{fg};font-family:monospace;word-break:break-all\">{g}</p>\
-                 <button type=\"button\" onclick=\"location='password://go/copy-generated'\" \
-                 style=\"padding:6px 12px;border-radius:{radius_inner};border:none;background:{accent};\
-                 color:{key_fg};cursor:pointer\">Copy</button>",
-                g = html_escape(g),
-                card = theme.help_card_bg,
-                border = theme.help_card_border,
-                fg = theme.help_fg,
-                accent = theme.help_key_bg,
-                key_fg = theme.help_key_fg,
-            )
-        })
-        .unwrap_or_default();
-
-    let input = format!(
-        "width:100%;box-sizing:border-box;padding:8px 10px;border-radius:{radius_inner};\
-         border:1px solid {border};background:{card};color:{fg}",
-        border = theme.help_card_border,
-        card = theme.help_card_bg,
-        fg = theme.help_fg,
-    );
-
-    let panel = match active_tab {
-        "add" => format!(
-            "<h2 style=\"font-size:13px;text-transform:uppercase;opacity:0.8;color:{heading};margin:0 0 8px\">Import CSV</h2>\
-             <p style=\"opacity:0.65;font-size:12px;margin:0 0 8px;color:{fg}\">\
-             Chrome or Bitwarden export — opens a system file dialog</p>\
-             <div style=\"margin-bottom:18px\">\
-             <button type=\"button\" onclick=\"location='password://go/import-browse'\" \
-               style=\"padding:8px 14px;border:none;border-radius:{radius};background:{accent};\
-               color:{key_fg};font-weight:600;cursor:pointer\">Choose CSV file…</button>\
-             </div>\
-             <h2 style=\"font-size:13px;text-transform:uppercase;opacity:0.8;color:{heading};margin:0 0 8px\">Add entry</h2>\
-             <form onsubmit=\"event.preventDefault();location='password://go/upsert?origin='+\
-               encodeURIComponent(this.origin.value)+'&username='+encodeURIComponent(this.username.value)+\
-               '&password='+encodeURIComponent(this.password.value)+\
-               '&email='+encodeURIComponent(this.email.value);\" \
-               style=\"display:flex;flex-direction:column;gap:8px\">\
-             <input name=\"origin\" required placeholder=\"https://example.com\" style=\"{input}\">\
-             <input name=\"username\" placeholder=\"Username\" style=\"{input}\">\
-             <input name=\"password\" type=\"password\" required placeholder=\"Password\" style=\"{input}\">\
-             <input name=\"email\" placeholder=\"Email (optional)\" style=\"{input}\">\
-             <button type=\"submit\" style=\"align-self:flex-start;padding:8px 14px;border:none;\
-               border-radius:{radius};background:{accent};color:{key_fg};font-weight:600;cursor:pointer\">Save</button>\
-             </form>",
-            heading = theme.help_heading,
-            fg = theme.help_fg,
-            accent = theme.help_key_bg,
-            key_fg = theme.help_key_fg,
-        ),
-        "generator" => format!(
-            "<button type=\"button\" onclick=\"location='password://go/generate?length=20&symbols=1'\" \
-               style=\"padding:8px 14px;border:none;border-radius:{radius};background:{accent};color:{key_fg};\
-               font-weight:600;cursor:pointer\">Generate</button>\
-             {gen_out}",
-            accent = theme.help_key_bg,
-            key_fg = theme.help_key_fg,
-        ),
-        "never" => never_rows,
-        _ => format!("<div style=\"display:flex;flex-direction:column;gap:8px\">{rows}</div>"),
+        .collect();
+    let body = html! {
+        main class="page" {
+            header class="page-head" {
+                h1 id=(LIST_MARKER) { "Passwords" }
+                a class="btn sm" href="password://go/lock" title="Lock vault (Ctrl+Shift+L)" { (Icon::Lock) "Lock" }
+                div class="sub small muted" { "Local vault · focus a login field on a site for a fill suggestion" }
+            }
+            @if let Some(status) = status.filter(|s| !s.is_empty()) {
+                (ui::banner(ui::Tone::Info, status))
+            }
+            (ui::tabs(&tabs))
+            @match active_tab {
+                "add" => (add()),
+                "generator" => (generator(generated)),
+                "never" => (never(never_save)),
+                _ => (saved(entries)),
+            }
+        }
     };
-
-    let html = format!(
-        "{body}\
-         <div style=\"display:flex;align-items:center;gap:12px;margin:0 0 8px\">\
-         <h1 id=\"{LIST_MARKER}\" style=\"margin:0;flex:1;color:{heading};font-size:20px\">Passwords</h1>\
-         <a href=\"password://go/lock\" title=\"Lock vault (Ctrl+Shift+L)\" \
-         style=\"text-decoration:none;padding:6px 12px;border-radius:8px;\
-         border:1px solid {border};background:{card};color:{fg};font-size:13px;\
-         font-weight:600\">Lock</a></div>\
-         <p style=\"opacity:0.7;font-size:13px;margin:0 0 12px;color:{fg}\">\
-         Local vault · Focus a login field for a fill suggestion</p>\
-         {status_html}\
-         {tabs}\
-         {panel}\
-         {list_nav}</body>",
-        body = super::body_open(theme, &format!("data-view=\"{active_tab}\"")),
-        heading = theme.help_heading,
-        fg = theme.help_fg,
-        border = theme.help_card_border,
-        card = theme.help_card_bg,
-        tabs = tab_bar(theme, active_tab),
-        list_nav = LIST_NAV_SCRIPT,
-    );
+    let html = ui::Doc::new(theme, "Passwords")
+        .view(active_tab)
+        .keys(&[
+            ("Enter", "Fill selected login"),
+            ("Del Del", "Delete selected"),
+        ])
+        .css(CSS)
+        .script(SCRIPT)
+        .render(body);
     super::serve(super::kind::VAULT_LIST, html)
 }
 
@@ -333,6 +259,7 @@ fn display_host(origin: &str) -> &str {
 #[cfg(test)]
 mod tag_tests {
     use crate::output::THEMES;
+    use crate::pages::tests::served_html;
 
     #[test]
     fn list_page_is_detected_by_kind() {
@@ -350,5 +277,29 @@ mod tag_tests {
         assert!(!super::is_list_url(
             "data:text/html;tag=sb-vault-list;base64,PGgxPg=="
         ));
+    }
+
+    #[test]
+    fn entries_and_errors_are_escaped_and_ids_encoded() {
+        let mut entry =
+            crate::persistence::vault::test_entry("a&b=c", "https://x.test\"><img src=x>");
+        entry.username = "<script>u()</script>".into();
+        entry.password = "pw".into();
+        let html = served_html(&super::page_url(
+            &THEMES[0],
+            &[entry],
+            &["https://n.test/<b>".into()],
+            Some("<i>gen</i>"),
+            Some("<u>status</u>"),
+            "saved",
+        ));
+        for raw in ["<img src=x", "<script>u()", "<u>status"] {
+            assert!(!html.contains(raw), "{raw}");
+        }
+        assert!(html.contains("password://go/fill?id=a%26b%3Dc"));
+        assert!(!html.contains(">pw<"), "passwords are never rendered");
+        let unlock = served_html(&super::unlock_url(&THEMES[0], true, Some("<b>bad</b>")));
+        assert!(!unlock.contains("<b>bad"));
+        assert!(unlock.contains("data-create=\"1\""));
     }
 }

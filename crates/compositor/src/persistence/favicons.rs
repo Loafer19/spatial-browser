@@ -1,5 +1,5 @@
 // Local favicon cache for the built-in pages (bookmarks, history,
-// downloads, switcher): PNGs captured from the browser cache on visit
+// downloads, palette): PNGs captured from the browser cache on visit
 // (cef_bridge::fetch_favicon), served to the pages as data: URIs. Lists
 // never fetch https://<host>/favicon.ico, which leaked each listed site.
 //
@@ -72,7 +72,7 @@ pub fn store(key: &str, png: &[u8]) {
         log::warn!("favicon {key}: couldn't write {path:?}: {e}");
         return;
     }
-    log::info!("favicon cached for {key} ({} bytes)", png.len());
+    log::debug!("favicon cached for {key} ({} bytes)", png.len());
     MEMORY.with_borrow_mut(|m| m.insert(key.to_string(), Some(data_uri_of(png))));
 }
 

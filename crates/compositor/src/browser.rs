@@ -37,6 +37,10 @@ pub struct Page {
     pub load_progress: std::cell::Cell<f32>,
     /// True while CEF reports loading. Runtime-only; not persisted.
     pub load_active: std::cell::Cell<bool>,
+    /// URL this tile should show but hasn't started loading: a restored
+    /// tile waiting to scroll into view, or a crashed one waiting out its
+    /// backoff (pending_actions::lazy_load). Runtime-only.
+    pub pending: RefCell<Option<crate::lazy_load::PendingLoad>>,
 }
 
 impl Page {
@@ -54,8 +58,12 @@ impl Page {
         hasher.finish()
     }
 
-    /// Current URL from CEF (includes in-page navigations).
+    /// Current URL from CEF (includes in-page navigations); for a tile
+    /// that hasn't loaded yet, the URL it will load.
     pub fn url(&self) -> String {
+        if let Some(pending) = self.pending.borrow().as_ref() {
+            return pending.url.clone();
+        }
         cef::ImplBrowser::main_frame(&self.browser)
             .map(|frame| cef::CefString::from(&cef::ImplFrame::url(&frame)).to_string())
             .unwrap_or_default()
@@ -102,11 +110,15 @@ fn osr_setup(
         external_begin_frame_enabled: true as _,
         ..Default::default()
     };
-    if shared_texture {
-        log::info!("CEF OSR: shared GPU texture enabled");
-    } else {
-        log::info!("CEF OSR: CPU paint path");
-    }
+    // Per browser: debug only (startup options are logged once at info).
+    log::debug!(
+        "CEF OSR: {}",
+        if shared_texture {
+            "shared GPU texture"
+        } else {
+            "CPU paint path"
+        }
+    );
     let (render_handler, handles) = OsrRenderHandler::new(
         device.clone(),
         queue.clone(),
@@ -145,6 +157,7 @@ impl Page {
             load_progress: std::cell::Cell::new(0.0),
             // Utility pages (help/settings/…) skip the load bar.
             load_active: std::cell::Cell::new(!ephemeral),
+            pending: RefCell::new(None),
         }
     }
 
@@ -354,6 +367,15 @@ fn adopt_warm(gpu: &GpuState, warm: Warm, url: &str, rect: Rect, ephemeral: bool
     if let Some(frame) = cef::ImplBrowser::main_frame(&page.browser) {
         cef::ImplFrame::load_url(&frame, Some(&url.into()));
     }
+    page
+}
+
+/// A restored web tile that loads `url` only once it is on screen
+/// (lazy_load::drain); until then a blank browser holds its place.
+pub fn spawn_deferred(gpu: &GpuState, window: &Window, url: &str, rect: Rect) -> Page {
+    let page = spawn(gpu, window, "about:blank", rect, false);
+    page.load_active.set(false);
+    *page.pending.borrow_mut() = Some(crate::lazy_load::PendingLoad::now(url));
     page
 }
 
