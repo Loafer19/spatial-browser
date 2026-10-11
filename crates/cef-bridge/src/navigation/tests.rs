@@ -149,3 +149,33 @@ fn omnibox_suggest_action() {
     assert!(parse_omnibox_suggest("omnibox://go?q=x&url=y").is_none());
     assert!(parse_omnibox_submit("omnibox://suggest?q=x").is_none());
 }
+
+#[test]
+fn download_actions() {
+    use DownloadPageAction::*;
+    for (url, expected) in [
+        ("download://open/0", Open(0)),
+        ("download://reveal/12", Reveal(12)),
+        ("download://remove/3", Remove(3)),
+        ("download://cancel/7", Cancel(7)),
+        ("download://pause/4294967295", Pause(u32::MAX)),
+        ("download://resume/1", Resume(1)),
+    ] {
+        assert_eq!(parse_download_action(url), Some(expected), "{url}");
+    }
+    for url in [
+        "download://open/",
+        "download://open/-1",
+        "download://open/+1",
+        "download://open/1/",
+        "download://open/1?x=2",
+        "download://cancel/4294967296",
+        "download://cancel/ 1",
+        "download://delete/1",
+        "download://pause",
+        "https://download.test/pause/1",
+        "downloads://pause/1",
+    ] {
+        assert_eq!(parse_download_action(url), None, "{url}");
+    }
+}

@@ -171,7 +171,7 @@ pub fn apply(session: &mut Session, gpu: &GpuState, mut s: Stores<'_>) {
 
     spawning::drain_switcher(session, gpu);
 
-    download_page::drain(session, gpu, s.downloads);
+    download_page::drain(session, s.downloads);
 
     spawning::drain_new_pages(session, gpu);
 

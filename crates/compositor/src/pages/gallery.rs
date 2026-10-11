@@ -52,6 +52,79 @@ fn history() -> Vec<HistoryEntry> {
     .collect()
 }
 
+fn completed_downloads() -> Vec<DownloadRecord> {
+    [
+        ("https://example.test/files/report-2026-10.pdf", "report-2026-10.pdf", Some("application/pdf")),
+        ("https://cdn.example.test/img/route-map.png", "route-map.png", Some("image/png")),
+        ("https://example.test/dl/tool", "tool", Some("application/octet-stream")),
+        (
+            "https://releases.example.test/a/very/long/path/build.tar.gz",
+            "a-very-long-file-name-that-should-truncate-cleanly-instead-of-wrapping-v2.4.1-x86_64.tar.gz",
+            None,
+        ),
+        ("data:text/csv;base64,YSxiCg==", "export.csv", Some("text/csv")),
+    ]
+    .into_iter()
+    .map(|(url, name, mime)| DownloadRecord {
+        url: url.into(),
+        path: format!("/home/user/Downloads/{name}"),
+        mime: mime.map(Into::into),
+    })
+    .collect()
+}
+
+fn active_downloads() -> Vec<cef_bridge::DownloadProgress> {
+    use cef_bridge::{DownloadProgress, DownloadState};
+    const MB: u64 = 1024 * 1024;
+    let item = |id, name: &str, received, total: Option<u64>, speed, state| DownloadProgress {
+        id,
+        url: format!("https://files.example.test/{name}"),
+        suggested_name: name.into(),
+        full_path: format!("/home/user/Downloads/{name}"),
+        received_bytes: received,
+        total_bytes: total,
+        speed,
+        percent: total.map(|t| (received * 100 / t) as u8),
+        state,
+        mime: String::new(),
+        started_at: 0,
+    };
+    vec![
+        item(
+            1,
+            "fedora-workstation-live-x86_64-44.iso",
+            12 * MB + 314_000,
+            Some(48 * MB),
+            2_202_009,
+            DownloadState::InProgress,
+        ),
+        item(
+            2,
+            "stream-recording.mkv",
+            230 * MB,
+            None,
+            5 * MB,
+            DownloadState::InProgress,
+        ),
+        item(
+            3,
+            "invoices-2026-q3.zip",
+            3 * MB,
+            Some(10 * MB),
+            0,
+            DownloadState::Paused,
+        ),
+        item(
+            4,
+            "a-very-long-podcast-episode-title-that-keeps-going-and-going-episode-142.mp3",
+            40 * MB,
+            Some(96 * MB),
+            0,
+            DownloadState::Interrupted,
+        ),
+    ]
+}
+
 /// `(name, served URL)` for every page in `theme`.
 fn samples(theme: &Theme) -> Vec<(&'static str, String)> {
     let workspaces: crate::persistence::workspaces::WorkspaceStore = serde_json::from_str(
@@ -119,14 +192,17 @@ fn samples(theme: &Theme) -> Vec<(&'static str, String)> {
         ),
         (
             "downloads",
-            downloads_list::page_url(
-                theme,
-                &[DownloadRecord {
-                    url: "https://example.test/files/report-2026-10.pdf".into(),
-                    path: "/home/user/Downloads/report-2026-10.pdf".into(),
-                }],
-            ),
+            downloads_list::page_url(theme, &completed_downloads(), &active_downloads()),
         ),
+        (
+            "downloads-active",
+            downloads_list::page_url(theme, &[], &active_downloads()),
+        ),
+        (
+            "downloads-completed",
+            downloads_list::page_url(theme, &completed_downloads(), &[]),
+        ),
+        ("downloads-empty", downloads_list::page_url(theme, &[], &[])),
         ("history", history_list::page_url(theme, &history())),
         ("workspaces", workspace_list::page_url(theme, &workspaces)),
         (
