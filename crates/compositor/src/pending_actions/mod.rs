@@ -196,7 +196,7 @@ pub fn apply(session: &mut Session, gpu: &GpuState, mut s: Stores<'_>) {
 
     workspace_page::drain(session, gpu, s.workspaces, s.workspace_runtime);
 
-    settings_page::drain(session, gpu, s.settings);
+    settings_page::drain(session, gpu, &mut s);
 }
 
 #[cfg(test)]

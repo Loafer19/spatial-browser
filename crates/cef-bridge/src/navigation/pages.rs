@@ -259,7 +259,8 @@ pub enum SettingsPageAction {
     /// `peter_lowe` | `easylist` | `easyprivacy`.
     ToggleFilterList(String),
     SetTab(String),
-    /// Fixed search URL template from Settings (not free text).
+    /// Search URL template: a preset or the custom field (validated by the
+    /// compositor before it is saved).
     SetSearchEngine(String),
     SetTheme(usize),
     /// Index into `reader_mode::READER_THEMES`.
@@ -268,6 +269,12 @@ pub enum SettingsPageAction {
     RemoveBlockedHost(usize),
     /// 60 / 90 / 120 — see `browser::set_target_frame_rate`.
     SetFrameRate(u32),
+    /// `low` | `high` — compositor GPU, applied on restart.
+    SetGpu(String),
+    /// `auto` | `gpu` | `cpu` — OSR paint path, applied on restart.
+    SetOsr(String),
+    /// Open another built-in page: `scripts` | `help`.
+    Open(String),
 }
 
 thread_local! {
@@ -275,7 +282,7 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
-pub(super) fn parse_settings_action(url: &str) -> Option<SettingsPageAction> {
+pub fn parse_settings_action(url: &str) -> Option<SettingsPageAction> {
     let rest = url.strip_prefix("settings://")?;
     if rest == "toggle-adblock" {
         return Some(SettingsPageAction::ToggleAdBlock);
@@ -322,6 +329,21 @@ pub(super) fn parse_settings_action(url: &str) -> Option<SettingsPageAction> {
     }
     if let Some(fps) = rest.strip_prefix("frame-rate/") {
         return fps.parse().ok().map(SettingsPageAction::SetFrameRate);
+    }
+    if let Some(id) = rest.strip_prefix("gpu/") {
+        if matches!(id, "low" | "high") {
+            return Some(SettingsPageAction::SetGpu(id.to_string()));
+        }
+    }
+    if let Some(id) = rest.strip_prefix("osr/") {
+        if matches!(id, "auto" | "gpu" | "cpu") {
+            return Some(SettingsPageAction::SetOsr(id.to_string()));
+        }
+    }
+    if let Some(page) = rest.strip_prefix("open/") {
+        if matches!(page, "scripts" | "help") {
+            return Some(SettingsPageAction::Open(page.to_string()));
+        }
     }
     None
 }

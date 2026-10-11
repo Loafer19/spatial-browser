@@ -226,3 +226,39 @@ fn palette_actions_parse_and_reject_garbage() {
         assert!(parse_palette_action(url).is_none(), "{url}");
     }
 }
+
+#[test]
+fn settings_actions() {
+    use SettingsPageAction as A;
+    assert!(matches!(
+        parse_settings_action("settings://search-engine?engine=https%3A%2F%2Fk.test%2F%3Fq%3D"),
+        Some(A::SetSearchEngine(e)) if e == "https://k.test/?q="
+    ));
+    assert!(matches!(
+        parse_settings_action("settings://gpu/high"),
+        Some(A::SetGpu(id)) if id == "high"
+    ));
+    assert!(matches!(
+        parse_settings_action("settings://osr/cpu"),
+        Some(A::SetOsr(id)) if id == "cpu"
+    ));
+    assert!(matches!(
+        parse_settings_action("settings://open/help"),
+        Some(A::Open(p)) if p == "help"
+    ));
+    assert!(matches!(
+        parse_settings_action("settings://frame-rate/90"),
+        Some(A::SetFrameRate(90))
+    ));
+    for bad in [
+        "settings://gpu/ultra",
+        "settings://osr/",
+        "settings://open/passwords",
+        "settings://open/../help",
+        "settings://search-engine?q=x",
+        "settings://frame-rate/fast",
+        "settings://nope",
+    ] {
+        assert!(parse_settings_action(bad).is_none(), "{bad}");
+    }
+}

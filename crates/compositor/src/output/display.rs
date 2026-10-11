@@ -259,8 +259,9 @@ impl GpuState {
         // GPU process typically uses (the display-driving iGPU). On
         // hybrid laptops HighPerformance picks the discrete GPU while
         // Chromium stays on the iGPU — DMA-BUF shared-texture import then
-        // fails across devices. Override with SPATIAL_BROWSER_GPU=high
-        // (and usually SPATIAL_BROWSER_OSR=cpu; see osr_shared_texture_enabled).
+        // fails across devices. Settings → Performance (or
+        // SPATIAL_BROWSER_GPU=high, usually with SPATIAL_BROWSER_OSR=cpu;
+        // see osr_shared_texture_enabled) picks the discrete GPU.
         let power_preference = gpu_power_preference();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -705,47 +706,21 @@ pub enum FrameOutcome {
     Fatal,
 }
 
-/// Default LowPower (iGPU, matches Chromium). `SPATIAL_BROWSER_GPU=high` → dGPU;
-/// pair with `SPATIAL_BROWSER_OSR=cpu` unless both stay on the same device.
+/// Settings → Performance → GPU, or `SPATIAL_BROWSER_GPU` (wins). Default
+/// LowPower (iGPU, matches Chromium); High = dGPU, usually with CPU OSR.
 fn gpu_power_preference() -> wgpu::PowerPreference {
-    match std::env::var("SPATIAL_BROWSER_GPU").ok().as_deref() {
-        Some("high" | "discrete" | "dgpu") => wgpu::PowerPreference::HighPerformance,
-        Some("low" | "integrated" | "igpu") => wgpu::PowerPreference::LowPower,
-        Some(other) => {
-            log::warn!("unknown SPATIAL_BROWSER_GPU={other:?}, using low (iGPU-friendly)");
-            wgpu::PowerPreference::LowPower
-        }
-        None => wgpu::PowerPreference::LowPower,
+    use crate::persistence::settings::{self, GpuPower};
+    match settings::startup().gpu {
+        GpuPower::High => wgpu::PowerPreference::HighPerformance,
+        GpuPower::Low => wgpu::PowerPreference::LowPower,
     }
 }
 
-/// Shared-texture OSR when `accelerated_osr` is on, unless OSR=cpu or
-/// GPU=high without OSR=gpu (cross-device DMA-BUF breaks import).
+/// Shared-texture OSR when `accelerated_osr` is on and the startup OSR mode
+/// (Settings, or `SPATIAL_BROWSER_OSR`) allows it: Auto turns it off on the
+/// discrete GPU, where cross-device DMA-BUF import breaks.
 pub fn osr_shared_texture_enabled() -> bool {
-    #[cfg(not(feature = "accelerated_osr"))]
-    {
-        return false;
-    }
-    #[cfg(feature = "accelerated_osr")]
-    {
-        match std::env::var("SPATIAL_BROWSER_OSR").ok().as_deref() {
-            Some("cpu" | "software") => false,
-            Some("gpu" | "shared" | "accelerated") => true,
-            Some(other) => {
-                log::warn!("unknown SPATIAL_BROWSER_OSR={other:?}, using feature default");
-                !discrete_gpu_without_forced_osr()
-            }
-            None => !discrete_gpu_without_forced_osr(),
-        }
-    }
-}
-
-#[cfg(feature = "accelerated_osr")]
-fn discrete_gpu_without_forced_osr() -> bool {
-    matches!(
-        std::env::var("SPATIAL_BROWSER_GPU").ok().as_deref(),
-        Some("high" | "discrete" | "dgpu")
-    )
+    crate::persistence::settings::startup().shared_texture()
 }
 
 #[cfg(test)]
