@@ -149,3 +149,50 @@ fn omnibox_suggest_action() {
     assert!(parse_omnibox_suggest("omnibox://go?q=x&url=y").is_none());
     assert!(parse_omnibox_submit("omnibox://suggest?q=x").is_none());
 }
+
+#[test]
+fn palette_actions_parse_and_reject_garbage() {
+    for url in ["palette://go/42", "palette://go/42/"] {
+        assert!(
+            matches!(parse_palette_action(url), Some(PaletteAction::Go(42))),
+            "{url}"
+        );
+    }
+    for url in ["palette://run/new-page", "palette://run/new-page/"] {
+        assert!(
+            matches!(parse_palette_action(url), Some(PaletteAction::Run(id)) if id == "new-page"),
+            "{url}"
+        );
+    }
+    for url in [
+        "palette://open?url=https%3A%2F%2Fa.test%2F%3Fx%3D1",
+        "palette://open/?url=https%3A%2F%2Fa.test%2F%3Fx%3D1",
+    ] {
+        assert!(
+            matches!(parse_palette_action(url), Some(PaletteAction::Open(u)) if u == "https://a.test/?x=1"),
+            "{url}"
+        );
+    }
+    for url in ["palette://close", "palette://close/"] {
+        assert!(
+            matches!(parse_palette_action(url), Some(PaletteAction::Close)),
+            "{url}"
+        );
+    }
+    let long = format!("palette://run/{}", "a".repeat(41));
+    for url in [
+        "palette://go/x",
+        "palette://run/",
+        "palette://run/New-Page",
+        "palette://run/a%2Fb",
+        "palette://run/../settings",
+        long.as_str(),
+        "palette://open?url=",
+        "palette://open?url=%20",
+        "palette://open",
+        "palette://nope",
+        "switcher://go/1",
+    ] {
+        assert!(parse_palette_action(url).is_none(), "{url}");
+    }
+}

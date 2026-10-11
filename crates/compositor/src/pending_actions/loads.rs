@@ -10,6 +10,11 @@ thread_local! {
     static PAGE_TITLES: RefCell<HashMap<i32, String>> = RefCell::new(HashMap::new());
 }
 
+/// Latest title of the tile `browser_id` (`None` before its first one).
+pub(crate) fn page_title(browser_id: i32) -> Option<String> {
+    PAGE_TITLES.with_borrow(|t| t.get(&browser_id).cloned())
+}
+
 /// Title changes → the page's latest history visit (and remembered for
 /// the visit its load-end will record).
 pub(super) fn apply_titles(session: &Session, history: &mut [HistoryEntry]) {

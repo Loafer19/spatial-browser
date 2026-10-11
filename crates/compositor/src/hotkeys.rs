@@ -1,8 +1,11 @@
-// Canvas-level shortcuts (never forwarded to page content). HTML for list
-// pages lives in pages/; pan/zoom mouse gestures are in app.rs.
+// Canvas-level shortcuts (never forwarded to page content): a key maps to a
+// `commands::Command` (`command_for`), run by `commands::run` — the same
+// path the Ctrl+K palette uses. The helpers below do the actual work; HTML
+// for list pages lives in pages/; pan/zoom mouse gestures are in app.rs.
 
 use crate::browser;
 use crate::clipboard_bridge;
+use crate::commands::{self, Command};
 use crate::output::GpuState;
 use crate::pages;
 use crate::persistence::bookmarks::{self, Bookmark};
@@ -10,11 +13,11 @@ use crate::persistence::downloads::DownloadRecord;
 use crate::persistence::history::HistoryEntry;
 use crate::persistence::settings::AppSettings;
 use crate::persistence::vault::{self, VaultSession};
-use crate::persistence::workspaces::{self, WorkspaceStore};
+use crate::persistence::workspaces::WorkspaceStore;
 use crate::reader_mode;
 use crate::session::Session;
-use crate::userscripts::{self, UserScript};
-use crate::userstyles::{self, UserStyle};
+use crate::userscripts::UserScript;
+use crate::userstyles::UserStyle;
 use cef::{ImplBrowser, ImplBrowserHost, ImplFrame};
 use winit::event::ElementState;
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
@@ -25,255 +28,111 @@ pub fn handle(
     modifiers: ModifiersState,
     session: &mut Session,
     gpu: &GpuState,
-    stores: crate::pending_actions::Stores<'_>,
+    mut stores: crate::pending_actions::Stores<'_>,
 ) -> bool {
-    let crate::pending_actions::Stores {
-        bookmarks,
-        typed_history,
-        downloads,
-        history,
-        workspaces,
-        workspace_runtime,
-        settings,
-        userscripts,
-        userstyles,
-        vault,
-        ..
-    } = stores;
-    let (typed_history, downloads, history): (&[String], &[DownloadRecord], &[HistoryEntry]) =
-        (typed_history, downloads, history);
-    let settings: &AppSettings = settings;
     if event.state != ElementState::Pressed {
         return false;
     }
-
-    if event.physical_key == PhysicalKey::Code(KeyCode::F1) {
-        open_help(session, gpu);
-        return true;
-    }
-
-    // Alt+Left/Right back/forward (separate from Ctrl+ bindings).
-    if modifiers.alt_key() && !modifiers.control_key() {
-        match event.physical_key {
-            PhysicalKey::Code(KeyCode::ArrowLeft) => {
-                go_back(session);
-                return true;
-            }
-            PhysicalKey::Code(KeyCode::ArrowRight) => {
-                go_forward(session);
-                return true;
-            }
-            _ => {}
-        }
-    }
-
-    if !modifiers.control_key() {
+    let PhysicalKey::Code(code) = event.physical_key else {
+        return false;
+    };
+    // Ctrl+C/X fall through to the page copy-bridge, which may then write
+    // the clipboard (see cef_bridge::clipboard::copy_allowed).
+    if modifiers.control_key()
+        && !modifiers.shift_key()
+        && matches!(code, KeyCode::KeyC | KeyCode::KeyX)
+    {
+        cef_bridge::clipboard::note_copy_shortcut();
         return false;
     }
+    let Some(command) = command_for(
+        code,
+        modifiers.control_key(),
+        modifiers.shift_key(),
+        modifiers.alt_key(),
+    ) else {
+        return false;
+    };
+    commands::run(command, session, gpu, &mut stores);
+    true
+}
 
-    match event.physical_key {
+/// The command a key chord runs (`None` = the page gets the key).
+pub(crate) fn command_for(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> Option<Command> {
+    if code == KeyCode::F1 {
+        return Some(Command::Help);
+    }
+    // Alt+Left/Right back/forward (separate from Ctrl+ bindings).
+    if alt && !ctrl {
+        return match code {
+            KeyCode::ArrowLeft => Some(Command::Back),
+            KeyCode::ArrowRight => Some(Command::Forward),
+            _ => None,
+        };
+    }
+    if !ctrl {
+        return None;
+    }
+    // Ctrl+1..9 — switch to workspace slot N.
+    // Ctrl+Shift+1..9 — move focused page to slot N (create empty if missing) and follow.
+    let slot = match code {
+        KeyCode::Digit1 => Some(1),
+        KeyCode::Digit2 => Some(2),
+        KeyCode::Digit3 => Some(3),
+        KeyCode::Digit4 => Some(4),
+        KeyCode::Digit5 => Some(5),
+        KeyCode::Digit6 => Some(6),
+        KeyCode::Digit7 => Some(7),
+        KeyCode::Digit8 => Some(8),
+        KeyCode::Digit9 => Some(9),
+        _ => None,
+    };
+    if let Some(slot) = slot {
+        return Some(if shift {
+            Command::MoveToWorkspace(slot)
+        } else {
+            Command::SwitchWorkspace(slot)
+        });
+    }
+    let pick = |plain: Command, shifted: Command| Some(if shift { shifted } else { plain });
+    match code {
         // --- Pages ---
-        PhysicalKey::Code(KeyCode::KeyO) if modifiers.shift_key() => {
-            if let Some(page) = session.pages().iter().rev().find(|p| !p.ephemeral) {
-                crate::external::open_in_system_browser(&page.url());
-            }
-            true
-        }
-        PhysicalKey::Code(KeyCode::KeyF) if !modifiers.shift_key() => {
-            open_find(session, gpu);
-            true
-        }
-        PhysicalKey::Code(KeyCode::KeyT) => {
-            if modifiers.shift_key() {
-                reopen_closed(session, gpu);
-            } else {
-                open_new(session, gpu, typed_history, settings);
-            }
-            true
-        }
+        KeyCode::KeyO if shift => Some(Command::OpenInSystemBrowser),
+        KeyCode::KeyF if !shift => Some(Command::FindInPage),
+        KeyCode::KeyT => pick(Command::NewPage, Command::ReopenClosed),
         // Ctrl+W close / Ctrl+Shift+W workspaces.
-        PhysicalKey::Code(KeyCode::KeyW) => {
-            if modifiers.shift_key() {
-                open_workspaces(session, gpu, workspaces);
-            } else {
-                session.close_topmost();
-            }
-            true
-        }
+        KeyCode::KeyW => pick(Command::ClosePage, Command::Workspaces),
         // Ctrl+N — new live workspace slot (same as HUD '+').
-        PhysicalKey::Code(KeyCode::KeyN) => {
-            if !modifiers.shift_key() {
-                workspaces::add_and_switch(workspaces, workspace_runtime, session, gpu);
-                true
-            } else {
-                false
-            }
-        }
-        // Ctrl+1..9 — switch to workspace slot N.
-        // Ctrl+Shift+1..9 — move focused page to slot N (create empty if missing) and follow.
-        PhysicalKey::Code(
-            code @ (KeyCode::Digit1
-            | KeyCode::Digit2
-            | KeyCode::Digit3
-            | KeyCode::Digit4
-            | KeyCode::Digit5
-            | KeyCode::Digit6
-            | KeyCode::Digit7
-            | KeyCode::Digit8
-            | KeyCode::Digit9),
-        ) => {
-            let id = match code {
-                KeyCode::Digit1 => 1,
-                KeyCode::Digit2 => 2,
-                KeyCode::Digit3 => 3,
-                KeyCode::Digit4 => 4,
-                KeyCode::Digit5 => 5,
-                KeyCode::Digit6 => 6,
-                KeyCode::Digit7 => 7,
-                KeyCode::Digit8 => 8,
-                KeyCode::Digit9 => 9,
-                _ => 0,
-            };
-            if id > 0 {
-                if modifiers.shift_key() {
-                    workspaces::move_focused_to_slot(
-                        workspaces,
-                        workspace_runtime,
-                        session,
-                        gpu,
-                        id,
-                    );
-                } else {
-                    workspaces::switch_to(workspaces, workspace_runtime, session, gpu, id);
-                }
-            }
-            true
-        }
+        KeyCode::KeyN if !shift => Some(Command::NewWorkspace),
         // Ctrl+R reload / Ctrl+Shift+R reader mode.
-        PhysicalKey::Code(KeyCode::KeyR) => {
-            if modifiers.shift_key() {
-                toggle_reader_mode(session, settings);
-            } else {
-                reload_focused(session);
-            }
-            true
-        }
-        PhysicalKey::Code(KeyCode::KeyV) => {
-            paste_into_focused(session);
-            true
-        }
-        // Ctrl+C/X fall through to the page copy-bridge, which may then write
-        // the clipboard (see cef_bridge::clipboard::copy_allowed).
-        // Ctrl+Shift+C = copy URL.
-        PhysicalKey::Code(KeyCode::KeyC) => {
-            if modifiers.shift_key() {
-                copy_focused_url(session);
-                true
-            } else {
-                cef_bridge::clipboard::note_copy_shortcut();
-                false
-            }
-        }
-        PhysicalKey::Code(KeyCode::KeyX) if !modifiers.shift_key() => {
-            cef_bridge::clipboard::note_copy_shortcut();
-            false
-        }
+        KeyCode::KeyR => pick(Command::Reload, Command::ReaderMode),
+        KeyCode::KeyV => Some(Command::Paste),
+        KeyCode::KeyC if shift => Some(Command::CopyUrl),
         // Page content zoom (CEF zoom_level), not Ctrl+Space canvas zoom.
-        PhysicalKey::Code(KeyCode::Equal) => {
-            page_zoom(session, cef::ZoomCommand::IN);
-            true
-        }
-        PhysicalKey::Code(KeyCode::Minus) => {
-            page_zoom(session, cef::ZoomCommand::OUT);
-            true
-        }
+        KeyCode::Equal => Some(Command::ZoomIn),
+        KeyCode::Minus => Some(Command::ZoomOut),
         // Ctrl+0 reset page zoom / Ctrl+Shift+0 reset canvas view.
-        PhysicalKey::Code(KeyCode::Digit0) => {
-            if modifiers.shift_key() {
-                session.reset_viewport();
-            } else {
-                page_zoom(session, cef::ZoomCommand::RESET);
-            }
-            true
-        }
+        KeyCode::Digit0 => pick(Command::ZoomReset, Command::ResetCanvas),
 
         // --- Lists ---
-        PhysicalKey::Code(KeyCode::KeyD) => {
-            bookmark_focused(session, bookmarks);
-            true
-        }
-        PhysicalKey::Code(KeyCode::KeyB) => {
-            open_bookmarks(session, gpu, bookmarks);
-            true
-        }
-        PhysicalKey::Code(KeyCode::KeyJ) => {
-            open_downloads(session, gpu, downloads);
-            true
-        }
-        PhysicalKey::Code(KeyCode::KeyH) => {
-            open_history(session, gpu, history);
-            true
-        }
-        PhysicalKey::Code(KeyCode::KeyK) => {
-            open_switcher(session, gpu);
-            true
-        }
-        PhysicalKey::Code(KeyCode::Slash) => {
-            open_help(session, gpu);
-            true
-        }
-        PhysicalKey::Code(KeyCode::Comma) => {
-            open_settings(session, gpu, settings);
-            true
-        }
-        // Opening reloads from disk so new files appear without restart.
-        PhysicalKey::Code(KeyCode::KeyU) if modifiers.shift_key() => {
-            userscripts::reload(userscripts);
-            userstyles::reload(userstyles);
-            open_userscripts(session, gpu, userscripts, userstyles);
-            true
-        }
-        PhysicalKey::Code(KeyCode::KeyP) if modifiers.shift_key() => {
-            open_passwords(session, gpu, vault.as_ref());
-            true
-        }
-        // Applied next frame, where the save-offer/generator secrets are in reach.
-        PhysicalKey::Code(KeyCode::KeyL) if modifiers.shift_key() => {
-            crate::pending_actions::request_vault_lock();
-            true
-        }
+        KeyCode::KeyD => Some(Command::BookmarkPage),
+        KeyCode::KeyB => Some(Command::Bookmarks),
+        KeyCode::KeyJ => Some(Command::Downloads),
+        KeyCode::KeyH => Some(Command::History),
+        KeyCode::KeyK => Some(Command::Palette),
+        KeyCode::Slash => Some(Command::Help),
+        KeyCode::Comma => Some(Command::Settings),
+        KeyCode::KeyU if shift => Some(Command::Scripts),
+        KeyCode::KeyP if shift => Some(Command::Passwords),
+        KeyCode::KeyL if shift => Some(Command::LockVault),
 
         // --- Canvas ---
-        PhysicalKey::Code(KeyCode::KeyG) => {
-            auto_layout(session, gpu);
-            true
-        }
-        PhysicalKey::Code(KeyCode::Tab) => {
-            session.rotate_focus(modifiers.shift_key());
-            true
-        }
+        KeyCode::KeyG => Some(Command::AutoLayout),
+        KeyCode::Tab => pick(Command::NextPage, Command::PreviousPage),
         // Ctrl+Space zoom-to-canvas / Ctrl+Shift+Space cycle theme.
-        PhysicalKey::Code(KeyCode::Space) => {
-            if modifiers.shift_key() {
-                session.cycle_theme();
-                // Built-in pages pick the new palette up in place (ui.js).
-                let js = crate::pages::ui::theme_js(&session.theme());
-                for page in session.pages() {
-                    if crate::pages::kind_of(&page.url()).is_some() {
-                        crate::pages::ui::run_js(&page.browser, &js);
-                    }
-                }
-            } else {
-                let size = gpu.window.inner_size();
-                session.toggle_zoom_focused(
-                    (size.width as f32, size.height as f32),
-                    gpu.window.scale_factor(),
-                );
-            }
-            true
-        }
+        KeyCode::Space => pick(Command::ZoomToCanvas, Command::CycleTheme),
 
-        _ => false,
+        _ => None,
     }
 }
 
@@ -297,7 +156,7 @@ pub(crate) fn open_new(
 }
 
 /// Ctrl+F: find bar above the topmost content page (refocus if open).
-fn open_find(session: &mut Session, gpu: &GpuState) {
+pub(crate) fn open_find(session: &mut Session, gpu: &GpuState) {
     if let Some(bar_id) = session.find().map(|f| f.bar_id) {
         if let Some(index) = session
             .pages()
@@ -330,27 +189,34 @@ fn open_find(session: &mut Session, gpu: &GpuState) {
 }
 
 /// Reopen most recently closed page at its former rect.
-fn reopen_closed(session: &mut Session, gpu: &GpuState) {
+pub(crate) fn reopen_closed(session: &mut Session, gpu: &GpuState) {
     if let Some((rect, url)) = session.pop_closed() {
         session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, false));
     }
 }
 
-fn reload_focused(session: &Session) {
+/// Ctrl+Shift+O: the topmost content page in the desktop's browser.
+pub(crate) fn open_focused_externally(session: &Session) {
+    if let Some(page) = session.pages().iter().rev().find(|p| !p.ephemeral) {
+        crate::external::open_in_system_browser(&page.url());
+    }
+}
+
+pub(crate) fn reload_focused(session: &Session) {
     if let Some(page) = session.pages().last() {
         page.browser.reload();
     }
 }
 
 /// Ctrl+V: async wl-paste; text lands via clipboard_bridge::deliver_paste.
-fn paste_into_focused(session: &Session) {
+pub(crate) fn paste_into_focused(session: &Session) {
     if let Some(page) = session.pages().last() {
         clipboard_bridge::start_paste(page.browser.identifier());
     }
 }
 
 /// Ctrl+Shift+C: copy focused page URL via wl-copy.
-fn copy_focused_url(session: &Session) {
+pub(crate) fn copy_focused_url(session: &Session) {
     let Some(page) = session.pages().last() else {
         return;
     };
@@ -380,7 +246,7 @@ pub(crate) fn toggle_reader_mode(session: &Session, settings: &AppSettings) {
     }
 }
 
-fn go_back(session: &Session) {
+pub(crate) fn go_back(session: &Session) {
     if let Some(page) = session.pages().last() {
         if page.browser.can_go_back() != 0 {
             page.browser.go_back();
@@ -388,7 +254,7 @@ fn go_back(session: &Session) {
     }
 }
 
-fn go_forward(session: &Session) {
+pub(crate) fn go_forward(session: &Session) {
     if let Some(page) = session.pages().last() {
         if page.browser.can_go_forward() != 0 {
             page.browser.go_forward();
@@ -396,7 +262,7 @@ fn go_forward(session: &Session) {
     }
 }
 
-fn page_zoom(session: &Session, command: cef::ZoomCommand) {
+pub(crate) fn page_zoom(session: &Session, command: cef::ZoomCommand) {
     if let Some(page) = session.pages().last() {
         if let Some(host) = page.browser.host() {
             host.zoom(command);
@@ -407,7 +273,7 @@ fn page_zoom(session: &Session, command: cef::ZoomCommand) {
 // --- Lists ---
 
 /// Bookmark focused page URL (refuses ephemeral built-in pages).
-fn bookmark_focused(session: &Session, bookmarks: &mut Vec<Bookmark>) {
+pub(crate) fn bookmark_focused(session: &Session, bookmarks: &mut Vec<Bookmark>) {
     let Some(page) = session.pages().last() else {
         return;
     };
@@ -442,7 +308,7 @@ pub(crate) fn open_bookmarks(session: &mut Session, gpu: &GpuState, bookmarks: &
 }
 
 /// Opens the Ctrl+J downloads list.
-fn open_downloads(session: &mut Session, gpu: &GpuState, downloads: &[DownloadRecord]) {
+pub(crate) fn open_downloads(session: &mut Session, gpu: &GpuState, downloads: &[DownloadRecord]) {
     let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
     let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
@@ -452,7 +318,7 @@ fn open_downloads(session: &mut Session, gpu: &GpuState, downloads: &[DownloadRe
 }
 
 /// Opens the Ctrl+H history list.
-fn open_history(session: &mut Session, gpu: &GpuState, history: &[HistoryEntry]) {
+pub(crate) fn open_history(session: &mut Session, gpu: &GpuState, history: &[HistoryEntry]) {
     let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
     let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
@@ -462,7 +328,7 @@ fn open_history(session: &mut Session, gpu: &GpuState, history: &[HistoryEntry])
 }
 
 /// Opens the Ctrl+Shift+W workspace list.
-fn open_workspaces(session: &mut Session, gpu: &GpuState, workspaces: &WorkspaceStore) {
+pub(crate) fn open_workspaces(session: &mut Session, gpu: &GpuState, workspaces: &WorkspaceStore) {
     let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
     let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
@@ -472,7 +338,7 @@ fn open_workspaces(session: &mut Session, gpu: &GpuState, workspaces: &Workspace
 }
 
 /// Opens the Ctrl+, settings page.
-fn open_settings(session: &mut Session, gpu: &GpuState, settings: &AppSettings) {
+pub(crate) fn open_settings(session: &mut Session, gpu: &GpuState, settings: &AppSettings) {
     let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
     let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
@@ -482,7 +348,7 @@ fn open_settings(session: &mut Session, gpu: &GpuState, settings: &AppSettings) 
 }
 
 /// Opens the Ctrl+Shift+U userscripts + userstyles list.
-fn open_userscripts(
+pub(crate) fn open_userscripts(
     session: &mut Session,
     gpu: &GpuState,
     scripts: &[UserScript],
@@ -518,26 +384,56 @@ pub(crate) fn open_passwords(session: &mut Session, gpu: &GpuState, vault: Optio
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
 }
 
-/// Open Ctrl+K switcher (non-ephemeral pages only).
-fn open_switcher(session: &mut Session, gpu: &GpuState) {
+/// Ctrl+K: open the command palette over the focused tile (which its
+/// commands then act on), or close it when it is already open.
+pub(crate) fn toggle_palette(
+    session: &mut Session,
+    gpu: &GpuState,
+    bookmarks: &[Bookmark],
+    history: &[HistoryEntry],
+    settings: &AppSettings,
+) {
+    if crate::pending_actions::close_palette(session) {
+        return;
+    }
     let size = gpu.window.inner_size();
-    let w = (size.width as f32 * 0.5).clamp(380.0, 640.0);
-    let h = (size.height as f32 * 0.6).clamp(360.0, 640.0);
+    let w = (size.width as f32 * 0.5).clamp(420.0, 680.0);
+    let h = (size.height as f32 * 0.62).clamp(380.0, 600.0);
     let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
-    let entries: Vec<(i32, String)> = session
+    let target = session.pages().last().map(|p| p.browser.identifier());
+    // Topmost first: the page you were just on leads. Ephemeral utility
+    // tiles (help, lists) aren't something worth switching *to*.
+    let open: Vec<pages::palette::OpenPage> = session
         .pages()
         .iter()
+        .rev()
         .filter(|p| !p.ephemeral)
-        .map(|p| (p.browser.identifier(), p.url()))
+        .map(|p| {
+            let id = p.browser.identifier();
+            pages::palette::OpenPage {
+                id,
+                url: p.url(),
+                title: crate::pending_actions::page_title(id),
+                current: Some(id) == target,
+            }
+        })
         .collect();
-    let url = pages::switcher::page_url(&session.theme(), &entries);
-    session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+    let url = pages::palette::page_url(
+        &session.theme(),
+        &open,
+        bookmarks,
+        history,
+        &settings.default_search_engine,
+    );
+    let palette = browser::spawn(gpu, &gpu.window, &url, rect, true);
+    crate::pending_actions::palette_opened(palette.browser.identifier(), target);
+    session.add_page(palette);
 }
 
 // --- Canvas ---
 
 /// Grid-layout open pages to fill the window.
-fn auto_layout(session: &mut Session, gpu: &GpuState) {
+pub(crate) fn auto_layout(session: &mut Session, gpu: &GpuState) {
     let size = gpu.window.inner_size();
     session.auto_layout(
         (size.width as f32, size.height as f32),
@@ -545,13 +441,140 @@ fn auto_layout(session: &mut Session, gpu: &GpuState) {
     );
 }
 
+/// Ctrl+Space: zoom the focused page to fill the window (toggle).
+pub(crate) fn zoom_to_canvas(session: &mut Session, gpu: &GpuState) {
+    let size = gpu.window.inner_size();
+    session.toggle_zoom_focused(
+        (size.width as f32, size.height as f32),
+        gpu.window.scale_factor(),
+    );
+}
+
 // --- Other ---
 
-fn open_help(session: &mut Session, gpu: &GpuState) {
+/// Ctrl+Shift+Space: next UI theme. Built-in pages pick the new palette
+/// up in place (ui.js).
+pub(crate) fn cycle_theme(session: &mut Session) {
+    session.cycle_theme();
+    let js = pages::ui::theme_js(&session.theme());
+    for page in session.pages() {
+        if pages::kind_of(&page.url()).is_some() {
+            pages::ui::run_js(&page.browser, &js);
+        }
+    }
+}
+
+pub(crate) fn open_help(session: &mut Session, gpu: &GpuState) {
     let size = gpu.window.inner_size();
     let w = (size.width as f32 * 0.6).clamp(420.0, 720.0);
     let h = (size.height as f32 * 0.7).clamp(420.0, 760.0);
     let rect = session.centered_rect((size.width as f32, size.height as f32), (w, h));
     let url = pages::help::page_url(&session.theme());
     session.add_page(browser::spawn(gpu, &gpu.window, &url, rect, true));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `Ctrl+Shift+T` → (key, ctrl, shift, alt), as the help text spells it.
+    fn chord(shortcut: &str) -> (KeyCode, bool, bool, bool) {
+        let mut parts: Vec<&str> = shortcut.split('+').collect();
+        let key = parts.pop().expect("a key");
+        let has = |m: &str| parts.contains(&m);
+        let code = match key {
+            "," => KeyCode::Comma,
+            "/" => KeyCode::Slash,
+            "0" => KeyCode::Digit0,
+            "Space" => KeyCode::Space,
+            "Tab" => KeyCode::Tab,
+            "Left" => KeyCode::ArrowLeft,
+            "Right" => KeyCode::ArrowRight,
+            "F1" => KeyCode::F1,
+            letter => {
+                const LETTERS: [KeyCode; 26] = [
+                    KeyCode::KeyA,
+                    KeyCode::KeyB,
+                    KeyCode::KeyC,
+                    KeyCode::KeyD,
+                    KeyCode::KeyE,
+                    KeyCode::KeyF,
+                    KeyCode::KeyG,
+                    KeyCode::KeyH,
+                    KeyCode::KeyI,
+                    KeyCode::KeyJ,
+                    KeyCode::KeyK,
+                    KeyCode::KeyL,
+                    KeyCode::KeyM,
+                    KeyCode::KeyN,
+                    KeyCode::KeyO,
+                    KeyCode::KeyP,
+                    KeyCode::KeyQ,
+                    KeyCode::KeyR,
+                    KeyCode::KeyS,
+                    KeyCode::KeyT,
+                    KeyCode::KeyU,
+                    KeyCode::KeyV,
+                    KeyCode::KeyW,
+                    KeyCode::KeyX,
+                    KeyCode::KeyY,
+                    KeyCode::KeyZ,
+                ];
+                let c = letter.as_bytes();
+                assert!(
+                    c.len() == 1 && c[0].is_ascii_uppercase(),
+                    "unknown key {letter:?} in {shortcut:?}"
+                );
+                LETTERS[usize::from(c[0] - b'A')]
+            }
+        };
+        (code, has("Ctrl"), has("Shift"), has("Alt"))
+    }
+
+    #[test]
+    fn every_shortcut_the_palette_shows_runs_that_command() {
+        for entry in commands::PALETTE {
+            let Some(shortcut) = entry.shortcut else {
+                continue;
+            };
+            let (code, ctrl, shift, alt) = chord(shortcut);
+            assert_eq!(
+                command_for(code, ctrl, shift, alt),
+                Some(entry.command),
+                "{shortcut} for {}",
+                entry.id
+            );
+        }
+    }
+
+    #[test]
+    fn key_map() {
+        assert_eq!(
+            command_for(KeyCode::KeyK, true, false, false),
+            Some(Command::Palette)
+        );
+        assert_eq!(
+            command_for(KeyCode::F1, false, false, false),
+            Some(Command::Help)
+        );
+        assert_eq!(
+            command_for(KeyCode::Digit3, true, false, false),
+            Some(Command::SwitchWorkspace(3))
+        );
+        assert_eq!(
+            command_for(KeyCode::Digit9, true, true, false),
+            Some(Command::MoveToWorkspace(9))
+        );
+        assert_eq!(
+            command_for(KeyCode::Tab, true, true, false),
+            Some(Command::PreviousPage)
+        );
+        // Plain typing, Ctrl+C (the page's copy bridge), Ctrl+Shift+F and
+        // Alt+letters stay with the page.
+        assert_eq!(command_for(KeyCode::KeyK, false, false, false), None);
+        assert_eq!(command_for(KeyCode::KeyC, true, false, false), None);
+        assert_eq!(command_for(KeyCode::KeyF, true, true, false), None);
+        assert_eq!(command_for(KeyCode::KeyN, true, true, false), None);
+        assert_eq!(command_for(KeyCode::KeyD, false, false, true), None);
+    }
 }

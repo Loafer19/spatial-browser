@@ -1,5 +1,5 @@
 // Local favicon cache for the built-in pages (bookmarks, history,
-// downloads, switcher): PNGs captured from the browser cache on visit
+// downloads, palette): PNGs captured from the browser cache on visit
 // (cef_bridge::fetch_favicon), served to the pages as data: URIs. Lists
 // never fetch https://<host>/favicon.ico, which leaked each listed site.
 //

@@ -18,10 +18,10 @@ mod gallery;
 pub mod help;
 pub mod history_list;
 pub mod omnibox;
+pub mod palette;
 pub mod passwords_list;
 pub mod save_prompt;
 pub mod settings_list;
-pub mod switcher;
 pub mod ui;
 pub mod userscripts_list;
 pub mod workspace_list;
@@ -37,9 +37,9 @@ pub(crate) mod kind {
     pub const HELP: &str = "help";
     pub const HISTORY: &str = "history";
     pub const OMNIBOX: &str = "omnibox";
+    pub const PALETTE: &str = "palette";
     pub const SAVE_PROMPT: &str = "save-prompt";
     pub const SETTINGS: &str = "settings";
-    pub const SWITCHER: &str = "switcher";
     pub const USERSCRIPTS: &str = "userscripts";
     pub const VAULT_LIST: &str = "vault-list";
     pub const VAULT_UNLOCK: &str = "vault-unlock";
@@ -331,8 +331,19 @@ pub(crate) mod tests {
         let pages = [
             (kind::HELP, help::page_url(&theme)),
             (
-                kind::SWITCHER,
-                switcher::page_url(&theme, &[(1, "https://a.test/#x".into())]),
+                kind::PALETTE,
+                palette::page_url(
+                    &theme,
+                    &[palette::OpenPage {
+                        id: 1,
+                        url: "https://a.test/#x".into(),
+                        title: None,
+                        current: true,
+                    }],
+                    &[],
+                    &[],
+                    "https://e.test/?q=",
+                ),
             ),
             (
                 kind::OMNIBOX,

@@ -52,6 +52,22 @@ fn history() -> Vec<HistoryEntry> {
     .collect()
 }
 
+fn open_pages() -> Vec<palette::OpenPage> {
+    [
+        (1, "https://github.com/Loafer19/spatial-browser", Some("Loafer19/spatial-browser: a canvas of live web pages"), true),
+        (2, "https://docs.rs/maud/latest/maud/", Some("maud - Rust"), false),
+        (3, "https://example.test/a/very/long/path/that/keeps/going/and/going?with=query&and=more#and-a-fragment", None, false),
+    ]
+    .into_iter()
+    .map(|(id, url, title, current)| palette::OpenPage {
+        id,
+        url: url.into(),
+        title: title.map(Into::into),
+        current,
+    })
+    .collect()
+}
+
 /// `(name, served URL)` for every page in `theme`.
 fn samples(theme: &Theme) -> Vec<(&'static str, String)> {
     let workspaces: crate::persistence::workspaces::WorkspaceStore = serde_json::from_str(
@@ -61,14 +77,18 @@ fn samples(theme: &Theme) -> Vec<(&'static str, String)> {
     vec![
         ("help", help::page_url(theme)),
         (
-            "switcher",
-            switcher::page_url(
+            "palette",
+            palette::page_url(
                 theme,
-                &[
-                    (1, "https://github.com/Loafer19/spatial-browser".into()),
-                    (2, "https://docs.rs/maud".into()),
-                ],
+                &open_pages(),
+                &bookmarks(),
+                &history(),
+                "https://duckduckgo.com/?q=",
             ),
+        ),
+        (
+            "palette-empty",
+            palette::page_url(theme, &[], &[], &[], "https://duckduckgo.com/?q="),
         ),
         (
             "omnibox",
