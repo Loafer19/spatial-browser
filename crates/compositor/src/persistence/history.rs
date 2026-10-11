@@ -89,34 +89,66 @@ pub fn prune(history: &mut Vec<HistoryEntry>, now: i64) -> bool {
 }
 
 /// One search result: the row's index in the full list (for
-/// `history://open|remove/<index>`) and the entry.
+/// `history://open|remove/<index>`), the entry, and how many matching
+/// visits it stands for (1 unless collapsed).
 pub struct Hit<'a> {
     pub index: usize,
     pub entry: &'a HistoryEntry,
+    pub count: usize,
 }
 
 /// Rows matching `query` (every whitespace-separated word must appear in
 /// the title or URL, case-insensitive), newest first: `limit` of them
-/// starting at `offset`, plus the total match count.
+/// starting at `offset`, plus the total row count. With `collapse`, each
+/// URL is one row (its latest visit) carrying its visit count.
 pub fn search<'a>(
     history: &'a [HistoryEntry],
     query: &str,
     offset: usize,
     limit: usize,
+    collapse: bool,
 ) -> (Vec<Hit<'a>>, usize) {
     let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-    let mut total = 0;
-    let mut hits = Vec::new();
-    for (index, entry) in history.iter().enumerate() {
-        if !matches(entry, &words) {
-            continue;
+    let matching = history
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| matches(e, &words));
+    let rows: Vec<Hit<'a>> = if collapse {
+        // First occurrence = latest visit (newest first); later ones count.
+        let mut slot: std::collections::HashMap<&str, usize> = Default::default();
+        let mut rows: Vec<Hit<'a>> = Vec::new();
+        for (index, entry) in matching {
+            match slot.get(entry.url.as_str()) {
+                Some(&i) => rows[i].count += 1,
+                None => {
+                    slot.insert(&entry.url, rows.len());
+                    rows.push(Hit {
+                        index,
+                        entry,
+                        count: 1,
+                    });
+                }
+            }
         }
-        if total >= offset && hits.len() < limit {
-            hits.push(Hit { index, entry });
-        }
-        total += 1;
-    }
-    (hits, total)
+        rows
+    } else {
+        matching
+            .map(|(index, entry)| Hit {
+                index,
+                entry,
+                count: 1,
+            })
+            .collect()
+    };
+    let total = rows.len();
+    (rows.into_iter().skip(offset).take(limit).collect(), total)
+}
+
+/// Remove every visit of `url`. True when anything was removed.
+pub fn remove_url(history: &mut Vec<HistoryEntry>, url: &str) -> bool {
+    let before = history.len();
+    history.retain(|e| e.url != url);
+    history.len() != before
 }
 
 pub(crate) fn matches(entry: &HistoryEntry, words: &[String]) -> bool {
@@ -287,19 +319,51 @@ mod tests {
                 title: Some(format!("Title {i}")),
             })
             .collect();
-        let (hits, total) = search(&h, "SITE3", 0, 20);
+        let (hits, total) = search(&h, "SITE3", 0, 20, false);
         assert_eq!(total, 50);
         assert_eq!(hits.len(), 20);
         assert_eq!(hits[0].index, 3);
-        let (hits, _) = search(&h, "site3", 40, 20);
+        let (hits, _) = search(&h, "site3", 40, 20, false);
         assert_eq!(hits.len(), 10);
         // Every word must match, title or URL.
-        let (_, total) = search(&h, "title site1", 0, 10);
+        let (_, total) = search(&h, "title site1", 0, 10, false);
         assert_eq!(total, 50);
-        let (_, total) = search(&h, "title nope", 0, 10);
+        let (_, total) = search(&h, "title nope", 0, 10, false);
         assert_eq!(total, 0);
-        let (hits, total) = search(&h, "  ", 0, 10);
+        let (hits, total) = search(&h, "  ", 0, 10, false);
         assert_eq!((hits.len(), total), (10, 250));
+    }
+
+    #[test]
+    fn collapse_keeps_latest_visit_with_count() {
+        let h = vec![
+            at("https://a.test/", NOW),
+            at("https://b.test/", NOW - 1),
+            at("https://a.test/", NOW - 2),
+            at("https://a.test/", NOW - 3),
+            at("https://c.test/", NOW - 4),
+        ];
+        let (hits, total) = search(&h, "", 0, 10, true);
+        assert_eq!(total, 3);
+        let rows: Vec<_> = hits
+            .iter()
+            .map(|h| (h.entry.url.as_str(), h.index, h.count))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("https://a.test/", 0, 3),
+                ("https://b.test/", 1, 1),
+                ("https://c.test/", 4, 1)
+            ]
+        );
+        let (hits, total) = search(&h, "", 1, 1, true);
+        assert_eq!((hits[0].entry.url.as_str(), total), ("https://b.test/", 3));
+        let (_, total) = search(&h, "", 0, 10, false);
+        assert_eq!(total, 5, "uncollapsed keeps every visit");
+        let mut h = h;
+        assert!(remove_url(&mut h, "https://a.test/"));
+        assert_eq!(h.len(), 2);
     }
 
     #[test]
@@ -312,8 +376,10 @@ mod tests {
             })
             .collect();
         let start = std::time::Instant::now();
-        let (_, total) = search(&h, "host7 number", 0, 100);
+        let (_, total) = search(&h, "host7 number", 0, 100, false);
         assert!(total > 0);
+        let (_, total) = search(&h, "", 0, 100, true);
+        assert_eq!(total, MAX_ENTRIES);
         // Unoptimized test build; release is far faster.
         assert!(start.elapsed().as_millis() < 300, "{:?}", start.elapsed());
     }

@@ -110,12 +110,16 @@ pub(super) fn parse_download_action(url: &str) -> Option<DownloadPageAction> {
 pub enum HistoryPageAction {
     Open(usize),
     Remove(usize),
+    /// Every visit of the URL at this index (collapsed "Recent" rows).
+    RemoveAll(usize),
     Clear,
-    /// `history://search?q=…&offset=N`: the next page of matching rows,
-    /// answered by script into the asking (built-in) page only.
+    /// `history://search?q=…&offset=N[&collapse=1]`: the next page of
+    /// matching rows (one per URL with `collapse`), answered by script into
+    /// the asking (built-in) page only.
     Search {
         query: String,
         offset: usize,
+        collapse: bool,
     },
 }
 
@@ -132,6 +136,9 @@ pub(super) fn parse_history_action(url: &str) -> Option<HistoryPageAction> {
     if let Some(index) = rest.strip_prefix("remove/") {
         return index.parse().ok().map(HistoryPageAction::Remove);
     }
+    if let Some(index) = rest.strip_prefix("remove-all/") {
+        return index.parse().ok().map(HistoryPageAction::RemoveAll);
+    }
     if rest == "clear" {
         return Some(HistoryPageAction::Clear);
     }
@@ -145,6 +152,7 @@ pub(super) fn parse_history_action(url: &str) -> Option<HistoryPageAction> {
             offset: query_param(query, "offset")
                 .and_then(|o| o.parse().ok())
                 .unwrap_or(0),
+            collapse: query_param(query, "collapse").as_deref() == Some("1"),
         });
     }
     None
