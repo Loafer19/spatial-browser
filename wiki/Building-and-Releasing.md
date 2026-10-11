@@ -56,3 +56,7 @@ Workflow builds, bundles, and attaches `spatial-browser-linux-x86_64.tar.gz` to 
 ## License
 
 MIT — see [LICENSE](https://github.com/Loafer19/spatial-browser/blob/master/LICENSE).
+
+## Wiki
+
+`wiki/` in the repo is the source of truth. The `wiki-sync` workflow copies it to the GitHub Wiki on every push to master that touches `wiki/` (or run it by hand: Actions → wiki-sync → Run workflow). It uses `GITHUB_TOKEN` (`contents: write`); if GitHub refuses the push, add a fine-grained PAT with Contents read/write as the repo secret `WIKI_TOKEN`. Pages that exist only in the GitHub Wiki are not deleted.
