@@ -97,6 +97,12 @@ pub enum HistoryPageAction {
     Open(usize),
     Remove(usize),
     Clear,
+    /// `history://search?q=…&offset=N`: the next page of matching rows,
+    /// answered by script into the asking (built-in) page only.
+    Search {
+        query: String,
+        offset: usize,
+    },
 }
 
 thread_local! {
@@ -114,6 +120,18 @@ pub(super) fn parse_history_action(url: &str) -> Option<HistoryPageAction> {
     }
     if rest == "clear" {
         return Some(HistoryPageAction::Clear);
+    }
+    // CEF may canonicalize `search?` to `search/?`.
+    if let Some(query) = rest
+        .strip_prefix("search?")
+        .or_else(|| rest.strip_prefix("search/?"))
+    {
+        return Some(HistoryPageAction::Search {
+            query: query_param(query, "q").unwrap_or_default(),
+            offset: query_param(query, "offset")
+                .and_then(|o| o.parse().ok())
+                .unwrap_or(0),
+        });
     }
     None
 }
