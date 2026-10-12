@@ -109,6 +109,7 @@ h2, .section {
 }
 h2:first-child, .section:first-child { margin-top: 0; }
 h3 { margin: 0 0 6px; font-size: 14px; color: var(--heading); }
+h1 svg, h2 svg, h3 svg { width: 1em; height: 1em; flex-shrink: 0; vertical-align: -0.12em; }
 
 .muted { color: var(--muted); }
 .faint { color: var(--faint); }

@@ -289,7 +289,8 @@ impl Icon {
 impl Render for Icon {
     fn render(&self) -> Markup {
         html! {
-            svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {
+            // Default size; ui.css rules (.btn svg, .empty svg, …) override it.
+            svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {
                 path d=(self.path()) {}
             }
         }
