@@ -36,7 +36,7 @@ cargo install export-cef-dir --version 154.5.0+154.0.34 --locked \
 cargo build
 ./scripts/bundle.sh compositor
 ./scripts/run.sh compositor      # auto-relaunches on the known CEF crash
-./scripts/install.sh             # optional desktop launcher
+./scripts/install.sh             # optional desktop launcher + icon (release tarball: ./install-release.sh)
 ```
 
 Or grab a tarball from [Releases](https://github.com/Loafer19/spatial-browser/releases). What changed: [CHANGELOG](CHANGELOG.md).

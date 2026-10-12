@@ -19,4 +19,7 @@ if [[ -d data/filters ]]; then
   mkdir -p target/bundle/filters
   cp -a data/filters/. target/bundle/filters/
 fi
+# Desktop integration for release tarballs.
+cp data/icon.svg target/bundle/icon.svg
+cp scripts/install-release.sh scripts/desktop-common.sh target/bundle/
 echo "Run it: target/bundle/$package"
