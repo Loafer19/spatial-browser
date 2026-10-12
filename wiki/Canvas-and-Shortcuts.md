@@ -78,5 +78,6 @@ Pages live in **world space** on a pannable/zoomable canvas. Hit-testing and dra
 |----------|--------|
 | `Ctrl+Shift+Space` | Cycle UI theme |
 | `F1` / `Ctrl+/` | This help list (in-app) |
+| `F3` | Performance overlay (fps, frame time, paints, tiles, memory) |
 
 Same table is always available in-app via **F1**. Live workspace slots: see [[Features]].

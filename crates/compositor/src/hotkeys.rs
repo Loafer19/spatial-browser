@@ -62,6 +62,9 @@ pub(crate) fn command_for(code: KeyCode, ctrl: bool, shift: bool, alt: bool) -> 
     if code == KeyCode::F1 {
         return Some(Command::Help);
     }
+    if code == KeyCode::F3 {
+        return Some(Command::PerfOverlay);
+    }
     // Alt+Left/Right back/forward (separate from Ctrl+ bindings).
     if alt && !ctrl {
         return match code {
@@ -534,6 +537,7 @@ mod tests {
             "Left" => KeyCode::ArrowLeft,
             "Right" => KeyCode::ArrowRight,
             "F1" => KeyCode::F1,
+            "F3" => KeyCode::F3,
             letter => {
                 const LETTERS: [KeyCode; 26] = [
                     KeyCode::KeyA,

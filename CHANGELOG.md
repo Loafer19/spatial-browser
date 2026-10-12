@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Performance overlay** (`F3`, or "Performance overlay" in `Ctrl+K`): canvas
+  frames/s, CPU time per frame (avg / max), CEF paints/s, tiles on / off screen,
+  loading and parked in other workspaces, and resident memory of the app, its
+  renderers, the GPU process and other helpers. Sampled once a second while shown.
+- Command palette closes on a click outside it.
+- Catppuccin Latte: white labels on accent buttons (WCAG AA contrast).
+- Vault unlock: the heading's lock icon no longer fills the card.
+
 ## v0.10.0
 
 Built-in pages overhaul: every `spatial://` page now uses one design system

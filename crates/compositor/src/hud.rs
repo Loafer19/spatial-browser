@@ -1,4 +1,5 @@
 // Top workspace chip strip: reveal on top hit-band, auto-hide on leave.
+// Also draws the F3 performance overlay (perf.rs) in the top-left corner.
 
 use crate::output::Theme;
 use crate::persistence::workspaces::WorkspaceStore;
@@ -17,6 +18,14 @@ const PANEL_PAD: f32 = 12.0;
 const PANEL_TOP: f32 = 8.0;
 const STRIP_HEIGHT: f32 = PANEL_TOP + CHIP_H + PANEL_PAD * 2.0 + 4.0;
 const GLYPH_SCALE: f32 = 3.0;
+/// Printable ASCII in the atlas (' '..='~'), then one solid cell.
+const ATLAS_FIRST: u8 = b' ';
+const ATLAS_GLYPHS: u32 = 95;
+const ATLAS_CELLS: u32 = ATLAS_GLYPHS + 1;
+const OVERLAY_SCALE: f32 = 2.0;
+const OVERLAY_MARGIN: f32 = 12.0;
+const OVERLAY_PAD: f32 = 10.0;
+const OVERLAY_LINE_GAP: f32 = 4.0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -236,13 +245,20 @@ impl Hud {
         device: &wgpu::Device,
         store: &WorkspaceStore,
         theme: &Theme,
+        overlay: Option<&[String]>,
     ) {
-        if !self.visible {
-            self.vertex_count = 0;
-            return;
-        }
-        let (sw, sh) = self.screen_size;
         let mut verts: Vec<HudVertex> = Vec::new();
+        if self.visible {
+            self.push_strip(&mut verts, store, theme);
+        }
+        if let Some(lines) = overlay {
+            push_overlay(&mut verts, lines, self.screen_size, theme);
+        }
+        self.upload(queue, device, &verts);
+    }
+
+    fn push_strip(&self, verts: &mut Vec<HudVertex>, store: &WorkspaceStore, theme: &Theme) {
+        let (sw, sh) = self.screen_size;
         let (panel_x, panel_y, panel_w, panel_h, start, cy) = Self::layout(store, sw);
 
         let panel_bg = parse_rgb(theme.help_bg, 0.88);
@@ -254,14 +270,14 @@ impl Hud {
         let glyph_off = parse_rgb(theme.help_fg, 1.0);
 
         push_rect(
-            &mut verts,
+            verts,
             [panel_x, panel_y, panel_w, panel_h],
             (sw, sh),
             panel_bg,
             atlas_uv_solid(),
         );
         push_rect_outline(
-            &mut verts,
+            verts,
             [panel_x, panel_y, panel_w, panel_h],
             (sw, sh),
             panel_border,
@@ -273,13 +289,13 @@ impl Hud {
             let bg = if active { accent } else { idle };
             let gc = if active { glyph_on } else { glyph_off };
             push_rect(
-                &mut verts,
+                verts,
                 [cx, cy, CHIP_W, CHIP_H],
                 (sw, sh),
                 bg,
                 atlas_uv_solid(),
             );
-            push_rect_outline(&mut verts, [cx, cy, CHIP_W, CHIP_H], (sw, sh), border);
+            push_rect_outline(verts, [cx, cy, CHIP_W, CHIP_H], (sw, sh), border);
             let label = if slot.id >= 10 {
                 format!("{}", slot.id)
             } else {
@@ -287,25 +303,21 @@ impl Hud {
                     .unwrap_or('?')
                     .to_string()
             };
-            push_glyph_centered(&mut verts, &label, [cx, cy, CHIP_W, CHIP_H], (sw, sh), gc);
+            push_glyph_centered(verts, &label, [cx, cy, CHIP_W, CHIP_H], (sw, sh), gc);
             cx += CHIP_W + CHIP_GAP;
         }
         push_rect(
-            &mut verts,
+            verts,
             [cx, cy, CHIP_W, CHIP_H],
             (sw, sh),
             idle,
             atlas_uv_solid(),
         );
-        push_rect_outline(&mut verts, [cx, cy, CHIP_W, CHIP_H], (sw, sh), border);
-        push_glyph_centered(
-            &mut verts,
-            "+",
-            [cx, cy, CHIP_W, CHIP_H],
-            (sw, sh),
-            glyph_off,
-        );
+        push_rect_outline(verts, [cx, cy, CHIP_W, CHIP_H], (sw, sh), border);
+        push_glyph_centered(verts, "+", [cx, cy, CHIP_W, CHIP_H], (sw, sh), glyph_off);
+    }
 
+    fn upload(&mut self, queue: &wgpu::Queue, device: &wgpu::Device, verts: &[HudVertex]) {
         self.vertex_count = verts.len() as u32;
         if self.vertex_count > self.vertex_capacity {
             self.vertex_capacity = self.vertex_count.next_power_of_two().max(64);
@@ -317,7 +329,7 @@ impl Hud {
             });
         }
         if !verts.is_empty() {
-            queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&verts));
+            queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(verts));
         }
     }
 
@@ -332,21 +344,70 @@ impl Hud {
     }
 }
 
+fn cell_uv(index: u32) -> [f32; 4] {
+    let u0 = index as f32 / ATLAS_CELLS as f32;
+    [u0, 0.0, u0 + 1.0 / ATLAS_CELLS as f32, 1.0]
+}
+
 fn atlas_uv_solid() -> [f32; 4] {
     // last cell of atlas is solid white
-    let i = 11.0;
-    let u0 = i / 12.0;
-    [u0, 0.0, u0 + 1.0 / 12.0, 1.0]
+    cell_uv(ATLAS_GLYPHS)
+}
+
+/// Atlas cell of a printable ASCII char; anything else draws as '?'.
+fn glyph_index(ch: char) -> u32 {
+    match ch {
+        ' '..='~' => ch as u32 - ATLAS_FIRST as u32,
+        _ => '?' as u32 - ATLAS_FIRST as u32,
+    }
 }
 
 fn glyph_uv(ch: char) -> [f32; 4] {
-    let idx = match ch {
-        '0'..='9' => (ch as u8 - b'0') as f32,
-        '+' => 10.0,
-        _ => 11.0,
-    };
-    let u0 = idx / 12.0;
-    [u0, 0.0, u0 + 1.0 / 12.0, 1.0]
+    cell_uv(glyph_index(ch))
+}
+
+/// The perf overlay: a panel of monospace lines at the top-left corner.
+fn push_overlay(out: &mut Vec<HudVertex>, lines: &[String], screen: (f32, f32), theme: &Theme) {
+    if lines.is_empty() {
+        return;
+    }
+    let glyph = 8.0 * OVERLAY_SCALE;
+    let line_h = glyph + OVERLAY_LINE_GAP;
+    let cols = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as f32;
+    let w = cols * glyph + OVERLAY_PAD * 2.0;
+    let h = lines.len() as f32 * line_h - OVERLAY_LINE_GAP + OVERLAY_PAD * 2.0;
+    let (x, y) = (OVERLAY_MARGIN, OVERLAY_MARGIN);
+    push_rect(
+        out,
+        [x, y, w, h],
+        screen,
+        parse_rgb(theme.help_bg, 0.92),
+        atlas_uv_solid(),
+    );
+    push_rect_outline(
+        out,
+        [x, y, w, h],
+        screen,
+        parse_rgb(theme.help_card_border, 1.0),
+    );
+    let title = parse_rgb(theme.help_heading, 1.0);
+    let text = parse_rgb(theme.help_fg, 1.0);
+    for (row, line) in lines.iter().enumerate() {
+        let color = if row == 0 { title } else { text };
+        let ly = y + OVERLAY_PAD + row as f32 * line_h;
+        for (col, ch) in line.chars().enumerate() {
+            if ch == ' ' {
+                continue;
+            }
+            push_rect(
+                out,
+                [x + OVERLAY_PAD + col as f32 * glyph, ly, glyph, glyph],
+                screen,
+                color,
+                glyph_uv(ch),
+            );
+        }
+    }
 }
 
 /// Ink bounds of a font8x8 glyph inside its 8×8 cell (inclusive).
@@ -490,20 +551,17 @@ fn push_rect_outline(
 }
 
 fn build_atlas(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture {
-    // 12 cells × 8 px: digits 0-9, '+', solid white
+    // 8 px cells: printable ASCII, then solid white.
     let cell = 8u32;
-    let cols = 12u32;
-    let width = cell * cols;
+    let width = cell * ATLAS_CELLS;
     let height = cell;
     let mut pixels = vec![0u8; (width * height * 4) as usize];
-    for d in 0..10u8 {
-        blit_glyph(&mut pixels, width, d as u32, char::from(b'0' + d));
+    for i in 0..ATLAS_GLYPHS {
+        blit_glyph(&mut pixels, width, i, char::from(ATLAS_FIRST + i as u8));
     }
-    blit_glyph(&mut pixels, width, 10, '+');
-    // solid white cell 11
     for y in 0..cell {
         for x in 0..cell {
-            let i = ((y * width + 11 * cell + x) * 4) as usize;
+            let i = ((y * width + ATLAS_GLYPHS * cell + x) * 4) as usize;
             pixels[i..i + 4].copy_from_slice(&[255, 255, 255, 255]);
         }
     }

@@ -57,6 +57,8 @@ pub(crate) enum Command {
     About,
     /// Site info for the focused page.
     SiteInfo,
+    /// F3 frame rate / paints / tiles / memory overlay.
+    PerfOverlay,
 }
 
 impl Command {
@@ -167,6 +169,7 @@ pub(crate) const PALETTE: &[PaletteCommand] = &[
     entry("lock-vault", Command::LockVault, "Lock password vault", "passwords secure", "Ctrl+Shift+L", Icon::Lock, false),
     entry("help", Command::Help, "Keyboard shortcuts", "help keys hotkeys", "F1", Icon::Info, false),
     entry("site-info", Command::SiteInfo, "Site info", "page connection security permissions logins forget", "", Icon::Shield, false),
+    entry("perf-overlay", Command::PerfOverlay, "Performance overlay", "fps frame time memory ram cpu stats debug", "F3", Icon::Zap, false),
     entry("about", Command::About, "About spatial-browser", "version cef chromium", "", Icon::Info, false),
 ];
 
@@ -236,6 +239,7 @@ pub(crate) fn run(command: Command, session: &mut Session, gpu: &GpuState, s: &m
         Command::Help => hotkeys::open_help(session, gpu),
         Command::About => hotkeys::open_about(session, gpu),
         Command::SiteInfo => hotkeys::open_site_info(session, gpu, s),
+        Command::PerfOverlay => crate::perf::toggle(),
     }
 }
 

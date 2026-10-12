@@ -63,6 +63,7 @@ pub const HELP_GROUPS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("Ctrl+Shift+Space", "Cycle UI theme"),
             ("F1 / Ctrl+/", "This page"),
+            ("F3", "Performance overlay"),
         ],
     ),
 ];

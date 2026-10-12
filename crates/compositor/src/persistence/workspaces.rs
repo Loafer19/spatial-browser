@@ -298,6 +298,11 @@ struct ParkedSlot {
 }
 
 impl WorkspaceRuntime {
+    /// Browsers alive in parked (not shown) workspace slots.
+    pub fn parked_page_count(&self) -> usize {
+        self.parked.values().map(|slot| slot.pages.len()).sum()
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

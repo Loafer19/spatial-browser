@@ -33,8 +33,22 @@ impl App {
             .collect();
 
         let theme = self.session.theme();
+        let overlay = crate::perf::shown().then(|| {
+            let path = if crate::output::osr_shared_texture_enabled() {
+                "gpu paint"
+            } else {
+                "cpu paint"
+            };
+            self.perf.lines(path)
+        });
         if let Some(hud) = &mut self.hud {
-            hud.rebuild(&state.queue, &state.device, &self.workspaces, &theme);
+            hud.rebuild(
+                &state.queue,
+                &state.device,
+                &self.workspaces,
+                &theme,
+                overlay.as_deref(),
+            );
         }
         let focused = self.session.pages().len().checked_sub(1);
         if let Some(minimap) = &mut self.minimap {
@@ -49,15 +63,21 @@ impl App {
         }
         let hud_ref = self.hud.as_ref();
         let minimap_ref = self.minimap.as_ref();
-        match state.render(
+        let started = Instant::now();
+        let outcome = state.render(
             &draws,
             &theme,
             viewport.offset,
             viewport.zoom,
             hud_ref,
             minimap_ref,
-        ) {
-            FrameOutcome::Rendered => self.pacer.rendered(Instant::now()),
+        );
+        match outcome {
+            FrameOutcome::Rendered => {
+                let now = Instant::now();
+                self.perf.frame_presented(now - started);
+                self.pacer.rendered(now);
+            }
             FrameOutcome::Skip => self.pacer.render_skipped(Instant::now()),
             FrameOutcome::Reconfigure => {
                 let size = state.window.inner_size();

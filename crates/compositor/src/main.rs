@@ -17,6 +17,7 @@ mod minimap;
 mod output;
 mod pages;
 mod pending_actions;
+mod perf;
 mod persistence;
 mod reader_mode;
 mod session;

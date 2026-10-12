@@ -118,6 +118,7 @@ pub struct App {
     last_save: Instant,
     // Redraw / begin-frame scheduling (idle canvas = no frames).
     pacer: FramePacer,
+    perf: crate::perf::PerfMonitor,
 }
 
 impl Default for App {
@@ -163,6 +164,7 @@ impl Default for App {
             applied_cursor: None,
             last_save: Instant::now(),
             pacer: FramePacer::new(),
+            perf: crate::perf::PerfMonitor::new(Instant::now()),
         }
     }
 }
@@ -237,6 +239,27 @@ impl App {
         let plan = self
             .pacer
             .tick(now, self.settings.target_fps, &pages, signature, animating);
+        if crate::perf::shown() {
+            let paint_counts: Vec<(i32, u64)> = pages
+                .iter()
+                .map(|p| (p.id, cef_bridge::paint_count(p.id)))
+                .collect();
+            let tiles = crate::perf::TileCounts {
+                on_screen: pages
+                    .iter()
+                    .filter(|p| p.visibility == Visibility::OnScreen)
+                    .count(),
+                off_screen: pages
+                    .iter()
+                    .filter(|p| p.visibility == Visibility::OffScreen)
+                    .count(),
+                loading: pages.iter().filter(|p| p.busy).count(),
+                parked: self.workspace_runtime.parked_page_count(),
+            };
+            self.perf.tick(now, &paint_counts, tiles);
+        } else {
+            self.perf.tick(now, &[], Default::default());
+        }
 
         for page in self.session.pages() {
             if plan.begin_frames.contains(&page.browser.identifier()) {
@@ -264,7 +287,10 @@ impl App {
         let lazy_due = crate::lazy_load::next_due(&self.session, self.canvas_size);
         frame_pacer::min_instant(
             frame_pacer::min_instant(self.pacer.next_deadline(), save_due),
-            frame_pacer::min_instant(hud_due, lazy_due),
+            frame_pacer::min_instant(
+                frame_pacer::min_instant(hud_due, lazy_due),
+                self.perf.next_deadline(),
+            ),
         )
     }
 
@@ -293,6 +319,8 @@ impl App {
             (page.load_active.get() && !page.ephemeral).hash(&mut h);
         }
         self.hud.as_ref().map(Hud::visible).hash(&mut h);
+        crate::perf::shown().hash(&mut h);
+        self.perf.generation().hash(&mut h);
         self.workspaces.active.hash(&mut h);
         self.workspaces.slot_count().hash(&mut h);
         h.finish()
