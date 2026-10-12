@@ -162,7 +162,7 @@ pub const CATPPUCCIN_LATTE: Theme = Theme {
     help_card_bg: "rgb(230,233,239)",
     help_card_border: "rgb(204,208,218)",
     help_key_bg: "rgb(30,102,245)",
-    help_key_fg: "rgb(239,241,245)",
+    help_key_fg: "rgb(255,255,255)",
     help_danger: "rgb(210,15,57)",
     help_success: "rgb(64,160,43)",
     help_font: UI_SANS,
@@ -237,8 +237,7 @@ mod tests {
                 ("fg on card", theme.help_fg, card, 4.5),
                 ("heading on bg", theme.help_heading, bg, 4.5),
                 ("danger on bg", theme.help_danger, bg, 4.0),
-                // Semibold button / kbd labels; Latte's base-on-blue is 4.3.
-                ("key", theme.help_key_fg, rgb(theme.help_key_bg), 4.0),
+                ("key", theme.help_key_fg, rgb(theme.help_key_bg), 4.5),
             ] {
                 let ratio = contrast(rgb(fg), base);
                 assert!(ratio >= min, "{}: {what} = {ratio:.2}", theme.name);

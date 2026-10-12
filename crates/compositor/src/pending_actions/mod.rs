@@ -57,7 +57,7 @@ use passwords::*;
 // Used from app.rs / hotkeys.rs.
 pub(crate) use context::{dismiss_context_menu, open_context_menu, ContextHitRequest};
 pub(crate) use loads::page_title;
-pub(crate) use palette::{close_palette, palette_opened};
+pub(crate) use palette::{close_palette, dismiss_palette_on_press, palette_opened};
 pub(crate) use passwords::request_vault_lock;
 pub(crate) use settings_page::sync_blocklist_settings;
 

@@ -116,6 +116,12 @@ impl App {
         let Some(state) = &mut self.state else {
             return;
         };
+        if element_state == ElementState::Pressed {
+            let world = self.session.viewport().screen_to_world(self.cursor_window);
+            let hit = hit_test(self.session.pages(), world.0, world.1)
+                .map(|i| self.session.pages()[i].browser.identifier());
+            crate::pending_actions::dismiss_palette_on_press(&mut self.session, hit);
+        }
         // Middle-drag pans (works with a real mouse); Shift+Left-drag
         // is the trackpad-friendly equivalent — most touchpads have
         // no reliable middle button or a sustained right-click-drag

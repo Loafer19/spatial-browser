@@ -33,6 +33,18 @@ pub(crate) fn close_palette(session: &mut Session) -> bool {
         .is_some_and(|open| close_tile(session, open.palette_id))
 }
 
+/// The palette tile to close for a press on `hit` (a tile's browser id, or
+/// `None` for bare canvas / HUD): any press outside the palette.
+fn dismissed_by(open: Option<OpenPalette>, hit: Option<i32>) -> Option<i32> {
+    open.map(|o| o.palette_id).filter(|&id| hit != Some(id))
+}
+
+/// A press anywhere but the palette closes it, like any popover. True if
+/// it was closed.
+pub(crate) fn dismiss_palette_on_press(session: &mut Session, hit: Option<i32>) -> bool {
+    dismissed_by(PALETTE.get(), hit).is_some_and(|id| close_tile(session, id))
+}
+
 fn close_tile(session: &mut Session, browser_id: i32) -> bool {
     if PALETTE
         .get()
@@ -157,5 +169,17 @@ mod tests {
         // record of it goes once asked about.
         assert!(!close_palette(&mut session));
         assert!(PALETTE.get().is_none());
+    }
+
+    #[test]
+    fn a_press_outside_the_palette_dismisses_it() {
+        let open = Some(OpenPalette {
+            palette_id: 7,
+            target_id: Some(1),
+        });
+        assert_eq!(dismissed_by(open, Some(1)), Some(7));
+        assert_eq!(dismissed_by(open, None), Some(7));
+        assert_eq!(dismissed_by(open, Some(7)), None);
+        assert_eq!(dismissed_by(None, Some(1)), None);
     }
 }
